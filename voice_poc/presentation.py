@@ -1,0 +1,766 @@
+"""Audio presentation for an existing task. No LLM or task operator lives here."""
+import asyncio
+import json
+import os
+from pathlib import Path
+import uuid
+from dataclasses import dataclass
+from collections import deque
+import aiohttp
+from room_history import RoomHistory
+from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from pipecat.frames.frames import LLMContextFrame, TTSSpeakFrame, DataFrame, TTSAudioRawFrame, ErrorFrame, InterruptionFrame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+
+ROOT = Path(__file__).resolve().parent.parent
+BINDING = Path(os.getenv('VOICE_PRESENTATION_BINDING_FILE', str(ROOT / '.voice-poc/presentation.json')))
+
+
+def binding():
+    try:
+        data = json.loads(BINDING.read_text())
+        return {key: data.get(key) for key in ('thread_id', 'title', 'binding_id', 'gateway_url', 'gateway_instance')}
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+class NoInference(FrameProcessor):
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if not isinstance(frame, LLMContextFrame):
+            await self.push_frame(frame, direction)
+
+
+@dataclass
+class PresentationSpeech(TTSSpeakFrame):
+    utterance_id: str = ''
+    revision: int = 0
+    language: str | None = None
+
+
+@dataclass
+class PresentationBoundary(DataFrame):
+    utterance_id: str = ''
+    revision: int = 0
+    end: bool = False
+
+
+class PresentationGate(FrameProcessor):
+    """Last epoch check before TTS; queued stale requests never synthesize."""
+    call = None
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if self.call and direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, (PresentationSpeech, PresentationBoundary)):
+                if not self.call.is_current(frame.utterance_id, frame.revision):
+                    return
+                if isinstance(frame, PresentationSpeech):
+                    if hasattr(self.call.tts, 'select_language'):
+                        self.call.tts.select_language(frame.language)
+                    self.call.transition(frame.utterance_id, 'synthesizing')
+        if self.call and isinstance(frame, ErrorFrame):
+            self.call.fail_active()
+        await self.push_frame(frame, direction)
+
+
+class PresentationPlayback(FrameProcessor):
+    """Observe ordered transport output, never silence timeout or 'heard'."""
+    call = None
+    current = None
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if self.call and direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, PresentationBoundary):
+                if not frame.end:
+                    self.current = (frame.utterance_id, frame.revision)
+                else:
+                    await self.call.playback_finished(frame.utterance_id, frame.revision)
+                    if self.current == (frame.utterance_id, frame.revision):
+                        self.current = None
+            elif isinstance(frame, TTSAudioRawFrame) and self.current:
+                uid, rev = self.current
+                if self.call.is_current(uid, rev):
+                    self.call.transition(uid, 'playing')
+        await self.push_frame(frame, direction)
+
+
+class PresentationCall:
+    def __init__(self, session_id, target, worker, tts, stt):
+        self.id, self.target, self.worker = session_id, target, worker
+        self.tts, self.stt = tts, stt
+        self.connected = False
+        self.closed = False
+        self.speaking = False
+        self.error = None
+        self.sent = 0
+        self.last_delivery = None
+        self.input_queue = asyncio.Queue(maxsize=32)
+        self.utterances = {}
+        self.revision = 0
+        self.pending = deque()
+        self.active = None
+        self.quiet_until = 0
+        self.dispatch_timer = None
+        self.audio_grace_seconds = 2.0
+        self.turn_target = dict(target)
+        self.turn_revision = 0
+        self.journal = None
+        self.turn_binding_id = target.get("binding_id")
+        self.switching = False
+        self.on_input_receipt = None
+        self.browser_audio = False
+        self.on_browser_event = None
+
+    def input_receipt(self, payload, status):
+        if self.on_input_receipt:
+            self.on_input_receipt({"revision": payload["revision"], "history_id": payload.get("history_id"),
+                                   "thread_id": payload["thread_id"], "session_id": payload.get("session_id", self.id), "status": status})
+
+    def snapshot(self):
+        return {'id': self.id, 'target': self.target, 'connected': self.connected,
+                'user_speaking': self.speaking, 'error': self.error, 'sent': self.sent,
+                'last_delivery': self.last_delivery, 'revision': self.revision,
+                'utterances': [dict(v['result']) for v in self.utterances.values()],
+                'tts': {'engine': 'Kokoro · navegador'} if self.browser_audio else getattr(self.tts, 'runtime_status', {}),
+                'speech_filter': getattr(self.stt, 'filter_stats', {})}
+
+    def enqueue_input(self, text, *, target=None, revision=None, message_id=None, history_id=None):
+        if target is None and getattr(self, 'cancelled_turn', None) == self.turn_revision:
+            return
+        target = self.turn_target if target is None else target
+        revision = self.turn_revision if revision is None else revision
+        history_id = history_id or self.id+':user-turn:'+str(revision)
+        if not target.get('thread_id') or not text or not text.strip():
+            return
+        payload = {'thread_id': target['thread_id'], 'text': text,
+                   'message_id': message_id or str(uuid.uuid4()), 'session_id': self.id,
+                   'history_id': history_id, 'revision': revision, 'binding_id': target.get('binding_id'),
+                   'gateway_url': target.get('gateway_url') or 'http://127.0.0.1:8769',
+                   'gateway_instance': target.get('gateway_instance'), 'title': target.get('title')}
+        if self.journal:
+            self.journal.put(id=history_id,
+                thread=payload['thread_id'], role='user', text=text, name='Tú',
+                session=self.id, revision=revision, status='pending', payload=payload)
+        else:
+            try:
+                self.input_queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                self.error = 'Cola llena: el último mensaje no se envió.'
+                self.input_receipt(payload, 'not_sent')
+                return
+        self.input_receipt(payload, 'pending')
+        return payload
+
+    async def deliver_inputs(self):
+        # Serial delivery preserves speech order. Never retry an uncertain mutation.
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=125)) as http:
+            while True:
+                payload = await self.input_queue.get()
+                try:
+                    gateway = payload['gateway_url']
+                    async with http.post(gateway + '/presentation/message', json=payload) as r:
+                        result = await r.json()
+                        if r.status != 200:
+                            raise RuntimeError(result.get('error', 'No se pudo entregar el mensaje'))
+                    self.sent += 1
+                    self.last_delivery = result
+                    self.error = None
+                    self.input_receipt(payload, "delivered")
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.error = 'No se pudo confirmar la entrega. Revisa la tarea antes de repetir el mensaje.'
+                    self.input_receipt(payload, "uncertain")
+                finally:
+                    self.input_queue.task_done()
+
+    def is_current(self, uid, revision):
+        return (self.connected and not self.speaking and revision == self.revision
+                and self.active == uid and uid in self.utterances and self.utterances[uid]['result']['status']
+                not in {'interrupted', 'failed', 'disconnected', 'playback_finished'})
+
+    def transition(self, uid, status, reason=None):
+        entry = self.utterances.get(uid)
+        if entry and entry['result']['status'] not in {'interrupted', 'failed', 'disconnected', 'playback_finished'}:
+            entry['result']['status'] = status
+            if self.journal:
+                self.journal.update(self.id+':voice:'+uid, status, reason)
+
+    def user_started(self):
+        self.revision += 1
+        self.speaking = True
+        self.turn_target = dict(self.target)
+        self.turn_revision = self.revision
+        self.turn_binding_id = self.target.get("binding_id")
+        self.invalidate('interrupted', 'user_interrupted', preserve_waiting=True)
+
+    def invalidate(self, status, reason=None, preserve_waiting=False):
+        if self.dispatch_timer:
+            self.dispatch_timer.cancel()
+            self.dispatch_timer = None
+        if self.browser_audio and self.on_browser_event:
+            self.on_browser_event({"type": "voice-cancel", "data": {"session_id": self.id, "revision": self.revision}})
+        waiting = []
+        for uid, entry in self.utterances.items():
+            if preserve_waiting and (entry['result']['status'] == 'waiting_for_turn' or
+                                     self.browser_audio and entry['result']['status'] in {'queued', 'synthesizing', 'waiting_for_pause'}):
+                entry['result']['revision'] = self.revision
+                self.transition(uid, 'waiting_for_turn', 'user_speaking')
+                waiting.append(uid)
+            else:
+                self.transition(uid, status, reason)
+        self.pending.clear()
+        self.pending.extend(waiting)
+        self.active = None
+
+    def disconnect(self):
+        self.connected = False
+        self.closed = True
+        self.invalidate('disconnected', 'call_ended')
+
+    def fail_active(self):
+        if self.active:
+            self.transition(self.active, 'failed', 'playback_failed')
+        # Do not automatically replay or advance after an uncertain pipeline failure.
+        self.pending.clear()
+        for uid in self.utterances:
+            self.transition(uid, 'failed', 'playback_failed')
+        self.active = None
+
+    def browser_cancelled(self, uid, revision, started):
+        entry = self.utterances.get(uid)
+        if not entry or revision > entry['result']['revision']:
+            return False
+        if entry['result']['status'] in {'interrupted', 'failed', 'disconnected', 'playback_finished'}:
+            return True
+        if started:
+            self.transition(uid, 'interrupted', 'user_interrupted')
+            self.pending = deque(item for item in self.pending if item != uid)
+            if self.active == uid:
+                self.active = None
+                if self.on_browser_event:
+                    self.on_browser_event({'type': 'voice-cancel', 'data': {'session_id': self.id, 'revision': self.revision}})
+        elif revision == entry['result']['revision']:
+            self.transition(uid, 'waiting_for_turn', 'user_speaking')
+            if uid not in self.pending:
+                self.pending.appendleft(uid)
+            if self.active == uid:
+                self.active = None
+        # An older unplayed cancellation cannot roll back a newer dispatch.
+        return True
+
+    async def playback_finished(self, uid, revision):
+        if not self.is_current(uid, revision):
+            return
+        # Marker passed TTS serialization and transport audio queue. This is not
+        # confirmation of browser playout, device audibility, or user comprehension.
+        self.transition(uid, 'playback_finished')
+        self.active = None
+        await self._dispatch()
+
+    async def finish_user_turn(self):
+        self.speaking = False
+        self.quiet_until = asyncio.get_running_loop().time() + self.audio_grace_seconds
+        await self._dispatch()
+
+    async def _dispatch_after_pause(self, delay):
+        await asyncio.sleep(delay)
+        self.dispatch_timer = None
+        await self._dispatch()
+
+    async def _dispatch(self):
+        if self.active or not self.pending or not self.connected or self.speaking:
+            return
+        remaining = self.quiet_until - asyncio.get_running_loop().time()
+        if remaining > 0:
+            self.transition(self.pending[0], 'waiting_for_pause', 'quiet_grace')
+            if not self.dispatch_timer or self.dispatch_timer.done():
+                self.dispatch_timer = asyncio.create_task(self._dispatch_after_pause(remaining))
+            return
+        uid = self.pending.popleft()
+        self.active = uid
+        entry = self.utterances[uid]
+        rev = entry['result']['revision']
+        try:
+            if self.browser_audio:
+                from language_settings import load_settings, resolve_voice
+                self.transition(uid, 'synthesizing')
+                self.on_browser_event({'type': 'voice-speech', 'data': {
+                    'session_id': self.id, 'revision': rev, 'utterance_id': uid,
+                    'thread_id': self.target.get('thread_id'), 'text': entry['text'],
+                    **resolve_voice(load_settings(), entry.get('language'))}})
+                return
+            await self.worker.queue_frames([
+                PresentationBoundary(utterance_id=uid, revision=rev),
+                PresentationSpeech(text=entry['text'], utterance_id=uid, revision=rev, language=entry.get('language')),
+                PresentationBoundary(utterance_id=uid, revision=rev, end=True)])
+        except Exception:
+            self.fail_active()
+            raise
+
+    async def speak(self, text, utterance_id, session_id, revision, language=None, wait_for_quiet=False):
+        if session_id != self.id:
+            raise HTTPException(409, 'La llamada cambió; esta respuesta pertenece a otra sesión.')
+        previous = self.utterances.get(utterance_id)
+        if previous:
+            if (previous['text'], previous['result']['revision'], previous.get('language')) != (text, revision, language):
+                raise HTTPException(409, 'utterance_id ya usado con otro contenido.')
+            return dict(previous['result'])
+        if revision != self.revision:
+            raise HTTPException(409, 'Respuesta obsoleta: el usuario ya inició otro turno.')
+        if not self.connected or self.switching:
+            raise HTTPException(409, 'No hay llamada conectada; no se guarda audio para más tarde.')
+        if self.speaking and not wait_for_quiet:
+            raise HTTPException(409, 'El usuario está hablando. Espera su mensaje antes de responder.')
+        if len(self.pending) >= 16 or len(self.utterances) >= 2048:
+            raise HTTPException(429, 'Cola o historial de locuciones lleno.')
+        result = {'status': 'waiting_for_turn' if self.speaking else 'queued', 'utterance_id': utterance_id, 'session_id': self.id,
+                  'revision': revision}
+        self.utterances[utterance_id] = {'text': text, 'result': result, 'language': language}
+        self.pending.append(utterance_id)
+        await self._dispatch()
+        return dict(result)
+
+
+class PresentationHub:
+    def __init__(self):
+        self.call = None
+        self.activation_lock = asyncio.Lock()
+        self.journal = RoomHistory(ROOT / '.voice-poc/room-history.sqlite3')
+        self.delivery_task = None
+
+    async def start(self):
+        self.journal.recover()
+        self.delivery_task = asyncio.create_task(self.deliver())
+
+    async def stop(self):
+        if self.delivery_task:
+            self.delivery_task.cancel()
+            await asyncio.gather(self.delivery_task, return_exceptions=True)
+
+    async def delivery_gateway(self, http, payload):
+        # Discover capability before sending: never retry a possibly delivered mutation.
+        candidates = [payload['gateway_url']]
+        for path in (ROOT / '.voice-poc/gateways').glob('*.json'):
+            try:
+                candidates.append(json.loads(path.read_text())['url'])
+            except (OSError, ValueError, KeyError):
+                continue
+        for url in dict.fromkeys(candidates):
+            try:
+                async with http.get(url+'/identity', timeout=aiohttp.ClientTimeout(total=2)) as response:
+                    identity = await response.json()
+                    if response.status == 200 and identity.get('durable_delivery') and (payload.get('channel') != 'room-control' or identity.get('room_control')):
+                        return url
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                continue
+        return None
+
+    async def deliver(self):
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=125)) as http:
+            while True:
+                for row in self.journal.pending():
+                    payload = json.loads(row['payload'])
+                    gateway = await self.delivery_gateway(http, payload)
+                    if gateway is None:
+                        continue  # Still pending: no mutation was attempted.
+                    self.journal.update(row['id'], 'sending')
+                    try:
+                        # Route was captured at utterance start; current focus is irrelevant.
+                        async with http.post(gateway+'/presentation/message', json=payload) as response:
+                            result = await response.json()
+                            if response.status != 200:
+                                raise RuntimeError('Delivery not confirmed')
+                        status = 'delivered'
+                    except asyncio.CancelledError:
+                        self.journal.update(row['id'], 'uncertain')
+                        raise
+                    except Exception:
+                        status = 'uncertain'
+                    self.journal.update(row['id'], status)
+                    if self.call and self.call.connected:
+                        self.call.input_receipt(payload, status)
+                        if status == 'delivered' and self.call.target.get('thread_id') == payload['thread_id']:
+                            self.call.sent += 1
+                await asyncio.sleep(.25)
+
+    async def publish(self, payload):
+        call = self.call
+        uid = payload.session_id+':voice:'+payload.utterance_id
+        # Store the conversational text even if its audio epoch has expired.
+        name = (call.target.get('title') if call and call.target.get('thread_id') == payload.thread_id else None) or 'Conversación'
+        record = self.journal.put(id=uid, thread=payload.thread_id, role='assistant',
+            text=payload.text, name=name, session=payload.session_id,
+            revision=payload.revision, status='text_only', language=payload.language)
+        if record.get('_existing'):
+            return {'status': record['status'], 'text_saved': True, 'utterance_id': payload.utterance_id}
+        reason = None
+        if payload.thread_id in self.journal.closed_channels():
+            reason = 'channel_closed'
+        elif not call or not call.connected:
+            reason = 'call_ended'
+        elif call.id != payload.session_id:
+            reason = 'session_changed'
+        elif call.target.get('thread_id') != payload.thread_id or call.switching:
+            reason = 'focus_changed'
+        elif payload.revision != call.revision:
+            reason = 'newer_turn' if call.turn_revision > payload.revision else 'focus_changed'
+        elif call.speaking:
+            reason = 'user_speaking'
+        may_wait = reason in {'newer_turn', 'user_speaking'}
+        if reason and not may_wait:
+            self.journal.update(uid, 'text_only', reason)
+            return {'status': 'text_only', 'text_saved': True, 'reason': reason}
+        try:
+            result = await call.speak(payload.text, payload.utterance_id, payload.session_id,
+                                      call.revision if may_wait else payload.revision, payload.language,
+                                      wait_for_quiet=may_wait)
+        except HTTPException as error:
+            if error.status_code not in {409, 429}:
+                raise
+            reason = 'expired_audio_turn' if error.status_code == 409 else 'queue_full'
+            self.journal.update(uid, 'text_only', reason)
+            return {'status': 'text_only', 'text_saved': True, 'reason': reason}
+        self.journal.update(uid, result['status'], {'waiting_for_turn':'user_speaking', 'waiting_for_pause':'quiet_grace'}.get(result['status']))
+        return {**result, 'text_saved': True}
+
+    async def send_text(self, text, session_id, thread_id, binding_id, message_id):
+        call = self.call
+        uid = session_id+':user-text:'+message_id
+        previous = self.journal.get(uid)
+        if previous:
+            if previous['text'] != text or previous['thread'] != thread_id:
+                raise HTTPException(409, 'El identificador ya corresponde a otro mensaje.')
+            return {'accepted': True, 'id': uid, 'revision': previous['revision']}
+        if (not call or not call.connected or call.id != session_id
+                or call.target.get('thread_id') != thread_id
+                or call.target.get('binding_id') != binding_id):
+            raise HTTPException(409, 'La conexión o conversación cambió. El texto no se envió.')
+        if not text.strip():
+            raise HTTPException(422, 'Escribe un mensaje.')
+        # Typed submissions get their own turn without changing an ongoing mic turn.
+        call.revision += 1
+        call.invalidate('interrupted', 'user_interrupted', preserve_waiting=True)
+        call.enqueue_input(text, target=dict(call.target), revision=call.revision,
+                           message_id=message_id, history_id=uid)
+        if not call.speaking:
+            call.quiet_until = asyncio.get_running_loop().time() + call.audio_grace_seconds
+        await call._dispatch()
+        return {'accepted': True, 'id': uid, 'revision': call.revision}
+
+    async def close_channel(self, thread_id, record):
+        async with self.activation_lock:
+            previous = self.journal.closed_channels().get(thread_id)
+            if previous:
+                return {'status': 'closed', 'notification_id': previous}
+            message_id = str(uuid.uuid4())
+            uid = 'channel-close:'+message_id
+            call = self.call
+            session = call.id if call else 'room-control'
+            revision = call.revision if call else 0
+            text = ('He cerrado el canal de voz de esta tarea desde la sala. '
+                    'Continúa solo por escrito y deja de publicar respuestas por voz hasta que '
+                    'te pida explícitamente activar la voz de nuevo. No detengas el trabajo. '
+                    'No actives la voz para confirmar este mensaje.')
+            payload = {'channel': 'room-control', 'thread_id': thread_id, 'text': text,
+                       'message_id': message_id, 'session_id': session, 'revision': revision,
+                       'history_id': uid, 'gateway_url': record['url']}
+            self.journal.put(id=uid, thread=thread_id, role='user', text=text, name='Tú',
+                             session=session, revision=revision, status='pending', payload=payload)
+            self.journal.close_channel(thread_id, uid)
+            if call and call.turn_target.get('thread_id') == thread_id:
+                call.cancelled_turn = call.turn_revision
+            if (binding() or {}).get('thread_id') == thread_id:
+                await self._activate({})
+            return {'status': 'closed', 'notification_id': uid}
+
+    async def activate(self, target):
+        async with self.activation_lock:
+            return await self._activate(target)
+
+    async def _activate(self, target):
+        if target.get('thread_id'):
+            self.journal.open_channel(target['thread_id'])
+        current = binding()
+        if current and all(current.get(k) == target.get(k) for k in ("thread_id", "gateway_url", "gateway_instance")):
+            return {"status": "already_active", "binding": current}
+        new = {key: target.get(key) for key in ("thread_id", "title", "gateway_url", "gateway_instance")}
+        new["binding_id"] = str(uuid.uuid4())
+        BINDING.parent.mkdir(parents=True, exist_ok=True)
+        temporary = BINDING.with_name(BINDING.name + "." + new["binding_id"] + ".tmp")
+        temporary.write_text(json.dumps(new))
+        try:
+            old = self.call
+            if old and not old.closed:
+                old.switching = True
+                old.revision += 1
+                old.invalidate('interrupted', 'focus_changed')
+                # Interrupt only the audio pipeline; the browser and task work survive.
+                await old.worker.queue_frame(InterruptionFrame())
+            temporary.replace(BINDING)
+            if old and not old.closed:
+                old.target = new
+                old.sent = 0
+                old.last_delivery = None
+                old.error = None
+        finally:
+            if self.call:
+                self.call.switching = False
+            temporary.unlink(missing_ok=True)
+        return {"status": "activated", "binding": new}
+
+    def attach(self, call):
+        if self.call and not self.call.closed:
+            raise RuntimeError('Ya hay una llamada de presentación conectada.')
+        self.call = call
+        call.journal = self.journal
+
+    def snapshot(self):
+        return {'binding': binding(), 'call': self.call.snapshot() if self.call else None,
+                'closed_threads': list(self.journal.closed_channels()),
+                'ice_servers': json.loads(os.getenv('PIPECAT_ICE_SERVERS', '[]'))}
+
+
+hub = PresentationHub()
+
+
+class Speech(BaseModel):
+    thread_id: str
+    session_id: str
+    revision: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=6000)
+    utterance_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    language: str | None = Field(default=None, pattern=r'^(es|en|fr|it|pt|hi)$')
+
+
+class TextMessage(BaseModel):
+    text: str = Field(min_length=1, max_length=12000)
+    session_id: str
+    thread_id: str
+    binding_id: str
+    message_id: uuid.UUID
+
+
+class Activation(BaseModel):
+    thread_id: str
+    title: str
+    gateway_url: str = Field(pattern=r'^http://127\.0\.0\.1:[0-9]{1,5}$')
+    gateway_instance: str
+
+
+def mount_presentation(app):
+    from language_settings import LanguageSettings, load_settings, save_settings
+    from contextlib import asynccontextmanager
+    previous_lifespan = app.router.lifespan_context
+    @asynccontextmanager
+    async def room_lifespan(application):
+        async with previous_lifespan(application) as state:
+            await hub.start()
+            try:
+                yield state
+            finally:
+                await hub.stop()
+    app.router.lifespan_context = room_lifespan
+    from fastapi.staticfiles import StaticFiles
+    browser_audio = Path(__file__).with_name('browser_audio') / 'dist'
+    if browser_audio.exists():
+        app.mount('/voice-browser', StaticFiles(directory=browser_audio, html=True), name='voice-browser')
+
+    @app.get('/api/presentation/history')
+    async def history(thread_id: str | None = None):
+        return {'messages': hub.journal.history(thread_id)}
+
+    @app.get('/api/presentation/voice-catalog')
+    async def voice_catalog():
+        from language_settings import CATALOG
+        return CATALOG
+
+    @app.get('/api/presentation/languages')
+    async def languages():
+        return load_settings().model_dump()
+
+    @app.post('/api/presentation/languages')
+    async def languages_update(payload: LanguageSettings, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        save_settings(payload)
+        if hub.call:
+            hub.call.audio_grace_seconds = payload.audio_grace_seconds
+        return {'saved': True, 'reconnect_for_stt': True}
+
+    @app.get('/voice/', include_in_schema=False)
+    async def view():
+        return FileResponse(Path(__file__).with_name('presentation.html'))
+
+    @app.get('/api/presentation')
+    async def state():
+        return hub.snapshot()
+
+    @app.post('/api/presentation/activate')
+    async def activate(payload: Activation, request: Request):
+        if request.headers.get('origin'):
+            raise HTTPException(403, 'Activa la voz desde la herramienta de tu conversación.')
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as http:
+                async with http.get(payload.gateway_url + '/identity') as response:
+                    response.raise_for_status()
+                    identity = await response.json()
+            if identity.get('thread_id') != payload.thread_id or identity.get('instance_id') != payload.gateway_instance:
+                raise ValueError('Gateway identity mismatch')
+        except Exception as error:
+            raise HTTPException(409, 'No se pudo verificar la conversación que activa la voz.') from error
+        return await hub.activate(payload.model_dump())
+
+    async def available_participants():
+        current = binding() or {}
+        entries = []
+        for path in (ROOT / '.voice-poc/gateways').glob('*.json'):
+            try:
+                record = json.loads(path.read_text())
+                import re
+                if not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}', record['url']):
+                    continue
+                entries.append(record)
+            except (OSError, ValueError, KeyError):
+                continue
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1)) as http:
+            async def inspect(record):
+                active = record.get('thread_id') == current.get('thread_id')
+                title = record.get('title') or (current.get('title') if active else None)
+                connected = False
+                try:
+                    async with http.get(record['url'] + '/identity') as response:
+                        identity = await response.json()
+                    connected = (identity.get('thread_id') == record.get('thread_id') and
+                                 identity.get('instance_id') == record.get('instance_id'))
+                except Exception:
+                    pass
+                return {'thread_id': record.get('thread_id'),
+                        'title': title or ('Conversación ' + str(record.get('thread_id', ''))[:8]),
+                        'available': connected, 'selected': active}
+            return await asyncio.gather(*(inspect(record) for record in entries))
+
+    @app.get('/api/presentation/participants')
+    async def participants():
+        return {'participants': await available_participants(), 'closed_threads': list(hub.journal.closed_channels())}
+
+    @app.post('/api/presentation/select')
+    async def select_participant(payload: dict, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        import re
+        thread_id = payload.get('thread_id', '')
+        if not isinstance(thread_id, str) or not re.fullmatch(r'[a-f0-9-]{36}', thread_id):
+            raise HTTPException(400, 'Identificador de conversación inválido.')
+        try:
+            record = json.loads((ROOT / '.voice-poc/gateways' / (thread_id + '.json')).read_text())
+            if record.get('thread_id') != thread_id or not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}', record['url']):
+                raise ValueError('Invalid gateway')
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+                async with http.get(record['url'] + '/identity') as response:
+                    identity = await response.json()
+                if identity.get('thread_id') != thread_id or identity.get('instance_id') != record.get('instance_id'):
+                    raise ValueError('Stale gateway')
+                async with http.post(record['url'] + '/activate') as response:
+                    result = await response.json()
+                    if response.status != 200:
+                        raise ValueError('Activation failed')
+            return result
+        except Exception as error:
+            raise HTTPException(409, 'No se pudo incorporar esa conversación. Activa la voz desde su tarea.') from error
+
+    @app.post('/api/presentation/cancel-input')
+    async def cancel_input(payload: dict, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        call = hub.call
+        if (not call or not call.connected or not call.speaking
+                or payload.get('session_id') != call.id
+                or payload.get('revision') != call.turn_revision):
+            raise HTTPException(409, 'La intervención ya terminó; no se puede cancelar.')
+        call.cancelled_turn = call.turn_revision
+        if call.on_browser_event:
+            call.on_browser_event({'type':'voice-user-turn', 'data':{
+                'phase':'cancelled', 'revision':call.turn_revision,
+                'thread_id':call.turn_target.get('thread_id')}})
+        return {'status':'cancelled'}
+
+    @app.post('/api/presentation/close')
+    async def close_channel(payload: dict, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        import re
+        thread_id = payload.get('thread_id', '')
+        if not isinstance(thread_id, str) or not re.fullmatch(r'[a-f0-9-]{36}', thread_id):
+            raise HTTPException(400, 'Identificador inválido.')
+        try:
+            record = json.loads((ROOT / '.voice-poc/gateways' / (thread_id+'.json')).read_text())
+            if record.get('thread_id') != thread_id or not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}', record['url']):
+                raise ValueError()
+        except (OSError, ValueError, KeyError):
+            raise HTTPException(409, 'No se encuentra el puente de esta conversación.')
+        return await hub.close_channel(thread_id, record)
+
+    @app.post('/api/presentation/leave')
+    async def leave(payload: dict, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        # Check and mutate under the same lock as activation.
+        async with hub.activation_lock:
+            if payload.get('binding_id') != (binding() or {}).get('binding_id'):
+                raise HTTPException(409, 'La conversación cambió. Actualiza la sala.')
+            return await hub._activate({})
+
+    @app.post('/api/presentation/text')
+    async def typed_message(payload: TextMessage, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        return await hub.send_text(payload.text, payload.session_id, payload.thread_id,
+                                   payload.binding_id, str(payload.message_id))
+
+    @app.post('/api/presentation/browser-receipt')
+    async def browser_receipt(payload: dict, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa la sala local.')
+        call = hub.call
+        uid, rev = payload.get('utterance_id'), payload.get('revision')
+        if payload.get('status') in {'cancelled_unplayed', 'cancelled_playing'}:
+            if (not call or not call.browser_audio or payload.get('session_id') != call.id
+                    or not isinstance(rev, int) or not call.browser_cancelled(uid, rev, payload['status'] == 'cancelled_playing')):
+                raise HTTPException(409, 'Locución obsoleta.')
+            return {'status': payload['status']}
+        if (not call or not call.browser_audio or payload.get('session_id') != call.id
+                or not call.is_current(uid, rev)):
+            raise HTTPException(409, 'Locución obsoleta.')
+        status = payload.get('status')
+        if status == 'playback_finished':
+            await call.playback_finished(uid, rev)
+        elif status == 'failed':
+            call.error = 'Falló la voz en el navegador. Revisa la sala; no se repetirá automáticamente.'
+            call.fail_active()
+        elif status == 'playing':
+            call.transition(uid, status)
+        else:
+            raise HTTPException(400, 'Estado inválido.')
+        return {'status': status}
+
+    @app.post('/api/presentation/speak')
+    async def speak(payload: Speech, request: Request):
+        origin = request.headers.get('origin')
+        if origin and origin != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Usa el canal local de esta conversación.')
+        try:
+            return await hub.publish(payload)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error

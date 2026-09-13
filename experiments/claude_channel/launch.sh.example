@@ -1,0 +1,5 @@
+#!/bin/sh
+# Native Claude session with the voice channel enabled; forwards normal CLI args.
+set -eu
+voice_channel_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec claude --dangerously-load-development-channels server:voice-room --mcp-config "$voice_channel_dir/mcp.json" "$@"
