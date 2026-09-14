@@ -1,35 +1,41 @@
 """Voice room server: browser audio in, durable delivery out. No LLM lives here."""
+import asyncio
 import os
+import uuid
 from pathlib import Path
 from dotenv import dotenv_values
+from fastapi import HTTPException, WebSocket
 from speech_filter import FilteredOpenAISTTService
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import OutputTransportMessageUrgentFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
-from pipecat.runner.utils import create_transport
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
-from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
 from pipecat.workers.runner import WorkerRunner
 
-from presentation import binding, hub, PresentationCall, NoInference, mount_presentation, PresentationGate, PresentationPlayback
+from browser_socket import BrowserFrameSerializer, session_message
+from presentation import binding, hub, PresentationCall, NoInference, mount_presentation, PresentationGate, PresentationPlayback, require_same_origin
 from connector_control import mount_connector_control
 
 
-async def bot(runner_args):
+async def browser_call(websocket):
+    """One accepted browser socket is one call: the room mints its id and announces it first."""
     from language_settings import load_settings
     language_preferences = load_settings()
     # Read on every connection so adding the key only requires reconnecting.
     config = {**dotenv_values(Path(__file__).resolve().parent.parent / ".env.voice"), **os.environ}
-    transport = await create_transport(runner_args, {
-        "webrtc": lambda: TransportParams(audio_in_enabled=True, audio_out_enabled=True)
-    })
+    serializer = BrowserFrameSerializer()
+    # The room's own origin policy ran before accept; pipecat's env-driven list stays out of it.
+    transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
+        audio_in_enabled=True, serializer=serializer, allowed_origins=[]))
     user, assistant = LLMContextAggregatorPair(LLMContext(), user_params=LLMUserAggregatorParams(
         vad_analyzer=SileroVADAnalyzer(params=VADParams(
             start_secs=float(config.get("VOICE_VAD_START_SECS", "0.08")),
@@ -53,28 +59,37 @@ async def bot(runner_args):
         stt = WhisperSTTService(device="cpu", compute_type="int8", settings=WhisperSTTService.Settings(
             model=os.getenv("VOICE_STT_MODEL", "base"), language=Language.ES,
         ))
-    # Synthesis happens in the browser; no TTS service sits in this pipeline.
+    # Synthesis happens in the browser; no TTS service sits in this pipeline and no audio flows down.
     gate, playback = PresentationGate(), PresentationPlayback()
     pipeline = Pipeline([transport.input(), stt, user, NoInference(), gate, transport.output(), playback, assistant])
     worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=True))
-    runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
+    runner = WorkerRunner(handle_sigint=False)  # The web server owns the process signals.
     await runner.add_workers(worker)
+    # Room events leave through one queue: PresentationCall raises them from synchronous code,
+    # and a single sender keeps their order on the wire.
+    outbox = asyncio.Queue()
+    send = outbox.put_nowait
+
+    async def deliver():
+        while True:
+            message = await outbox.get()
+            await transport.output().send_message(OutputTransportMessageUrgentFrame(message=message))
+
     # Joining the room is independent of whether an agent has joined it.
-    call = PresentationCall(runner_args.webrtc_connection.pc_id, binding() or {}, worker, None, stt)
+    call = PresentationCall(str(uuid.uuid4()), binding() or {}, worker, None, stt)
     call.browser_audio = True
-    call.on_browser_event = runner_args.webrtc_connection.send_app_message
+    call.on_browser_event = send
     gate.call = playback.call = call
-    call.on_input_receipt = lambda data: runner_args.webrtc_connection.send_app_message({
-        "type": "voice-input-receipt", "data": data,
-    })
+    call.on_input_receipt = lambda data: send({"type": "voice-input-receipt", "data": data})
     call.audio_grace_seconds = language_preferences.audio_grace_seconds
     hub.attach(call)
     # The hub owns the durable outbox independently of this call.
+    sender = asyncio.create_task(deliver())
 
     @user.event_handler("on_user_turn_started")
     async def presentation_started(aggregator, strategy):
         call.user_started()
-        runner_args.webrtc_connection.send_app_message({
+        send({
             "type": "voice-user-turn", "data": {
                 "phase": "started", "revision": call.revision,
                 "thread_id": call.target.get("thread_id"),
@@ -84,7 +99,7 @@ async def bot(runner_args):
     @user.event_handler("on_user_turn_stopped")
     async def presentation_stopped(aggregator, strategy, message):
         call.speaking = False
-        runner_args.webrtc_connection.send_app_message({
+        send({
             "type": "voice-user-turn", "data": {
                 "phase": "cancelled" if getattr(call, "cancelled_turn", None) == call.turn_revision else "finished",
                 "revision": call.turn_revision,
@@ -98,6 +113,8 @@ async def bot(runner_args):
     @transport.event_handler("on_client_connected")
     async def connected(transport, client):
         call.connected = True  # No synthetic agent greeting or automatically generated response.
+        # Awaited here, inside pipeline start-up, so it is the first frame the browser reads.
+        await transport.output().send_message(OutputTransportMessageUrgentFrame(message=session_message(call.id, serializer)))
 
     @transport.event_handler("on_client_disconnected")
     async def disconnected(transport, client):
@@ -109,10 +126,31 @@ async def bot(runner_args):
     finally:
         call.disconnect()
         call.closed = True
+        sender.cancel()
+
+
+def mount_browser_call(app):
+    @app.websocket('/api/presentation/ws')
+    async def browser_socket(websocket: WebSocket):
+        try:
+            require_same_origin(websocket)
+        except HTTPException:
+            await websocket.close(code=1008)  # Policy violation: not this room's own page.
+            return
+        await websocket.accept()
+        await browser_call(websocket)
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import app, main
+    import argparse
+    import uvicorn
+    from fastapi import FastAPI
+    parser = argparse.ArgumentParser(description="Sidevoice room: browser voice in, durable delivery out.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8767)
+    arguments = parser.parse_args()
+    app = FastAPI()
     mount_presentation(app)
     mount_connector_control(app, hub)
-    main()
+    mount_browser_call(app)
+    uvicorn.run(app, host=arguments.host, port=arguments.port)

@@ -18,4 +18,4 @@ if [ ! -f voice_poc/browser_audio/dist/worker.js ]; then
 fi
 export SSL_CERT_FILE=$("$sidevoice_python" -m certifi)
 echo "Sidevoice: http://127.0.0.1:8767/voice/"
-exec "$sidevoice_python" -u voice_poc/bot.py -t webrtc --host 127.0.0.1 --port 8767
+exec "$sidevoice_python" -u voice_poc/bot.py --host 127.0.0.1 --port 8767

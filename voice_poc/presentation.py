@@ -477,8 +477,7 @@ class PresentationHub:
 
     def snapshot(self):
         return {'binding': binding(), 'call': self.call.snapshot() if self.call else None,
-                'closed_threads': list(self.journal.closed_channels()),
-                'ice_servers': json.loads(os.getenv('PIPECAT_ICE_SERVERS', '[]'))}
+                'closed_threads': list(self.journal.closed_channels())}
 
 
 hub = PresentationHub()
@@ -546,6 +545,10 @@ def mount_presentation(app):
     @app.get('/voice/', include_in_schema=False)
     async def view():
         return FileResponse(Path(__file__).with_name('presentation.html'))
+
+    @app.get('/voice/mic_capture.js', include_in_schema=False)
+    async def mic_capture():
+        return FileResponse(Path(__file__).with_name('mic_capture.js'), media_type='text/javascript')
 
     @app.get('/api/presentation')
     async def state():

@@ -60,7 +60,8 @@ unnecessary and it is kept only as the fallback reference.
 - The last-mile interfaces are private to each harness and may change across
   versions; the connector pins the ranges it was verified against.
 - Connector credentials are per machine. The browser side of the room still
-  binds to loopback; remote exposure (HTTPS, TURN) is separate work.
+  binds to loopback; its link is a plain WebSocket, so remote exposure needs only
+  a TLS reverse proxy, which is separate work.
 - WebGPU initialization fallback exists; full device-loss recovery needs work.
 - Responses may wait while the working agent is busy. There is no independent
   instant-response interlocutor.

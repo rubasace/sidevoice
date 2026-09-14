@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
 function setup(){
  class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this}addEventListener(){}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(){this.children=[]}remove(){}setAttribute(){}click(){this.onclick?.()}}
- const elements=new Map(),handlers={};const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},cancelAnimationFrame(){},requestAnimationFrame(){}});
+ const elements=new Map(),handlers={};const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(__dirname+'/presentation.html','utf8').split('<script>')[1].split('</script>')[0];vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
@@ -13,7 +13,7 @@ test('TTS announcement/completion is one row; intentional repetitions remain sep
  emit(false,3);emit(true,4);assert.equal(s.run('history.length'),2);
 });
 test('Command D toggles and holding space restores mute on release or loss of focus',()=>{
- const s=setup();s.run("var track={enabled:true};stream={getAudioTracks:()=>[track]};pc={}");
+ const s=setup();s.run("var track={enabled:true};stream={getAudioTracks:()=>[track]};ws={}");
  const key=code=>({code,metaKey:code==='KeyD',target:new s.Element(),preventDefault(){}});
  s.handlers.keydown(key('KeyD'));assert.equal(s.run('track.enabled'),false);
  s.handlers.keydown(key('Space'));assert.equal(s.run('track.enabled'),true);
@@ -22,7 +22,7 @@ test('Command D toggles and holding space restores mute on release or loss of fo
  s.handlers.keydown(key('KeyD'));assert.equal(s.run('track.enabled'),true);
 });
 test('Keyboard shortcuts ignore typing and auto-repeat',()=>{
- const s=setup();s.run("var track={enabled:true};stream={getAudioTracks:()=>[track]};pc={}");
+ const s=setup();s.run("var track={enabled:true};stream={getAudioTracks:()=>[track]};ws={}");
  const target=new s.Element();target.closest=()=>({});
  s.handlers.keydown({code:'KeyD',metaKey:true,target});assert.equal(s.run('track.enabled'),true);
  s.handlers.keydown({code:'KeyD',metaKey:true,target:new s.Element(),repeat:true,preventDefault(){}});assert.equal(s.run('track.enabled'),true);
@@ -57,7 +57,7 @@ test('Delivery tick follows the matching receipt and does not imply read',()=>{
 });
 
 test('Space repeats and release suppress native button activation without toggling the mic',()=>{
- const s=setup();s.run("var track={enabled:false};stream={getAudioTracks:()=>[track]};pc={}");
+ const s=setup();s.run("var track={enabled:false};stream={getAudioTracks:()=>[track]};ws={}");
  let prevented=0;const event=repeat=>({code:'Space',repeat,target:new s.Element(),preventDefault(){prevented++}});
  s.handlers.keydown(event(false));
  for(let i=0;i<8;i++)s.handlers.keydown(event(true));
@@ -139,7 +139,7 @@ test('Cancelling unplayed synthesis reports it as unplayed rather than interrupt
 
 test('Text submission freezes its destination and clears only the submitted draft',async()=>{
  const s=setup(),sent=[];s.context.crypto={randomUUID:()=> 'test-message'};
- s.run("pc={};$('text-message').value='Un mensaje escrito';roomBinding.binding_id='binding-a'");
+ s.run("ws={};$('text-message').value='Un mensaje escrito';roomBinding.binding_id='binding-a'");
  s.context.fetch=async(path,options)=>{if(options){sent.push(JSON.parse(options.body));s.run("$('text-message').value='Ya escribiendo el siguiente'");return {ok:true,json:async()=>({accepted:true})}}return {ok:true,json:async()=>({messages:[]})}};
  await s.run("$('text-composer').onsubmit({preventDefault(){}})");
  assert.equal(sent[0].thread_id,'a');assert.equal(sent[0].text,'Un mensaje escrito');
@@ -147,7 +147,7 @@ test('Text submission freezes its destination and clears only the submitted draf
 });
 
 test('Text entry is unavailable when viewing a different inactive history',()=>{
- const s=setup();s.run("pc={};viewedThread='b';updateComposer()");
+ const s=setup();s.run("ws={};viewedThread='b';updateComposer()");
  assert.equal(s.run("$('text-send').disabled"),true);
 });
 test('Microphone preference can be toggled before joining',()=>{
@@ -160,19 +160,17 @@ test('Microphone preference can be toggled before joining',()=>{
 test('Hangup releases media and cancels an in-flight connection without clearing history',()=>{
  const s=setup();
  s.run(`
- var stopped=0,closed=0,paused=0;
+ var stopped=0,closed=0;
  $('mute').style.setProperty=()=>{};
- $('audio').pause=()=>paused++;
  window.roomVoice={cancel(){}};
- pc={close(){closed++}};
+ ws={close(){closed++}};
  stream={getTracks:()=>[{stop(){stopped++}}]};
  connecting=true;history=[{text:'keep'}];
  disconnect();
  `);
  assert.equal(s.run('stopped'),1);
  assert.equal(s.run('closed'),1);
- assert.equal(s.run('paused'),1);
- assert.equal(s.run('pc'),null);
+ assert.equal(s.run('ws'),null);
  assert.equal(s.run('stream'),null);
  assert.equal(s.run('connecting'),false);
  assert.equal(s.run('connectEpoch'),1);
@@ -188,4 +186,19 @@ test('Cancelled draft disappears and late transcription is ignored until the nex
  emit({type:'voice-user-turn',data:{phase:'started',revision:2,thread_id:'a'}});
  emit({type:'user-transcription',data:{final:true,text:'keep'}});
  assert.equal(s.run('history[0].text'),'keep');
+});
+test('The room speaks first: the page adopts its call id and treats anything earlier as a room event',async()=>{
+ const s=setup();s.context.crypto={randomUUID:()=>'ready-1'};
+ const socket={sent:[],send(data){this.sent.push(data)}};
+ const session=s.run('openSession')(socket);
+ socket.onopen();assert.equal(JSON.parse(socket.sent[0]).type,'client-ready');
+ socket.onmessage({data:JSON.stringify({type:'user-started-speaking',data:{}})});
+ assert.equal(s.run('userLive'),true);
+ socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'call-1',sample_rate:16000,channels:1}})});
+ assert.deepEqual(await session,{session_id:'call-1',sample_rate:16000,channels:1});
+ const refused={send(){}};const rejection=s.run('openSession')(refused);refused.onclose();
+ await assert.rejects(rejection,{message:'La sala rechazó la conexión'});
+});
+test('The call socket follows the page scheme and host',()=>{
+ const s=setup();assert.equal(s.run('roomSocketUrl()'),'wss://room.example/api/presentation/ws');
 });

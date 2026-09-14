@@ -1,3 +1,4 @@
-pipecat-ai[webrtc,silero,whisper,runner]==1.10.0
+pipecat-ai[websocket,silero,whisper]==1.10.0
+uvicorn==0.53.0
 
 scipy==1.18.1

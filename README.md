@@ -14,7 +14,7 @@ publishes a conversational version to the room. There is no separate voice opera
 
 ## What works
 
-- Browser microphone over WebRTC with OpenAI speech-to-text.
+- Browser microphone over a plain WebSocket with OpenAI speech-to-text.
 - Kokoro TTS in the browser: WebGPU with WASM fallback during initialization.
 - Interrupt speech without automatically cancelling the agent's work.
 - Replies arriving while you speak wait for your turn and a configurable pause.
@@ -126,7 +126,7 @@ and draft cancellation. They do not prove live Claude support or every browser.
 - Verify `codex queue` against Codex Desktop threads; publish the connector to npm.
 - Validate real refinement sessions, reconnection and noisy microphones.
 - Simplify setup and validate Windows/mobile clients.
-- Package remote deployment with HTTPS and WebRTC networking.
+- Package remote deployment behind an HTTPS reverse proxy.
 - Add TTS/STT engines and permanent room-history deletion.
 
 ## Data and license
