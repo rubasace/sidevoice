@@ -15,11 +15,13 @@ class Resampler{
 }
 function toInt16(samples){const out=new Int16Array(samples.length);for(let i=0;i<samples.length;i++){const s=Math.max(-1,Math.min(1,samples[i]));out[i]=s<0?s*32768:s*32767}return out}
 class MicCapture extends AudioWorkletProcessor{
- constructor(options){super();const target=options.processorOptions.sampleRate;this.resampler=new Resampler(sampleRate,target);this.chunk=new Int16Array(Math.round(target/50));this.filled=0}
+ constructor(options){super();const target=options.processorOptions.sampleRate;this.resampler=new Resampler(sampleRate,target);this.size=Math.round(target/50);this.chunk=new Int16Array(this.size);this.filled=0}
  process(inputs){
   const channel=inputs[0]&&inputs[0][0];if(!channel)return true;
   const samples=toInt16(this.resampler.process(channel));
-  for(let i=0;i<samples.length;i++){this.chunk[this.filled++]=samples[i];if(this.filled===this.chunk.length){this.port.postMessage(this.chunk.buffer,[this.chunk.buffer]);this.chunk=new Int16Array(this.chunk.length);this.filled=0}}
+  // Posting transfers the buffer, which detaches this.chunk: its length then reads 0,
+  // so the next chunk is sized from this.size and never from the detached one.
+  for(let i=0;i<samples.length;i++){this.chunk[this.filled++]=samples[i];if(this.filled===this.size){this.port.postMessage(this.chunk.buffer,[this.chunk.buffer]);this.chunk=new Int16Array(this.size);this.filled=0}}
   return true;
  }
 }

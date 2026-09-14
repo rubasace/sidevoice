@@ -1,8 +1,10 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
 function load(contextRate){
  const posted=[],registered={};
- class AudioWorkletProcessor{constructor(){this.port={postMessage:data=>posted.push(data)}}}
- const context=vm.createContext({AudioWorkletProcessor,Float32Array,Int16Array,Math,sampleRate:contextRate,registerProcessor:(name,cls)=>registered[name]=cls});
+ // Transfer for real: a real port detaches the buffer it is handed, and code that
+ // then reads the detached array's length gets 0.
+ class AudioWorkletProcessor{constructor(){this.port={postMessage:(data,transfer)=>{posted.push(transfer?structuredClone(data,{transfer:[data]}):data)}}}}
+ const context=vm.createContext({AudioWorkletProcessor,Float32Array,Int16Array,Math,structuredClone,sampleRate:contextRate,registerProcessor:(name,cls)=>registered[name]=cls});
  vm.runInContext(fs.readFileSync(__dirname+'/mic_capture.js','utf8'),context);
  return {run:code=>vm.runInContext(code,context),posted,registered};
 }
@@ -33,4 +35,14 @@ test('The processor posts 20 ms chunks at the room rate and stays scheduled',()=
  assert.equal(m.posted.length,3);
  for(const chunk of m.posted){assert.equal(chunk.byteLength,640);assert.ok(new Int16Array(chunk).every(v=>v===0))}
  assert.equal(processor.process([[]]),true);assert.equal(m.posted.length,3);
+});
+test('It keeps posting after the first chunk is transferred away',()=>{
+ const m=load(16000);const MicCapture=m.registered['mic-capture'];
+ const processor=new MicCapture({processorOptions:{sampleRate:16000}});
+ // 40 blocks of 128 samples at the room rate is 5120 samples: sixteen full 20 ms
+ // chunks. A processor that sizes the next chunk from the detached buffer posts one.
+ for(let i=0;i<40;i++)processor.process([[ramp(0,128,0.0001)]]);
+ assert.equal(m.posted.length,16);
+ for(const chunk of m.posted)assert.equal(chunk.byteLength,640);
+ assert.ok(new Int16Array(m.posted.at(-1)).some(v=>v!==0),'later chunks still carry the signal');
 });
