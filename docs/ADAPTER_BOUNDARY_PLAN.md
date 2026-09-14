@@ -1432,7 +1432,8 @@ operator on 2026-09-14 ("confirmadísimo").** `desktop_gateway.mjs` deleted;
 the whole app-tools-socket bridge (§1.4) is gone. The `http` adapter kind
 stays as a generic receiver path for harnesses with no session inbox.
 
-**D6 — Plaintext transcripts and outbox in SQLite.** Raised by the operator:
+**D6 — Plaintext transcripts and outbox in SQLite.** Tracked as
+[rubasace/sidevoice#1](https://github.com/rubasace/sidevoice/issues/1). Raised by the operator:
 the journal stores what the user said and what the agent answered in clear, on
 the room's disk; the connector's `~/.sidevoice/outbox.json` holds unsent speech
 the same way (mode 0600). Accepted for a first version; the operator will
@@ -1451,8 +1452,8 @@ Recommendation when it comes up: 1 as a setting plus 2 for what remains.
 **D7 — Package name. Settled 2026-09-14: `@sidevoice/uplink`** (operator: "llámale
 como quieras"). It is the piece next to the agent that carries voice *up* to the
 room; the bin stays `sidevoice`. Checked free on npm; the `sidevoice` scope
-needs an npm org of that name, created when the publishing token is (tracked in
-the publishing issue). Unscoped fallback if the org is taken: `sidevoice-uplink`.
+needs an npm org of that name, created when the publishing token is — tracked
+as [rubasace/sidevoice#2](https://github.com/rubasace/sidevoice/issues/2). Unscoped fallback if the org is taken: `sidevoice-uplink`.
 
 
 ### What execution needs from the operator
