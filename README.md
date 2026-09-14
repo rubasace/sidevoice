@@ -33,7 +33,8 @@ instruction to continue in writing. It preserves the task and room history.
   (see `docs/INSTALL.md`); the agent's machine needs Node.js 22+.
 - Python 3.12 and Node.js 22+ with npm.
 - A compatible browser. Windows and mobile are not validated end to end.
-- An OpenAI API key for the recommended transcription path. Browser TTS is local.
+- Optionally an OpenAI API key for cloud transcription, which you can paste into
+  the room's settings; without one the room transcribes locally on CPU.
 
 
 ## Run the room
@@ -48,7 +49,8 @@ npm run build --prefix voice_poc/browser_audio
 cp .env.example .env.voice
 ```
 
-Set `VOICE_STT_API_KEY` in `.env.voice`, then run:
+Optionally set `VOICE_STT_API_KEY` in `.env.voice` — the room's transcription
+settings can hold the key instead. Then run:
 
 ```sh
 ./start.sh
@@ -58,8 +60,11 @@ Open **http://127.0.0.1:8767/voice/**. The room can stay open without an agent
 selected. The browser downloads model assets on first use, prepares them and
 caches them locally. Initial preparation is slower than subsequent use.
 
-Without an STT key the prototype falls back to CPU Whisper. The main workflow
-has been exercised with OpenAI transcription.
+Transcription is configurable from the room: pick the engine (local Whisper on
+CPU, or OpenAI) and its model, and store the OpenAI key there. With no key the
+room transcribes locally. The key is kept by the room, never by the browser,
+and the room itself has no access control yet — do not expose it publicly with
+a key installed.
 
 ## Connect a conversation
 

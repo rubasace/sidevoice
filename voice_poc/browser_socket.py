@@ -17,6 +17,8 @@ class BrowserFrameSerializer(FrameSerializer):
         # RTVI events (transcriptions, speaking state) are exactly what the page listens for.
         super().__init__(FrameSerializer.InputParams(ignore_rtvi_messages=False))
         self.sample_rate, self.channels = sample_rate, channels
+        # What the microphone actually delivered, so a silent call can be told from a broken one.
+        self.audio_frames = self.audio_bytes = 0
 
     async def serialize(self, frame: Frame):
         if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
@@ -28,6 +30,8 @@ class BrowserFrameSerializer(FrameSerializer):
             usable = len(data) - len(data) % (2 * self.channels)
             if not usable:
                 return None
+            self.audio_frames += 1
+            self.audio_bytes += usable
             return InputAudioRawFrame(audio=bytes(data[:usable]), sample_rate=self.sample_rate,
                                       num_channels=self.channels)
         try:

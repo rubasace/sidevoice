@@ -25,6 +25,17 @@ messaging socket (inherited by the façade), or `codex queue` on Codex. Both are
 private interfaces of those products, versioned by them, and are treated as
 replaceable adapters.
 
+## Transcription
+
+The engine that turns the microphone into text is chosen in the room: a local
+Whisper on CPU, or a cloud provider. A provider's key is stored by the room in
+`.voice-poc/stt-credentials.json` (mode 0600), never returned to the browser and
+never written to the transcript; only its last four characters are shown so a
+person can tell which key is installed. `VOICE_STT_API_KEY` still works as a
+source. Choosing a provider whose key is missing falls back to the local engine
+with a stated reason rather than failing mid-sentence, and each call reports the
+engine it resolved to.
+
 ## Persistence and playback
 
 SQLite stores the transcript and durable outbox. Input delivery can outlive a

@@ -29,6 +29,11 @@ class LanguageSettings(BaseModel):
     language_overrides: dict[str, LanguageVoice] = Field(default_factory=dict)
     stt_language: Literal['auto', 'es', 'en', 'fr', 'it', 'pt', 'hi'] = 'auto'
     stt_context: str = ''
+    # 'auto' keeps the original behaviour: OpenAI when a key is available, local otherwise.
+    stt_provider: Literal['auto', 'local', 'openai'] = 'auto'
+    # Empty means the provider's own default; an unknown id is accepted so a new
+    # model works without a release.
+    stt_model: str = Field(default='', max_length=120)
     spanish_voice: Literal['inherit', 'ef_dora', 'em_alex', 'em_santa'] = 'ef_dora'
     english_voice: Literal['inherit', 'af_heart', 'af_bella', 'bf_emma', 'bm_george'] = 'af_heart'
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'

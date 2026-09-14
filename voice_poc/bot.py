@@ -5,8 +5,9 @@ import uuid
 from pathlib import Path
 from dotenv import dotenv_values
 from fastapi import HTTPException, WebSocket
-from speech_filter import FilteredOpenAISTTService
+from loguru import logger
 
+import transcription
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import OutputTransportMessageUrgentFrame
@@ -14,8 +15,6 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
-from pipecat.services.whisper.stt import WhisperSTTService
-from pipecat.transcriptions.language import Language
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
@@ -49,16 +48,9 @@ async def browser_call(websocket):
             )
         ]),
     ))
-    if config.get("VOICE_STT_API_KEY", "").strip():
-        stt = FilteredOpenAISTTService(api_key=config["VOICE_STT_API_KEY"], settings=FilteredOpenAISTTService.Settings(
-            model=config.get("VOICE_STT_API_MODEL", "gpt-4o-transcribe"),
-            language=None if language_preferences.stt_language == 'auto' else Language(language_preferences.stt_language),
-            prompt=language_preferences.stt_context or None,
-        ))
-    else:
-        stt = WhisperSTTService(device="cpu", compute_type="int8", settings=WhisperSTTService.Settings(
-            model=os.getenv("VOICE_STT_MODEL", "base"), language=Language.ES,
-        ))
+    stt, transcription_choice = transcription.build(language_preferences, config)
+    logger.info("Transcription: {} · {} ({})", transcription_choice['provider'],
+                transcription_choice['model'], transcription_choice['reason'])
     # Synthesis happens in the browser; no TTS service sits in this pipeline and no audio flows down.
     gate, playback = PresentationGate(), PresentationPlayback()
     pipeline = Pipeline([transport.input(), stt, user, NoInference(), gate, transport.output(), playback, assistant])
@@ -78,6 +70,8 @@ async def browser_call(websocket):
     # Joining the room is independent of whether an agent has joined it.
     call = PresentationCall(str(uuid.uuid4()), binding() or {}, worker, None, stt)
     call.browser_audio = True
+    call.mic = serializer
+    call.transcription = transcription_choice
     call.on_browser_event = send
     gate.call = playback.call = call
     call.on_input_receipt = lambda data: send({"type": "voice-input-receipt", "data": data})

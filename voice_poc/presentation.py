@@ -133,6 +133,8 @@ class PresentationCall:
         self.on_input_receipt = None
         self.browser_audio = False
         self.on_browser_event = None
+        self.mic = None  # Set to the serializer when a browser call owns this one.
+        self.transcription = None  # Which STT engine this call resolved to.
 
     def input_receipt(self, payload, status):
         if self.on_input_receipt:
@@ -145,6 +147,8 @@ class PresentationCall:
                 'last_delivery': self.last_delivery, 'revision': self.revision,
                 'utterances': [dict(v['result']) for v in self.utterances.values()],
                 'tts': {'engine': 'Kokoro · navegador'} if self.browser_audio else getattr(self.tts, 'runtime_status', {}),
+                'mic': {'frames': getattr(self.mic, 'audio_frames', 0), 'bytes': getattr(self.mic, 'audio_bytes', 0)} if self.mic else None,
+                'transcription': self.transcription,
                 'speech_filter': getattr(self.stt, 'filter_stats', {})}
 
     def enqueue_input(self, text, *, target=None, revision=None, message_id=None, history_id=None):
@@ -529,6 +533,38 @@ def mount_presentation(app):
     async def voice_catalog():
         from language_settings import CATALOG
         return CATALOG
+
+    @app.get('/api/presentation/transcription')
+    async def transcription_settings(request: Request):
+        require_same_origin(request)
+        import transcription
+        settings = load_settings()
+        return {'catalog': transcription.CATALOG,
+                'credentials': transcription.credential_state(),
+                'effective': transcription.resolve(settings)}
+
+    @app.post('/api/presentation/transcription/credential')
+    async def transcription_credential(payload: dict, request: Request):
+        # A secret only ever arrives from this room's own page: unlike the other
+        # settings, a request with no Origin at all is refused here too.
+        if not request.headers.get('origin'):
+            raise HTTPException(403, 'Guarda la clave desde la sala, no desde un cliente externo.')
+        require_same_origin(request)
+        import transcription
+        provider = payload.get('provider')
+        if provider not in transcription.PROVIDERS:
+            raise HTTPException(400, 'Proveedor desconocido.')
+        key = payload.get('key')
+        try:
+            if key is None or not str(key).strip():
+                transcription.clear_key(provider)
+            else:
+                await transcription.verify(provider, str(key).strip())
+                transcription.save_key(provider, str(key))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {'credentials': transcription.credential_state(),
+                'effective': transcription.resolve(load_settings())}
 
     @app.get('/api/presentation/languages')
     async def languages():
