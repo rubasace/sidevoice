@@ -24,6 +24,34 @@ or install anything unless the user asks.
 Join only on a request to join or to select this conversation, never as a side
 effect of replying, checking status or receiving a background notification.
 
+### When the harness will not deliver what the room sends
+
+`voice_connect` reports `inbound`. If `inbound.ok` is false, the room can reach
+this machine but **this conversation will not receive what the user says**: on
+Claude Code, a session that bypasses permission prompts has its incoming
+messages held for the user's approval rather than delivered, and nothing tells
+the sender. Voice would look sent and never arrive.
+
+Say so before the user speaks into the void. Tell them what `inbound.reason`
+says, and offer the two ways out in your own words:
+
+- **This conversation only**: it has to be started with
+  `--settings '{"crossSessionInbound":"accept"}'`, or in a prompting permission
+  mode such as `--permission-mode auto`. Neither can be changed from inside a
+  session that is already running.
+- **Every session on this machine**: add `"crossSessionInbound": "accept"` to
+  `~/.claude/settings.json`. It applies immediately, releases messages already
+  held, and **also lets any other local process post into all of their Claude
+  sessions** — that is the safeguard it removes, and they should hear it before
+  choosing.
+
+Offer to make the change; do not make it unasked. It is their machine's
+security posture, not a detail of getting voice working. If they decline,
+voice still works in the other direction: keep publishing spoken replies and
+tell them their own voice will not reach this conversation until they choose.
+
+Re-check with `voice_status` after any change rather than assuming it took.
+
 ## Conversational behavior
 
 - Answer directly when the response is short. For substantive work, publish a

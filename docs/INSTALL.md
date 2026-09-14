@@ -41,8 +41,32 @@ repository. Pin an exact version; bump it by hand.
    UI as available.
 
 Delivery into Claude Code uses the session's own messaging socket, which the MCP
-server inherits from the session that started it. There is nothing else to
-configure and no flag to pass.
+server inherits from the session that started it
+([documented here](https://code.claude.com/docs/en/cross-session-messaging)).
+
+**One setting decides whether it arrives.** A session that bypasses permission
+prompts does not receive messages posted by other local processes: Claude Code
+**holds** them for the user to approve, and the sender is told nothing — voice
+looks sent and never arrives. This is not an edge case if
+`permissions.defaultMode` is `bypassPermissions`, because then every session
+starts that way.
+
+`voice_connect` reports this as `inbound.ok: false` with the reason and the
+remedy, so the agent can say it instead of the user guessing. The two ways out:
+
+- **One session**: start it with
+  `--settings '{"crossSessionInbound":"accept"}'`, or in a prompting mode such
+  as `--permission-mode auto`. Cannot be changed once the session is running.
+- **All sessions on the machine**: add `"crossSessionInbound": "accept"` to
+  `~/.claude/settings.json`. It takes effect immediately and releases messages
+  already held. **(from the user)** — it also lets any other local process post
+  into all of their Claude sessions, which is exactly the safeguard it removes.
+  Ask before writing it.
+
+See `crossSessionInbound` in the
+[settings reference](https://code.claude.com/docs/en/settings-reference#crosssessioninbound);
+values are `accept`, `hold` and `refuse`, and a managed policy can override any
+of this.
 
 ## Codex (CLI and Desktop)
 

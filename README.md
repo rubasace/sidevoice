@@ -78,6 +78,13 @@ calls `voice_connect`; the conversation appears in the room; what you say
 arrives in that conversation as a user message marked as voice; the agent
 answers in writing and speaks through `voice_say`.
 
+On Claude Code, one setting decides whether your voice reaches a conversation at
+all: a session that bypasses permission prompts has incoming messages **held for
+your approval** rather than delivered, and nothing tells the sender, so voice
+looks sent and never arrives. `voice_connect` detects it and says so; the fix is
+`crossSessionInbound` and the trade-off it carries is spelled out in
+`docs/INSTALL.md`.
+
 The room service uses port 8767 by default. Only one active room call is
 supported by this prototype.
 
