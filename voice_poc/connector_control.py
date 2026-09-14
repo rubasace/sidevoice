@@ -227,10 +227,7 @@ def mount_connector_control(app, hub, **options):
                 await control.stop()
     app.router.lifespan_context = control_lifespan
 
-    def browser_only(request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+    from presentation import require_same_origin as browser_only
 
     @app.websocket('/api/connectors/ws')
     async def connector_socket(websocket: WebSocket):

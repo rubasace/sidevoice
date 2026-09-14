@@ -4,6 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 import uuid
 from dataclasses import dataclass
 from collections import deque
@@ -17,6 +18,23 @@ from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 ROOT = Path(__file__).resolve().parent.parent
 BINDING = Path(os.getenv('VOICE_PRESENTATION_BINDING_FILE', str(ROOT / '.voice-poc/presentation.json')))
 THREAD_PATTERN = re.compile(r'^[A-Za-z0-9._:-]{1,200}$')
+
+
+def require_same_origin(request):
+    """Browser-only endpoints: the Origin's host must be this room's host (scheme-agnostic, so a
+    TLS proxy in front is fine), or the configured public origin. Non-browser callers send no Origin."""
+    origin = request.headers.get('origin')
+    if not origin:
+        return
+    public = os.getenv('VOICE_PUBLIC_ORIGIN', '').rstrip('/')
+    try:
+        origin_host = urlsplit(origin).netloc.lower()
+    except ValueError:
+        origin_host = ''
+    if (public and origin.rstrip('/') == public) or (origin_host and origin_host in {
+            request.headers.get('host', '').lower(), request.url.netloc.lower()}):
+        return
+    raise HTTPException(403, 'Usa la sala desde su propia dirección.')
 
 
 def binding():
@@ -519,9 +537,7 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/languages')
     async def languages_update(payload: LanguageSettings, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         save_settings(payload)
         if hub.call:
             hub.call.audio_grace_seconds = payload.audio_grace_seconds
@@ -548,9 +564,7 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/select')
     async def select_participant(payload: dict, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         thread_id = payload.get('thread_id', '')
         if not isinstance(thread_id, str) or not THREAD_PATTERN.match(thread_id):
             raise HTTPException(400, 'Identificador de conversación inválido.')
@@ -561,9 +575,7 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/cancel-input')
     async def cancel_input(payload: dict, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         call = hub.call
         if (not call or not call.connected or not call.speaking
                 or payload.get('session_id') != call.id
@@ -578,9 +590,7 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/close')
     async def close_channel(payload: dict, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         thread_id = payload.get('thread_id', '')
         if not isinstance(thread_id, str) or not THREAD_PATTERN.match(thread_id):
             raise HTTPException(400, 'Identificador inválido.')
@@ -590,9 +600,7 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/leave')
     async def leave(payload: dict, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         # Check and mutate under the same lock as activation.
         async with hub.activation_lock:
             if payload.get('binding_id') != (binding() or {}).get('binding_id'):
@@ -601,17 +609,13 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/text')
     async def typed_message(payload: TextMessage, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         return await hub.send_text(payload.text, payload.session_id, payload.thread_id,
                                    payload.binding_id, str(payload.message_id))
 
     @app.post('/api/presentation/browser-receipt')
     async def browser_receipt(payload: dict, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa la sala local.')
+        require_same_origin(request)
         call = hub.call
         uid, rev = payload.get('utterance_id'), payload.get('revision')
         if payload.get('status') in {'cancelled_unplayed', 'cancelled_playing'}:
@@ -636,9 +640,7 @@ def mount_presentation(app):
 
     @app.post('/api/presentation/speak')
     async def speak(payload: Speech, request: Request):
-        origin = request.headers.get('origin')
-        if origin and origin != str(request.base_url).rstrip('/'):
-            raise HTTPException(403, 'Usa el canal local de esta conversación.')
+        require_same_origin(request)
         try:
             return await hub.publish(payload)
         except ValueError as error:
