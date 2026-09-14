@@ -1361,10 +1361,14 @@ working.
    `peerProtocol` on connect and pin the verified Claude Code range. **Run the
    §9.14 wake-on-idle one-liner first.** Channels (§6) stays as the fallback if
    the socket path proves unstable across releases.
-8. **Remote deployment hardening.** HTTPS, TURN/STUN for the browser leg, room
-   access control. (The persistent volume moved up to step 1.) The browser↔room
-   leg is a separate network problem from the connector leg and none of the
-   above solves it.
+8. **Remote deployment hardening.** **Browser leg done 2026-09-14:** the page
+   now carries the microphone as 16 kHz PCM over a plain WebSocket
+   (`/api/presentation/ws`, `voice_poc/browser_socket.py`, `mic_capture.js`)
+   and events back over the same socket — no WebRTC, no TURN/STUN, nothing
+   but HTTP/WS, so an nginx ingress or an frp tunnel carries the whole room.
+   Verified from this pod through `https://sidevoice.dev.rubasace.dev`.
+   Remaining: room access control, the persistent volume (step 1's constant),
+   and a proper deployment manifest.
 9. **Strip the published documentation.** `docs/development-history/` (7
    files), the product detail in `README.md` and `docs/ARCHITECTURE.md`, and
    this plan with them — scaffolding, not documentation. Last.
