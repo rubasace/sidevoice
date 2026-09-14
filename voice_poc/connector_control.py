@@ -100,6 +100,11 @@ class ConnectorControl:
             if status == 'accepted':
                 self.journal.update(event_id, 'delivered')
                 self.hub.delivery_status(event_id, 'delivered')
+            elif status == 'unknown':
+                # The harness offers no acknowledgement: it was written, and that is all
+                # anyone knows. Retrying would duplicate without ever learning more.
+                self.journal.update(event_id, 'unconfirmed', message.get('detail'))
+                self.hub.delivery_status(event_id, 'unconfirmed')
             else:
                 self.journal.defer(event_id)
                 self.hub.delivery_status(event_id, 'pending')
