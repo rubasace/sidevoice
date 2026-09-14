@@ -31,6 +31,7 @@ from codex_llm import CodexLLMService
 from control import controls, mount_controls
 from thread_monitor import monitor_thread
 from presentation import binding, hub, PresentationCall, NoInference, mount_presentation, PresentationGate, PresentationPlayback
+from connector_control import mount_connector_control
 
 PROMPT = """Eres el interlocutor de una prueba de voz local. Habla en español,
 con respuestas breves, naturales, sin markdown. Hay un trabajador SIMULADO:
@@ -223,4 +224,5 @@ if __name__ == "__main__":
     from pipecat.runner.run import app, main
     mount_controls(app)
     mount_presentation(app)
+    mount_connector_control(app, Path(__file__).resolve().parent.parent / '.voice-poc' / 'connector-events.sqlite3')
     main()

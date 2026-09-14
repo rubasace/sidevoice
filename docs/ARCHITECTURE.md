@@ -38,6 +38,24 @@ only to the still-active turn, before outbox insertion.
 This boundary has not been fully extracted from the prototype. It is not yet
 a finished plug-and-play adapter SDK.
 
+## Connector transport (in progress)
+
+`connector/` contains the first extraction of the transport boundary. A local
+stdio MCP façade offers `voice_connect`, `voice_say`, `voice_disconnect` and
+`voice_status`. It starts or reuses one ephemeral connector per host. That
+connector multiplexes active task bindings over one *outbound* WebSocket, so a
+host never needs an internet-reachable inbound port.
+
+The server-side control plane stores an input event until the harness adapter
+returns an `accepted` acknowledgement. After a WebSocket reconnect the
+connector re-registers every live binding; the server replays pending events.
+This is intentionally separate from browser audio and from a particular
+harness. Codex Desktop remains the only verified delivery adapter.
+
+The current local POC uses loopback HTTP for its live bridge. The new connector
+control plane is covered by unit tests but is not yet wired into a deployed
+remote Sidevoice service or packaged as an end-user installer.
+
 The Claude draft uses MCP Channels to reach the same working session. It is paused,
 not verified with a live model and not integrated into harness-aware routing.
 
