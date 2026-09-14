@@ -593,8 +593,10 @@ def mount_presentation(app):
     def available_participants():
         current = binding() or {}
         entries = hub.control.participants() if hub.control else [{**b, 'connected': False} for b in hub.journal.bindings()]
+        reach = hub.control.reachability if hub.control else (lambda b: {'state': 'offline', 'detail': None})
         return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversación ' + b['thread'][:8]),
                  'harness': b.get('harness'), 'available': b['connected'],
+                 'reach': reach(b),
                  'selected': b['thread'] == current.get('thread_id')} for b in entries]
 
     @app.get('/api/presentation/participants')

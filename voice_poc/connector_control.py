@@ -52,6 +52,24 @@ class ConnectorControl:
     def participants(self):
         return [{**binding, 'connected': self.is_live(binding['id'])} for binding in self.journal.bindings()]
 
+    @staticmethod
+    def reachability(binding):
+        """Three states, because 'connected' and 'will receive what you say' are not the same thing."""
+        if not binding.get('connected'):
+            return {'state': 'offline',
+                    'detail': 'Esa conversación no está conectada a la sala. Pídele que se conecte.'}
+        inbound = binding.get('inbound')
+        if isinstance(inbound, str):
+            try:
+                inbound = json.loads(inbound)
+            except ValueError:
+                inbound = None
+        if isinstance(inbound, dict) and inbound.get('ok') is False:
+            return {'state': 'holding',
+                    'detail': inbound.get('reason') or 'Su harness retiene lo que enviamos en vez de entregarlo.',
+                    'remedy': inbound.get('remedy')}
+        return {'state': 'listening', 'detail': None}
+
     # ----- delivery: the room's outbox drains through live bindings -----
 
     async def pump(self):
@@ -119,9 +137,10 @@ class ConnectorControl:
             await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': 'Invalid conversation identifier'})
             return
         try:
+            inbound = message.get('inbound') if isinstance(message.get('inbound'), dict) else None
             binding = self.journal.register_binding(connector_id, harness=str(message.get('harness') or 'unknown')[:40],
                                                     thread=thread, title=(message.get('title') or None) and str(message['title'])[:200],
-                                                    binding_id=message.get('binding_id'))
+                                                    binding_id=message.get('binding_id'), inbound=inbound)
         except ValueError as error:
             await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': str(error)})
             return

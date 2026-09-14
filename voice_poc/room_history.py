@@ -43,6 +43,9 @@ class RoomHistory:
             db.execute('''CREATE TABLE IF NOT EXISTS bindings (
                 id TEXT PRIMARY KEY, connector TEXT NOT NULL, harness TEXT, thread TEXT NOT NULL,
                 title TEXT, created INTEGER, active INTEGER DEFAULT 1)''')
+            if 'inbound' not in {r['name'] for r in db.execute('PRAGMA table_info(bindings)')}:
+                # What the harness will do with what we post: delivered, or held for its user.
+                db.execute('ALTER TABLE bindings ADD COLUMN inbound TEXT')
             db.commit(); self.ready = True
         try:
             with db:
@@ -155,7 +158,7 @@ class RoomHistory:
 
     # ----- bindings: which connector serves which conversation -----
 
-    def register_binding(self, connector, *, harness, thread, title=None, binding_id=None):
+    def register_binding(self, connector, *, harness, thread, title=None, binding_id=None, inbound=None):
         """Server-minted ids. Re-registering an existing binding requires owning it."""
         if not isinstance(thread, str) or not thread or len(thread) > 200:
             raise ValueError('A conversation identifier is required')
@@ -166,12 +169,14 @@ class RoomHistory:
                     raise ValueError('Unknown or foreign binding')
             else:
                 row = db.execute('SELECT * FROM bindings WHERE connector=? AND thread=? AND active=1 ORDER BY created DESC', (connector, thread)).fetchone()
+            payload = json.dumps(inbound) if inbound is not None else None
             if row:
-                db.execute('UPDATE bindings SET active=1, harness=?, title=COALESCE(?, title) WHERE id=?', (harness, title, row['id']))
+                db.execute('UPDATE bindings SET active=1, harness=?, title=COALESCE(?, title), inbound=COALESCE(?, inbound) WHERE id=?',
+                           (harness, title, payload, row['id']))
                 return self.binding(row['id'])
             binding_id = str(uuid.uuid4())
-            db.execute('INSERT INTO bindings(id,connector,harness,thread,title,created,active) VALUES(?,?,?,?,?,?,1)',
-                       (binding_id, connector, harness, thread, title, int(time.time())))
+            db.execute('INSERT INTO bindings(id,connector,harness,thread,title,created,active,inbound) VALUES(?,?,?,?,?,?,1,?)',
+                       (binding_id, connector, harness, thread, title, int(time.time()), payload))
         return self.binding(binding_id)
 
     def binding(self, binding_id):
