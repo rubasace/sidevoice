@@ -2,11 +2,11 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 import uuid
 from dataclasses import dataclass
 from collections import deque
-import aiohttp
 from room_history import RoomHistory
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
@@ -16,12 +16,13 @@ from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 ROOT = Path(__file__).resolve().parent.parent
 BINDING = Path(os.getenv('VOICE_PRESENTATION_BINDING_FILE', str(ROOT / '.voice-poc/presentation.json')))
+THREAD_PATTERN = re.compile(r'^[A-Za-z0-9._:-]{1,200}$')
 
 
 def binding():
     try:
         data = json.loads(BINDING.read_text())
-        return {key: data.get(key) for key in ('thread_id', 'title', 'binding_id', 'gateway_url', 'gateway_instance')}
+        return {key: data.get(key) for key in ('thread_id', 'title', 'binding_id')}
     except (OSError, ValueError, KeyError):
         return None
 
@@ -139,8 +140,7 @@ class PresentationCall:
         payload = {'thread_id': target['thread_id'], 'text': text,
                    'message_id': message_id or str(uuid.uuid4()), 'session_id': self.id,
                    'history_id': history_id, 'revision': revision, 'binding_id': target.get('binding_id'),
-                   'gateway_url': target.get('gateway_url') or 'http://127.0.0.1:8769',
-                   'gateway_instance': target.get('gateway_instance'), 'title': target.get('title')}
+                   'title': target.get('title')}
         if self.journal:
             self.journal.put(id=history_id,
                 thread=payload['thread_id'], role='user', text=text, name='Tú',
@@ -154,29 +154,6 @@ class PresentationCall:
                 return
         self.input_receipt(payload, 'pending')
         return payload
-
-    async def deliver_inputs(self):
-        # Serial delivery preserves speech order. Never retry an uncertain mutation.
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=125)) as http:
-            while True:
-                payload = await self.input_queue.get()
-                try:
-                    gateway = payload['gateway_url']
-                    async with http.post(gateway + '/presentation/message', json=payload) as r:
-                        result = await r.json()
-                        if r.status != 200:
-                            raise RuntimeError(result.get('error', 'No se pudo entregar el mensaje'))
-                    self.sent += 1
-                    self.last_delivery = result
-                    self.error = None
-                    self.input_receipt(payload, "delivered")
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    self.error = 'No se pudo confirmar la entrega. Revisa la tarea antes de repetir el mensaje.'
-                    self.input_receipt(payload, "uncertain")
-                finally:
-                    self.input_queue.task_done()
 
     def is_current(self, uid, revision):
         return (self.connected and not self.speaking and revision == self.revision
@@ -331,62 +308,23 @@ class PresentationHub:
         self.call = None
         self.activation_lock = asyncio.Lock()
         self.journal = RoomHistory(ROOT / '.voice-poc/room-history.sqlite3')
-        self.delivery_task = None
+        self.control = None  # The connector control plane drains the journal; set when mounted.
 
     async def start(self):
         self.journal.recover()
-        self.delivery_task = asyncio.create_task(self.deliver())
 
     async def stop(self):
-        if self.delivery_task:
-            self.delivery_task.cancel()
-            await asyncio.gather(self.delivery_task, return_exceptions=True)
+        pass
 
-    async def delivery_gateway(self, http, payload):
-        # Discover capability before sending: never retry a possibly delivered mutation.
-        candidates = [payload['gateway_url']]
-        for path in (ROOT / '.voice-poc/gateways').glob('*.json'):
-            try:
-                candidates.append(json.loads(path.read_text())['url'])
-            except (OSError, ValueError, KeyError):
-                continue
-        for url in dict.fromkeys(candidates):
-            try:
-                async with http.get(url+'/identity', timeout=aiohttp.ClientTimeout(total=2)) as response:
-                    identity = await response.json()
-                    if response.status == 200 and identity.get('durable_delivery') and (payload.get('channel') != 'room-control' or identity.get('room_control')):
-                        return url
-            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-                continue
-        return None
-
-    async def deliver(self):
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=125)) as http:
-            while True:
-                for row in self.journal.pending():
-                    payload = json.loads(row['payload'])
-                    gateway = await self.delivery_gateway(http, payload)
-                    if gateway is None:
-                        continue  # Still pending: no mutation was attempted.
-                    self.journal.update(row['id'], 'sending')
-                    try:
-                        # Route was captured at utterance start; current focus is irrelevant.
-                        async with http.post(gateway+'/presentation/message', json=payload) as response:
-                            result = await response.json()
-                            if response.status != 200:
-                                raise RuntimeError('Delivery not confirmed')
-                        status = 'delivered'
-                    except asyncio.CancelledError:
-                        self.journal.update(row['id'], 'uncertain')
-                        raise
-                    except Exception:
-                        status = 'uncertain'
-                    self.journal.update(row['id'], status)
-                    if self.call and self.call.connected:
-                        self.call.input_receipt(payload, status)
-                        if status == 'delivered' and self.call.target.get('thread_id') == payload['thread_id']:
-                            self.call.sent += 1
-                await asyncio.sleep(.25)
+    def delivery_status(self, row_id, status):
+        # Receipts for the browser: delivered means the harness accepted it, never that a human read it.
+        row = self.journal.get(row_id)
+        if not row or not self.call or not self.call.connected:
+            return
+        payload = json.loads(row['payload'] or '{}')
+        self.call.input_receipt(payload, status)
+        if status == 'delivered' and self.call.target.get('thread_id') == payload.get('thread_id'):
+            self.call.sent += 1
 
     async def publish(self, payload):
         call = self.call
@@ -452,7 +390,7 @@ class PresentationHub:
         await call._dispatch()
         return {'accepted': True, 'id': uid, 'revision': call.revision}
 
-    async def close_channel(self, thread_id, record):
+    async def close_channel(self, thread_id):
         async with self.activation_lock:
             previous = self.journal.closed_channels().get(thread_id)
             if previous:
@@ -468,7 +406,7 @@ class PresentationHub:
                     'No actives la voz para confirmar este mensaje.')
             payload = {'channel': 'room-control', 'thread_id': thread_id, 'text': text,
                        'message_id': message_id, 'session_id': session, 'revision': revision,
-                       'history_id': uid, 'gateway_url': record['url']}
+                       'history_id': uid}
             self.journal.put(id=uid, thread=thread_id, role='user', text=text, name='Tú',
                              session=session, revision=revision, status='pending', payload=payload)
             self.journal.close_channel(thread_id, uid)
@@ -486,9 +424,9 @@ class PresentationHub:
         if target.get('thread_id'):
             self.journal.open_channel(target['thread_id'])
         current = binding()
-        if current and all(current.get(k) == target.get(k) for k in ("thread_id", "gateway_url", "gateway_instance")):
+        if current and current.get('thread_id') == target.get('thread_id') and (not target.get('title') or current.get('title') == target.get('title')):
             return {"status": "already_active", "binding": current}
-        new = {key: target.get(key) for key in ("thread_id", "title", "gateway_url", "gateway_instance")}
+        new = {key: target.get(key) for key in ("thread_id", "title")}
         new["binding_id"] = str(uuid.uuid4())
         BINDING.parent.mkdir(parents=True, exist_ok=True)
         temporary = BINDING.with_name(BINDING.name + "." + new["binding_id"] + ".tmp")
@@ -545,11 +483,7 @@ class TextMessage(BaseModel):
     message_id: uuid.UUID
 
 
-class Activation(BaseModel):
-    thread_id: str
-    title: str
-    gateway_url: str = Field(pattern=r'^http://127\.0\.0\.1:[0-9]{1,5}$')
-    gateway_instance: str
+
 
 
 def mount_presentation(app):
@@ -601,79 +535,29 @@ def mount_presentation(app):
     async def state():
         return hub.snapshot()
 
-    @app.post('/api/presentation/activate')
-    async def activate(payload: Activation, request: Request):
-        if request.headers.get('origin'):
-            raise HTTPException(403, 'Activa la voz desde la herramienta de tu conversación.')
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as http:
-                async with http.get(payload.gateway_url + '/identity') as response:
-                    response.raise_for_status()
-                    identity = await response.json()
-            if identity.get('thread_id') != payload.thread_id or identity.get('instance_id') != payload.gateway_instance:
-                raise ValueError('Gateway identity mismatch')
-        except Exception as error:
-            raise HTTPException(409, 'No se pudo verificar la conversación que activa la voz.') from error
-        return await hub.activate(payload.model_dump())
-
-    async def available_participants():
+    def available_participants():
         current = binding() or {}
-        entries = []
-        for path in (ROOT / '.voice-poc/gateways').glob('*.json'):
-            try:
-                record = json.loads(path.read_text())
-                import re
-                if not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}', record['url']):
-                    continue
-                entries.append(record)
-            except (OSError, ValueError, KeyError):
-                continue
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1)) as http:
-            async def inspect(record):
-                active = record.get('thread_id') == current.get('thread_id')
-                title = record.get('title') or (current.get('title') if active else None)
-                connected = False
-                try:
-                    async with http.get(record['url'] + '/identity') as response:
-                        identity = await response.json()
-                    connected = (identity.get('thread_id') == record.get('thread_id') and
-                                 identity.get('instance_id') == record.get('instance_id'))
-                except Exception:
-                    pass
-                return {'thread_id': record.get('thread_id'),
-                        'title': title or ('Conversación ' + str(record.get('thread_id', ''))[:8]),
-                        'available': connected, 'selected': active}
-            return await asyncio.gather(*(inspect(record) for record in entries))
+        entries = hub.control.participants() if hub.control else [{**b, 'connected': False} for b in hub.journal.bindings()]
+        return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversación ' + b['thread'][:8]),
+                 'harness': b.get('harness'), 'available': b['connected'],
+                 'selected': b['thread'] == current.get('thread_id')} for b in entries]
 
     @app.get('/api/presentation/participants')
     async def participants():
-        return {'participants': await available_participants(), 'closed_threads': list(hub.journal.closed_channels())}
+                return {'participants': available_participants(), 'closed_threads': list(hub.journal.closed_channels())}
 
     @app.post('/api/presentation/select')
     async def select_participant(payload: dict, request: Request):
         origin = request.headers.get('origin')
         if origin and origin != str(request.base_url).rstrip('/'):
             raise HTTPException(403, 'Usa la sala local.')
-        import re
         thread_id = payload.get('thread_id', '')
-        if not isinstance(thread_id, str) or not re.fullmatch(r'[a-f0-9-]{36}', thread_id):
+        if not isinstance(thread_id, str) or not THREAD_PATTERN.match(thread_id):
             raise HTTPException(400, 'Identificador de conversación inválido.')
-        try:
-            record = json.loads((ROOT / '.voice-poc/gateways' / (thread_id + '.json')).read_text())
-            if record.get('thread_id') != thread_id or not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}', record['url']):
-                raise ValueError('Invalid gateway')
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
-                async with http.get(record['url'] + '/identity') as response:
-                    identity = await response.json()
-                if identity.get('thread_id') != thread_id or identity.get('instance_id') != record.get('instance_id'):
-                    raise ValueError('Stale gateway')
-                async with http.post(record['url'] + '/activate') as response:
-                    result = await response.json()
-                    if response.status != 200:
-                        raise ValueError('Activation failed')
-            return result
-        except Exception as error:
-            raise HTTPException(409, 'No se pudo incorporar esa conversación. Activa la voz desde su tarea.') from error
+        record = hub.journal.binding_for_thread(thread_id)
+        if not record:
+            raise HTTPException(409, 'Esa conversación no está conectada. Activa la voz desde su tarea.')
+        return await hub.activate({'thread_id': thread_id, 'title': record.get('title')})
 
     @app.post('/api/presentation/cancel-input')
     async def cancel_input(payload: dict, request: Request):
@@ -697,17 +581,12 @@ def mount_presentation(app):
         origin = request.headers.get('origin')
         if origin and origin != str(request.base_url).rstrip('/'):
             raise HTTPException(403, 'Usa la sala local.')
-        import re
         thread_id = payload.get('thread_id', '')
-        if not isinstance(thread_id, str) or not re.fullmatch(r'[a-f0-9-]{36}', thread_id):
+        if not isinstance(thread_id, str) or not THREAD_PATTERN.match(thread_id):
             raise HTTPException(400, 'Identificador inválido.')
-        try:
-            record = json.loads((ROOT / '.voice-poc/gateways' / (thread_id+'.json')).read_text())
-            if record.get('thread_id') != thread_id or not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}', record['url']):
-                raise ValueError()
-        except (OSError, ValueError, KeyError):
-            raise HTTPException(409, 'No se encuentra el puente de esta conversación.')
-        return await hub.close_channel(thread_id, record)
+        if not hub.journal.binding_for_thread(thread_id) and not hub.journal.history(thread_id):
+            raise HTTPException(409, 'No se encuentra esa conversación.')
+        return await hub.close_channel(thread_id)
 
     @app.post('/api/presentation/leave')
     async def leave(payload: dict, request: Request):

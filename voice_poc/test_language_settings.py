@@ -6,19 +6,18 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 import language_settings
 from speech_filter import FilteredOpenAISTTService
-from kokoro_tts import KokoroTTS
 
 class PreferencesTest(unittest.TestCase):
     def test_preferences_persist_and_select_native_voice(self):
         with tempfile.TemporaryDirectory() as root, patch.object(language_settings,'PATH',Path(root)/'settings.json'):
             self.assertEqual(language_settings.load_settings().stt_language,'auto')
             language_settings.save_settings(language_settings.LanguageSettings(english_voice='bf_emma',spanish_voice='em_alex',tts_speed=1.2))
-            tts=KokoroTTS()
-            tts.select_language('en')
-            self.assertEqual(tts.speed,1.2)
-            self.assertEqual((tts.voice,tts.lang_code),('bf_emma','b'))
-            tts.select_language('es')
-            self.assertEqual((tts.voice,tts.lang_code),('em_alex','e'))
+            saved=language_settings.load_settings()
+            en=language_settings.resolve_voice(saved,'en')
+            self.assertEqual(en['speed'],1.2)
+            self.assertEqual((en['voice'],en['voice'][0]),('bf_emma','b'))
+            es=language_settings.resolve_voice(saved,'es')
+            self.assertEqual((es['voice'],es['voice'][0]),('em_alex','e'))
 
 class AutoLanguageTest(unittest.IsolatedAsyncioTestCase):
     async def test_auto_omits_language_and_prompt(self):

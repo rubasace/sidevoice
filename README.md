@@ -8,9 +8,9 @@ conversation, with local speech synthesis in your browser.
 Your working agent keeps its context and tools, writes its normal response, and
 publishes a conversational version to the room. There is no separate voice operator.
 
-> Early prototype, first public snapshot. The working integration is Codex Desktop
-> on macOS. Claude integration is an unfinished experiment, not a supported feature.
-> Earlier prototypes remain in the source; refactoring is planned before a stable release.
+> Early prototype. Delivery into Claude Code is verified end to end on Linux;
+> delivery into Codex goes through `codex queue` and is being verified against
+> Codex Desktop. Nothing here is a stable release yet.
 
 ## What works
 
@@ -29,13 +29,12 @@ instruction to continue in writing. It preserves the task and room history.
 
 ## Current requirements
 
-- Apple Silicon macOS and Codex Desktop for the verified harness integration.
+- The room server runs on Linux or macOS. Agents connect from wherever they run
+  (see `docs/INSTALL.md`); the agent's machine needs Node.js 22+.
 - Python 3.12 and Node.js 22+ with npm.
 - A compatible browser. Windows and mobile are not validated end to end.
 - An OpenAI API key for the recommended transcription path. Browser TTS is local.
 
-The Python dependency set still includes Apple MLX dependencies from earlier
-experiments. This is not yet a portable server package.
 
 ## Run the room
 
@@ -62,42 +61,37 @@ caches them locally. Initial preparation is slower than subsequent use.
 Without an STT key the prototype falls back to CPU Whisper. The main workflow
 has been exercised with OpenAI transcription.
 
-## Connect a Codex conversation
+## Connect a conversation
 
-Install the skill with paths pointing to this checkout:
+The agent's harness gets one MCP server (`sidevoice mcp`) and the
+`voice-presentation` skill; the machine it runs on is paired once with the room
+using a code from the room UI ("Emparejar conector"). `docs/INSTALL.md` is
+written so that you can hand it to the agent itself and say "install this".
 
-```sh
-python3 scripts/install-codex-skill.py
-```
+Once installed, ask the agent to connect the conversation to the voice room. It
+calls `voice_connect`; the conversation appears in the room; what you say
+arrives in that conversation as a user message marked as voice; the agent
+answers in writing and speaks through `voice_say`.
 
-An existing skill is backed up first. Load `voice-presentation` in Codex and ask
-to connect the current task to the voice room, or invoke `$voice-presentation`.
-
-The skill runs `voice_poc/activate_voice.mjs` from the actual task environment.
-It starts or reuses that task's gateway and registers its real identity.
-Do not set `CODEX_THREAD_ID` to impersonate another task.
-
-The bridge requires `CODEX_APP_TOOLS_PIPE_PATH`, supplied by Codex Desktop, and
-the app's bundled signed Node runtime. An ordinary external terminal is not
-sufficient. This socket integration is app-specific, not a promised public API.
-App updates may require adjusting the runtime path or bridge.
-
-The room service uses port 8767. Keep it and the task gateways alive during use.
-Only one active room call is supported by this prototype.
+The room service uses port 8767 by default. Only one active room call is
+supported by this prototype.
 
 ## Architecture
 
 ```text
-Browser mic -> STT -> durable queue -> harness bridge -> existing conversation
+Browser mic -> STT -> durable outbox (room) -> WebSocket -> connector (one per host)
+                                                  -> Claude Code: the session's own inbox socket
+                                                  -> Codex: `codex queue --thread <id>`
 
 Existing conversation -> normal written answer in its harness
-                      -> spoken summary -> room -> browser Kokoro
+                      -> voice_say (MCP) -> connector -> room -> browser Kokoro
 ```
 
-The room owns participants, history, routing, playback and cancellation. The
-agent owns its work and spoken summary. The intended harness adapter is small:
-connect, identify the session, deliver input and normalize results. The current
-Codex bridge still contains infrastructure that should move into a shared layer.
+The room owns participants, history, delivery, playback and cancellation. The
+agent owns its work and its spoken version. The connector owns one outbound
+connection per machine and the last mile into each harness; the stdio MCP
+server the harness starts is a thin façade over it and knows which conversation
+it speaks for because the harness told it, not the model.
 
 See [architecture and limitations](docs/ARCHITECTURE.md).
 
@@ -107,7 +101,7 @@ With dependencies installed:
 
 ```sh
 .venv/bin/python -m unittest discover -s voice_poc -p 'test_*.py'
-node --test voice_poc/test_*.cjs voice_poc/test_task_watch.mjs
+node --test voice_poc/test_*.cjs connector/test/test_connector.mjs
 ```
 
 Tests cover routing, stale replies, playback, interruptions, persistence, closure
@@ -116,15 +110,20 @@ and draft cancellation. They do not prove live Claude support or every browser.
 - `voice_poc/presentation.py`: room API, delivery and audio lifecycle.
 - `voice_poc/presentation.html`: room UI.
 - `voice_poc/browser_audio/`: browser synthesis and model catalog.
-- `voice_poc/desktop_gateway.mjs`: current Codex Desktop bridge.
-- `skills/voice-presentation/`: Codex skill template.
-- `experiments/claude_channel/`: paused Claude Channels draft, not integrated.
+- `voice_poc/connector_control.py`: pairing, presence, delivery, speech intake.
+- `connector/`: the client side — `mcp.mjs` (façade), `connector.mjs`,
+  `adapters.mjs` (last mile per harness), `pair.mjs`.
+
+- `skills/voice-presentation/`: the agent-facing skill, harness-independent.
+- `docs/INSTALL.md`: install guide written for the agent.
+- `experiments/claude_channel/`: earlier Channels draft, superseded by the
+  session socket; kept as the fallback reference.
 - `docs/development-history/`: historical notes, including superseded designs.
   This README is authoritative for current setup.
 
 ## Next steps
 
-- Extract shared gateway infrastructure and finish the Claude adapter.
+- Verify `codex queue` against Codex Desktop threads; publish the connector to npm.
 - Validate real refinement sessions, reconnection and noisy microphones.
 - Simplify setup and validate Windows/mobile clients.
 - Package remote deployment with HTTPS and WebRTC networking.

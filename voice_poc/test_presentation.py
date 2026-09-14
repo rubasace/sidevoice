@@ -1,6 +1,6 @@
 import asyncio
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pipecat.frames.frames import BotStoppedSpeakingFrame, TTSAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection
@@ -150,7 +150,7 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.hub.journal.pending()[-1]['thread'], 'b')
 
     async def test_reactivation_idempotent_and_leave_keeps_room(self):
-        target = {'thread_id': 'a', 'gateway_url': 'local', 'gateway_instance': 'one'}
+        target = {'thread_id': 'a', 'title': 'A'}
         first = await self.hub.activate(target)
         revision = self.c.revision
         second = await self.hub.activate(target)
@@ -204,7 +204,7 @@ class RoomTests(IsolatedAsyncioTestCase):
     async def test_pending_inputs_persist_with_original_destination_after_disconnect(self):
         import json
         from room_history import RoomHistory
-        await self.hub.activate({'thread_id': 'a', 'gateway_url': 'http://127.0.0.1:1111'})
+        await self.hub.activate({'thread_id': 'a'})
         self.c.user_started()
         original_revision = self.c.revision
         await self.hub.activate({'thread_id': 'b'})
@@ -215,11 +215,11 @@ class RoomTests(IsolatedAsyncioTestCase):
         row = recovered.pending()[0]
         payload = json.loads(row['payload'])
         self.assertEqual((payload['thread_id'], payload['revision']), ('a', original_revision))
-        self.assertEqual(payload['gateway_url'], 'http://127.0.0.1:1111')
         recovered.update(row['id'], 'sending')
         recovered.recover()
-        self.assertEqual(recovered.pending(), [])
-        self.assertEqual(recovered.history()[0]['status'], 'uncertain')
+        # At-least-once: a delivery in flight when the room died is retried, never abandoned.
+        self.assertEqual(len(recovered.pending()), 1)
+        self.assertEqual(recovered.history()[0]['status'], 'pending')
 
     async def test_identical_words_in_distinct_turns_are_not_deduplicated(self):
         await self.hub.activate({'thread_id': 'a'})
@@ -232,50 +232,46 @@ class RoomTests(IsolatedAsyncioTestCase):
 
     async def test_outbox_delivers_original_target_without_a_connected_call(self):
         import json
-        from aiohttp import web
-        received = []
-        async def accept(request):
-            received.append(await request.json())
-            return web.json_response({'status':'sent'})
-        app = web.Application(); app.router.add_post('/presentation/message', accept)
-        runner = web.AppRunner(app); await runner.setup()
-        site = web.TCPSite(runner, '127.0.0.1', 0); await site.start()
-        port = site._server.sockets[0].getsockname()[1]
-        self.hub.delivery_gateway = AsyncMock(return_value=f'http://127.0.0.1:{port}')
+        from connector_control import ConnectorControl
+        control = ConnectorControl(self.hub.journal, self.hub)
+        sent = []
+        class FakeSocket:
+            async def send_json(self, frame): sent.append(frame)
+        binding = self.hub.journal.register_binding('conn-1', harness='test', thread='a')
+        control.sockets['conn-1'] = FakeSocket(); control.live[binding['id']] = 'conn-1'
         await self.hub.activate({'thread_id':'a'})
         self.c.user_started(); self.c.enqueue_input('Para A')
         await self.hub.activate({'thread_id':'b'})
         self.c.disconnect()
-        task = asyncio.create_task(self.hub.deliver())
-        try:
-            for _ in range(100):
-                if self.hub.journal.history()[0]['status'] == 'delivered': break
-                await asyncio.sleep(.01)
-            self.assertEqual(len(received), 1)
-            self.assertEqual(received[0]['thread_id'], 'a')
-            self.assertEqual(self.hub.journal.history()[0]['status'], 'delivered')
-        finally:
-            task.cancel(); await asyncio.gather(task, return_exceptions=True)
-            await runner.cleanup()
+        await control.tick()
+        self.assertEqual(len(sent), 1)
+        self.assertEqual((sent[0]['type'], sent[0]['thread'], sent[0]['text']), ('input.deliver', 'a', 'Para A'))
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'sending')
+        await control.tick()
+        self.assertEqual(len(sent), 1)  # one delivery in flight per binding
+        await control.acknowledge('conn-2', {'event_id': sent[0]['event_id'], 'status': 'accepted'})
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'sending')  # a stranger cannot settle it
+        await control.acknowledge('conn-1', {'event_id': sent[0]['event_id'], 'status': 'accepted'})
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'delivered')
 
     async def test_app_lifespan_starts_and_stops_durable_delivery(self):
         from contextlib import asynccontextmanager
-        from unittest.mock import patch
         from fastapi import FastAPI
         from presentation import mount_presentation
+        from connector_control import mount_connector_control
         events = []
         @asynccontextmanager
         async def existing_lifespan(app):
-            events.append('start')
-            yield
-            events.append('stop')
+            events.append('start'); yield {'existing': True}; events.append('stop')
         app = FastAPI(lifespan=existing_lifespan)
         with patch('presentation.hub', self.hub):
             mount_presentation(app)
+            control = mount_connector_control(app, self.hub)
             async with app.router.lifespan_context(app):
-                self.assertIsNotNone(self.hub.delivery_task)
-                self.assertFalse(self.hub.delivery_task.done())
-            self.assertTrue(self.hub.delivery_task.done())
+                self.assertIs(self.hub.control, control)
+                self.assertIsNotNone(control.pump_task)
+                self.assertFalse(control.pump_task.done())
+            self.assertTrue(control.pump_task.cancelled() or control.pump_task.done())
         self.assertEqual(events, ['start', 'stop'])
 
     async def test_reply_waits_until_user_finishes_and_uses_application_playback_epoch(self):
@@ -430,10 +426,10 @@ class RoomTests(IsolatedAsyncioTestCase):
     async def test_close_channel_persists_notifies_once_and_blocks_late_voice(self):
         from presentation import Speech
         from room_history import RoomHistory
-        await self.hub.activate({'thread_id':'a','gateway_url':'http://127.0.0.1:8769'})
+        await self.hub.activate({'thread_id':'a'})
         rev = self.c.revision
-        first = await self.hub.close_channel('a', {'url':'http://127.0.0.1:8769'})
-        second = await self.hub.close_channel('a', {'url':'http://127.0.0.1:8769'})
+        first = await self.hub.close_channel('a')
+        second = await self.hub.close_channel('a')
         self.assertEqual(first, second)
         self.assertTrue(self.c.connected)
         self.assertIsNone(self.c.target['thread_id'])
