@@ -6,7 +6,7 @@ class BrowserTranscription{
  }
  _ensureWorker(){
   if(this.worker)return;
-  this.worker=new Worker('/voice-browser/stt-worker.js',{type:'module'});
+  this.worker=new Worker('/voice-browser/stt-worker.js?v=browser-stt-2',{type:'module'});
   this.worker.onmessage=({data})=>{
    const request=this.pending.get(data.id);if(!request)return;
    if(data.type==='progress'){request.progress?.(data.progress);return}
@@ -48,7 +48,7 @@ class BrowserTranscription{
  _send(type,data){if(this.socket?.readyState===WebSocket.OPEN)this.socket.send(JSON.stringify({type,data}))}
  _begin(){
   const id=crypto.randomUUID(),chunks=this.preRoll.splice(0);
-  this.turn={id,chunks,samples:chunks.reduce((n,c)=>n+c.length,0),lastVoice:performance.now(),transcribing:false,sequence:0};
+  this.turn={id,chunks,samples:chunks.reduce((n,c)=>n+c.length,0),lastVoice:performance.now(),voiceRevision:0,transcribing:false,sequence:0};
   this._send('voice-input-start',{session_id:window.sidevoiceSessionId?.(),turn_id:id});
  }
  ingest(buffer){
@@ -61,20 +61,20 @@ class BrowserTranscription{
    this.preRoll.push(samples);if(this.preRoll.length>15)this.preRoll.shift();
    this.voiceRun=voiced?this.voiceRun+1:0;if(this.voiceRun>=4)this._begin();return;
   }
-  this.turn.chunks.push(samples);this.turn.samples+=samples.length;if(voiced)this.turn.lastVoice=performance.now();
+  this.turn.chunks.push(samples);this.turn.samples+=samples.length;if(voiced){this.turn.lastVoice=performance.now();this.turn.voiceRevision++}
   if(!this.turn.transcribing&&performance.now()-this.turn.lastVoice>=this.silenceMs)this._finish();
  }
  async _finish(){
   const turn=this.turn;if(!turn||turn.transcribing||!this.runtime)return;
   turn.transcribing=true;
-  const snapshotSamples=turn.samples,sequence=++turn.sequence,audio=new Float32Array(snapshotSamples);
+  const snapshotSamples=turn.samples,snapshotVoiceRevision=turn.voiceRevision,sequence=++turn.sequence,audio=new Float32Array(snapshotSamples);
   let offset=0;for(const chunk of turn.chunks){audio.set(chunk,offset);offset+=chunk.length}
   const generation=this.generation;this._preparation({phase:'inline',text:'Transcribiendo en este navegador...'});
   try{
    const result=await this._request('transcribe',{audio:audio.buffer,model:this.runtime.model,device:this.runtime.device,language:this.language},null,[audio.buffer]);
    if(generation!==this.generation||this.turn!==turn)return;
    turn.transcribing=false;
-   if(turn.samples!==snapshotSamples||performance.now()-turn.lastVoice<this.silenceMs){
+   if(turn.voiceRevision!==snapshotVoiceRevision||performance.now()-turn.lastVoice<this.silenceMs){
     if(performance.now()-turn.lastVoice>=this.silenceMs)this._finish();
     return;
    }

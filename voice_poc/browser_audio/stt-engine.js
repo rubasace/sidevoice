@@ -29,7 +29,7 @@ export async function initialize(model,preference,progress){
  return {device,model,cached:false};
 }
 export async function transcribe(audio,{model,device,language},progress){
- const runtime=await initialize(model,device,progress),options={task:'transcribe'};
+ const runtime=await initialize(model,device,progress),options={task:'transcribe',chunk_length_s:30,stride_length_s:5};
  if(language&&language!=='auto')options.language=language;
  const result=await transcriber(audio,options);
  return {text:String(result?.text||'').trim(),...runtime};
