@@ -629,8 +629,29 @@ def mount_presentation(app):
         from language_settings import load_settings
         settings = load_settings()
         return {'catalog': transcription.CATALOG,
-                'credentials': {},
+                'credentials': transcription.credential_state(),
                 'effective': transcription.resolve(settings)}
+
+    @app.post('/api/presentation/transcription/credential')
+    async def transcription_credential(payload: dict, request: Request):
+        if not request.headers.get('origin'):
+            raise HTTPException(403, 'Guarda la clave desde la sala, no desde un cliente externo.')
+        require_same_origin(request)
+        import transcription
+        provider = payload.get('provider')
+        if provider not in transcription.PROVIDERS:
+            raise HTTPException(400, 'Proveedor desconocido.')
+        key = payload.get('key')
+        try:
+            if key is None or not str(key).strip():
+                transcription.clear_key(provider)
+            else:
+                await transcription.verify(provider, str(key).strip())
+                transcription.save_key(provider, str(key))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {'credentials': transcription.credential_state(),
+                'effective': transcription.resolve(load_settings())}
 
     @app.get('/api/presentation/languages')
     async def languages():

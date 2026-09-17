@@ -12,9 +12,9 @@ function setup({strictDOM=false}={}){
 test('The shipped HTML initializes without inventing missing DOM elements',()=>{
  const s=setup({strictDOM:true});
  assert.equal(s.run("$('missing-element')"),null);
- for(const id of ['connect','mute','elevenlabs-key-save','elevenlabs-key-clear'])
+ for(const id of ['connect','mute','elevenlabs-key-save','elevenlabs-key-clear','stt-key-save','stt-key-clear'])
   assert.equal(s.run("typeof $('"+id+"').onclick"),'function');
- for(const id of ['elevenlabs-credential','elevenlabs-key','elevenlabs-key-state'])
+ for(const id of ['elevenlabs-credential','elevenlabs-key','elevenlabs-key-state','stt-provider','stt-credential','stt-key','stt-key-state'])
   assert.ok(s.run("$('"+id+"')"),id);
 });
 test('ElevenLabs credentials render against the actual HTML controls',async()=>{
@@ -31,7 +31,7 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
 
 test('STT settings expose only models supported by the detected browser runtime',()=>{
  const s=setup({strictDOM:true});
- s.run("voicePreferences={stt_device:'auto',stt_model:'onnx-community/whisper-small'};sttCatalog={models:[{id:'onnx-community/whisper-tiny',label:'Tiny',description:'light',devices:['webgpu','wasm']},{id:'onnx-community/whisper-small',label:'Small',description:'quality',devices:['webgpu']}]};sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny']};renderTranscription()");
+ s.run("voicePreferences={stt_provider:'browser',stt_device:'auto',stt_model:'onnx-community/whisper-small'};sttCatalog={providers:[{id:'browser',label:'Browser',models:[{id:'onnx-community/whisper-tiny',label:'Tiny',description:'light',devices:['webgpu','wasm']},{id:'onnx-community/whisper-small',label:'Small',description:'quality',devices:['webgpu']}]},{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[{id:'gpt-4o-transcribe',label:'GPT'}]}]};sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny']};$('stt-provider').value='browser';renderTranscription()");
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny']);
  s.run("sttCapabilities.models.push('onnx-community/whisper-small');renderTranscription()");
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
@@ -40,6 +40,15 @@ test('STT settings expose only models supported by the detected browser runtime'
  s.run("$('stt-device').value='wasm';$('stt-device').onchange()");
  assert.equal(s.run("$('stt-device').value"),'wasm');
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny']);
+});
+
+test('OpenAI remains selectable and shows its credential controls',()=>{
+ const s=setup({strictDOM:true});
+ s.run("voicePreferences={stt_provider:'openai',stt_model:'gpt-4o-transcribe'};sttCatalog={providers:[{id:'browser',label:'Browser',models:[]},{id:'openai',label:'OpenAI',note:'Cloud',default_model:'gpt-4o-transcribe',models:[{id:'gpt-4o-transcribe',label:'GPT'}]}]};sttCapabilities={webgpu:false,wasm:true,models:[]};sttCredentials={openai:{configured:true,source:'stored',hint:'…test'}};$('stt-provider').value='openai';renderTranscription()");
+ assert.equal(s.run("$('stt-credential').hidden"),false);
+ assert.equal(s.run("$('stt-browser-options').hidden"),true);
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe']);
+ assert.match(s.run("$('stt-key-state').textContent"),/Clave guardada/);
 });
 test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
  const s=setup({strictDOM:true});

@@ -1,20 +1,38 @@
 """Voice room server: browser audio in, durable delivery out. No LLM lives here."""
 import asyncio
 import json
+import os
 import uuid
+from pathlib import Path
 
+from dotenv import dotenv_values
+from loguru import logger
 from fastapi import HTTPException, WebSocket
 
 import transcription
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import OutputTransportMessageUrgentFrame
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
+from pipecat.workers.runner import WorkerRunner
+
 from browser_socket import BrowserFrameSerializer, session_message
-from presentation import binding, hub, PresentationCall, mount_presentation, require_same_origin
+from presentation import (binding, hub, PresentationCall, NoInference, mount_presentation,
+                          PresentationGate, PresentationPlayback, require_same_origin)
 from connector_control import mount_connector_control
 
 
-async def browser_call(websocket):
-    """Browser-only call: microphone audio never leaves the page; only turn control and text arrive."""
-    from language_settings import load_settings
-    settings = load_settings()
+async def browser_text_call(websocket, settings=None):
+    """Local STT call: microphone audio never leaves the page; only turn control and text arrive."""
+    if settings is None:
+        from language_settings import load_settings
+        settings = load_settings()
     serializer = BrowserFrameSerializer()
     transcription_choice = transcription.resolve(settings)
     outbox = asyncio.Queue()
@@ -87,7 +105,7 @@ async def browser_call(websocket):
                 data = payload(message)
                 if kind == 'voice-stt-ready':
                     model, device = data.get('model'), data.get('device')
-                    models = {item['id'] for item in transcription.CATALOG['models']}
+                    models = {item['id'] for item in transcription.PROVIDERS['browser']['models']}
                     if model not in models or device not in {'webgpu', 'wasm'}:
                         raise ValueError('Motor de transcripción del navegador no compatible.')
                     call.transcription = {**transcription_choice, 'model': model, 'device': device}
@@ -139,6 +157,115 @@ async def browser_call(websocket):
             await finish(turn_id, failed='La llamada terminó durante la transcripción.')
         call.disconnect()
         sender.cancel()
+
+def audio_idle_timeout(config):
+    try:
+        return max(0.0, float(config.get('VOICE_AUDIO_IDLE_TIMEOUT', '5.0')))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+async def openai_call(websocket, settings, config):
+    """Cloud STT call: PCM reaches this server and OpenAI; TTS still plays in the browser."""
+    serializer = BrowserFrameSerializer()
+    transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
+        audio_in_enabled=True, serializer=serializer, allowed_origins=[]))
+    user, assistant = LLMContextAggregatorPair(LLMContext(), user_params=LLMUserAggregatorParams(
+        audio_idle_timeout=audio_idle_timeout(config),
+        vad_analyzer=SileroVADAnalyzer(params=VADParams(
+            start_secs=float(config.get('VOICE_VAD_START_SECS', '0.08')),
+            stop_secs=float(config.get('VOICE_VAD_STOP_SECS', '0.35')),
+            confidence=float(config.get('VOICE_VAD_CONFIDENCE', '0.6')),
+            min_volume=float(config.get('VOICE_VAD_MIN_VOLUME', '0.35')),
+        )),
+        user_turn_strategies=UserTurnStrategies(stop=[
+            SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=settings.user_speech_timeout)
+        ]),
+    ))
+    stt, transcription_choice = transcription.build(settings, config)
+    logger.info('Transcription: {} · {} ({})', transcription_choice['provider'],
+                transcription_choice['model'], transcription_choice['reason'])
+    gate, playback = PresentationGate(), PresentationPlayback()
+    pipeline = Pipeline([transport.input(), stt, user, NoInference(), gate,
+                         transport.output(), playback, assistant])
+    worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=True))
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    outbox = asyncio.Queue()
+    send = outbox.put_nowait
+
+    async def deliver():
+        while True:
+            message = await outbox.get()
+            await transport.output().send_message(OutputTransportMessageUrgentFrame(message=message))
+
+    call = PresentationCall(str(uuid.uuid4()), binding() or {}, worker, None, stt)
+    call.browser_audio = True
+    call.mic = serializer
+    call.transcription = transcription_choice
+    call.on_browser_event = send
+    call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
+    call.audio_grace_seconds = settings.audio_grace_seconds
+    gate.call = playback.call = call
+    hub.attach(call)
+    sender = asyncio.create_task(deliver())
+
+    @user.event_handler('on_user_turn_started')
+    async def presentation_started(aggregator, strategy):
+        call.user_started()
+        send({'type': 'voice-user-turn', 'data': {
+            'phase': 'started', 'revision': call.turn_revision,
+            'thread_id': call.turn_target.get('thread_id'),
+        }})
+
+    @user.event_handler('on_user_turn_stopped')
+    async def presentation_stopped(aggregator, strategy, message):
+        call.speaking = False
+        text = str(message.content or '').strip()
+        cancelled = getattr(call, 'cancelled_turn', None) == call.turn_revision or not text
+        send({'type': 'voice-user-turn', 'data': {
+            'phase': 'cancelled' if cancelled else 'finished',
+            'revision': call.turn_revision,
+            'thread_id': call.turn_target.get('thread_id'), 'text': text,
+        }})
+        if not cancelled:
+            call.enqueue_input(text)
+        await call.finish_user_turn()
+
+    @transport.event_handler('on_client_connected')
+    async def connected(transport, client):
+        call.connected = True
+        await transport.output().send_message(
+            OutputTransportMessageUrgentFrame(message=session_message(call.id, serializer)))
+
+    @transport.event_handler('on_client_disconnected')
+    async def disconnected(transport, client):
+        call.disconnect()
+        await runner.cancel()
+
+    try:
+        await runner.run()
+    finally:
+        call.disconnect()
+        sender.cancel()
+
+
+async def browser_call(websocket):
+    """Select the transport from the saved provider for this connection."""
+    from language_settings import load_settings
+    settings = load_settings()
+    config = {**dotenv_values(Path(__file__).resolve().parent.parent / '.env.voice'), **os.environ}
+    choice = transcription.resolve(settings, config)
+    if choice['provider'] == 'openai':
+        if not choice.get('available'):
+            await websocket.send_text(json.dumps({'type': 'error', 'data': {
+                'message': 'OpenAI necesita una clave de API antes de conectar.'}}))
+            await websocket.close(code=1008)
+            return
+        await openai_call(websocket, settings, config)
+    else:
+        await browser_text_call(websocket, settings)
+
 
 def mount_browser_call(app):
     @app.websocket('/api/presentation/ws')

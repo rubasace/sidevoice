@@ -32,9 +32,9 @@ class LanguageSettings(BaseModel):
     language_overrides: dict[str, LanguageVoice] = Field(default_factory=dict)
     stt_language: Literal['auto', 'es', 'en', 'fr', 'it', 'pt', 'hi'] = 'auto'
     stt_context: str = ''
-    stt_provider: Literal['browser'] = 'browser'
+    stt_provider: Literal['browser', 'openai'] = 'browser'
     stt_device: Literal['auto', 'webgpu', 'wasm'] = 'auto'
-    stt_model: Literal['onnx-community/whisper-tiny', 'onnx-community/whisper-base', 'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'] = 'onnx-community/whisper-tiny'
+    stt_model: str = Field(default='onnx-community/whisper-tiny', min_length=1, max_length=120)
     spanish_voice: Literal['inherit', 'ef_dora', 'em_alex', 'em_santa'] = 'ef_dora'
     english_voice: Literal['inherit', 'af_heart', 'af_bella', 'bf_emma', 'bm_george'] = 'af_heart'
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
@@ -62,15 +62,26 @@ def load_settings():
         data = json.loads(PATH.read_text())
     except (FileNotFoundError, ValueError):
         return LanguageSettings()
-    # Migrate the former server-side Whisper/OpenAI settings without losing voice preferences.
-    data['stt_provider'] = 'browser'
+    # Server-local Whisper became browser-local; OpenAI remains an explicit cloud option.
+    provider = data.get('stt_provider', 'browser')
+    if provider in {'local', 'auto'}:
+        provider = 'browser'
+    if provider not in {'browser', 'openai'}:
+        provider = 'browser'
+    data['stt_provider'] = provider
     data['stt_device'] = data.get('stt_device', 'auto')
-    data['stt_model'] = {
-        'tiny': 'onnx-community/whisper-tiny',
-        'base': 'onnx-community/whisper-base',
-    }.get(data.get('stt_model'), data.get('stt_model'))
-    if data['stt_model'] not in {'onnx-community/whisper-tiny', 'onnx-community/whisper-base', 'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'}:
-        data['stt_model'] = 'onnx-community/whisper-tiny'
+    if provider == 'browser':
+        data['stt_model'] = {
+            'tiny': 'onnx-community/whisper-tiny',
+            'base': 'onnx-community/whisper-base',
+            'small': 'onnx-community/whisper-small',
+            'turbo': 'onnx-community/whisper-large-v3-turbo',
+            'large-v3': 'onnx-community/whisper-large-v3-turbo',
+        }.get(data.get('stt_model'), data.get('stt_model'))
+        if data['stt_model'] not in {'onnx-community/whisper-tiny', 'onnx-community/whisper-base', 'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'}:
+            data['stt_model'] = 'onnx-community/whisper-tiny'
+    elif not data.get('stt_model') or str(data['stt_model']).startswith('onnx-community/'):
+        data['stt_model'] = 'gpt-4o-transcribe'
     return LanguageSettings.model_validate(data)
 
 

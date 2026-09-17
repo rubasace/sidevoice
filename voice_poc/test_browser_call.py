@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from starlette.websockets import WebSocketState
 
 
@@ -104,6 +104,26 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.hub.journal.history('thread-a'), [])
         self.assertEqual(self.hub.snapshot()['call']['transcription']['model'], 'onnx-community/whisper-small')
         socket.incoming.put_nowait({'type': 'websocket.disconnect'}); await asyncio.wait_for(task, 2)
+
+    async def test_openai_provider_routes_to_cloud_pipeline(self):
+        from bot import browser_call
+        socket = FakeWebSocket()
+        choice = {'provider': 'openai', 'available': True, 'model': 'gpt-4o-transcribe'}
+        with patch('bot.transcription.resolve', return_value=choice), patch('bot.openai_call', new_callable=AsyncMock) as cloud:
+            await browser_call(socket)
+            cloud.assert_awaited_once()
+            self.assertIs(cloud.await_args.args[0], socket)
+
+    async def test_openai_without_key_fails_before_accepting_audio(self):
+        from bot import browser_call
+        socket = FakeWebSocket()
+        choice = {'provider': 'openai', 'available': False, 'model': 'gpt-4o-transcribe'}
+        with patch('bot.transcription.resolve', return_value=choice):
+            await browser_call(socket)
+        error = json.loads(socket.sent.get_nowait())
+        self.assertEqual(error['type'], 'error')
+        self.assertIn('clave de API', error['data']['message'])
+        self.assertEqual(socket.application_state, WebSocketState.DISCONNECTED)
 
 if __name__ == '__main__':
     import unittest; unittest.main()

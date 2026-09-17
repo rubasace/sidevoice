@@ -20,12 +20,15 @@ class PreferencesTest(unittest.TestCase):
         settings = language_settings.LanguageSettings()
         self.assertEqual(settings.user_speech_timeout, 2.5)
 
-    def test_legacy_server_stt_settings_migrate_to_browser(self):
+    def test_openai_settings_are_preserved_and_server_local_whisper_migrates(self):
         with tempfile.TemporaryDirectory() as root, patch.object(language_settings, 'PATH', Path(root) / 'settings.json'):
             language_settings.PATH.write_text('{"stt_provider":"openai","stt_model":"gpt-4o-transcribe"}')
             settings = language_settings.load_settings()
-            self.assertEqual(settings.stt_provider, 'browser')
-            self.assertEqual(settings.stt_model, 'onnx-community/whisper-tiny')
+            self.assertEqual((settings.stt_provider, settings.stt_model), ('openai', 'gpt-4o-transcribe'))
+            language_settings.PATH.write_text('{"stt_provider":"local","stt_model":"base"}')
+            settings = language_settings.load_settings()
+            self.assertEqual((settings.stt_provider, settings.stt_model),
+                             ('browser', 'onnx-community/whisper-base'))
             self.assertEqual(settings.stt_device, 'auto')
 
 class VoiceResolutionTest(unittest.TestCase):
