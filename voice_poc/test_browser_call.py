@@ -1,16 +1,13 @@
 import asyncio
 import json
-import os
 import tempfile
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from starlette.websockets import WebSocketState
 
 
 class FakeWebSocket:
-    """Just enough of a Starlette WebSocket for the transport: ASGI events in, frames out."""
-
     def __init__(self):
         self.client_state = self.application_state = WebSocketState.CONNECTED
         self.headers = {}
@@ -22,20 +19,8 @@ class FakeWebSocket:
     async def send_text(self, text):
         self.sent.put_nowait(text)
 
-    async def send_bytes(self, data):
-        self.sent.put_nowait(data)
-
     async def close(self, code=1000, reason=None):
         self.client_state = self.application_state = WebSocketState.DISCONNECTED
-
-
-class AudioIdleTimeoutTest(TestCase):
-    def test_missing_packets_get_a_longer_guard_than_conversational_silence(self):
-        from bot import audio_idle_timeout
-        self.assertEqual(audio_idle_timeout({}), 5.0)
-        self.assertEqual(audio_idle_timeout({'VOICE_AUDIO_IDLE_TIMEOUT': '7.5'}), 7.5)
-        self.assertEqual(audio_idle_timeout({'VOICE_AUDIO_IDLE_TIMEOUT': 'broken'}), 5.0)
-        self.assertEqual(audio_idle_timeout({'VOICE_AUDIO_IDLE_TIMEOUT': '-1'}), 0.0)
 
 
 class BrowserCallTest(IsolatedAsyncioTestCase):
@@ -45,64 +30,60 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.hub = PresentationHub()
         self.hub.journal = RoomHistory(Path(self.temp.name) / 'history.sqlite3')
-        self.patches = [patch('presentation.BINDING', Path(self.temp.name) / 'binding.json'),
-                        patch('bot.hub', self.hub),
-                        patch.dict(os.environ, {'VOICE_STT_API_KEY': 'test-not-used'})]
-        for active in self.patches:
-            active.start()
+        self.binding = Path(self.temp.name) / 'binding.json'
+        self.binding.write_text(json.dumps({'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}))
+        self.patches = [patch('presentation.BINDING', self.binding), patch('bot.hub', self.hub)]
+        for active in self.patches: active.start()
 
     async def asyncTearDown(self):
-        for active in self.patches:
-            active.stop()
+        for active in self.patches: active.stop()
         self.temp.cleanup()
 
     async def received(self, socket, kind):
         while True:
-            message = json.loads(await asyncio.wait_for(socket.sent.get(), 15))
-            if message['type'] == kind:
-                return message
+            message = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
+            if message['type'] == kind: return message
 
-    async def test_local_whisper_preparation_is_visible_before_the_session(self):
-        from bot import browser_call
-        from presentation import NoInference
-        choice = {
-            'provider': 'local', 'model': 'large-v3', 'reason': 'explicit',
-            'engine': 'faster-whisper', 'location': 'local',
-            'device': 'cpu', 'compute_type': 'int8',
-        }
-        socket = FakeWebSocket()
-        with patch('bot.transcription.resolve', return_value=choice), \
-             patch('bot.transcription.build', return_value=(NoInference(), choice)):
-            session = asyncio.create_task(browser_call(socket))
-            loading = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
-            self.assertEqual(loading['type'], 'voice-preparation')
-            self.assertEqual(loading['data']['phase'], 'loading')
-            self.assertEqual(loading['data']['model'], 'large-v3')
-            ready = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
-            self.assertEqual(ready, {
-                'type': 'voice-preparation',
-                'data': {'kind': 'transcription', 'phase': 'ready', 'model': 'large-v3'},
-            })
-            announced = await self.received(socket, 'voice-session')
-            self.assertIn('session_id', announced['data'])
-            socket.incoming.put_nowait({'type': 'websocket.disconnect'})
-            await asyncio.wait_for(session, 2)
-
-    async def test_the_call_speaks_first_with_its_id_relays_room_events_and_ends_with_the_socket(self):
+    async def test_only_browser_text_reaches_the_server(self):
         from bot import browser_call
         socket = FakeWebSocket()
-        session = asyncio.create_task(browser_call(socket))
+        task = asyncio.create_task(browser_call(socket))
         first = await self.received(socket, 'voice-session')
-        call = self.hub.call
-        self.assertEqual(first['data'], {'session_id': call.id, 'sample_rate': 16000, 'channels': 1})
-        self.assertTrue(call.connected)
-        self.assertEqual(self.hub.snapshot()['call']['id'], call.id)
-        socket.incoming.put_nowait({'type': 'websocket.receive', 'bytes': b'\x00' * 640})
-        # Events the room raises from synchronous code reach the browser in the shape the page reads.
-        call.user_started()
-        cancel = await self.received(socket, 'voice-cancel')
-        self.assertEqual(cancel['data'], {'session_id': call.id, 'revision': 1})
+        session_id = first['data']['session_id']
+        self.assertEqual(first['data']['sample_rate'], 16000)
+        socket.incoming.put_nowait({'type': 'websocket.receive', 'bytes': b'pcm'})
+        error = await self.received(socket, 'error')
+        self.assertIn('rechazó PCM', error['data']['message'])
+        for message in [
+            {'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}},
+            {'type': 'voice-input-start', 'data': {'session_id': session_id, 'turn_id': 'turn-1'}},
+            {'type': 'voice-input-transcript', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1, 'text': 'Hola desde el navegador', 'metrics': {'audio_ms': 850, 'recognition_ms': 120}}},
+            {'type': 'voice-input-end', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1}},
+        ]:
+            socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(message)})
+        finished = await self.received(socket, 'voice-user-turn')
+        if finished['data']['phase'] == 'started': finished = await self.received(socket, 'voice-user-turn')
+        self.assertEqual(finished['data']['phase'], 'finished')
+        self.assertEqual(finished['data']['text'], 'Hola desde el navegador')
+        rows = self.hub.journal.history('thread-a')
+        self.assertEqual(rows[-1]['text'], 'Hola desde el navegador')
+        snapshot = self.hub.snapshot()['call']
+        self.assertEqual(snapshot['mic']['transport'], 'browser-text')
+        self.assertEqual(snapshot['mic']['recognition_ms'], 120)
+        self.assertEqual(snapshot['transcription']['device'], 'wasm')
         socket.incoming.put_nowait({'type': 'websocket.disconnect'})
-        await asyncio.wait_for(session, 15)
-        self.assertFalse(call.connected)
-        self.assertTrue(call.closed)
+        await asyncio.wait_for(task, 2)
+        self.assertFalse(self.hub.call.connected)
+
+    async def test_incompatible_runtime_is_rejected(self):
+        from bot import browser_call
+        socket = FakeWebSocket();task = asyncio.create_task(browser_call(socket))
+        session_id = (await self.received(socket, 'voice-session'))['data']['session_id']
+        socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps({'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'server-whisper', 'device': 'cuda'}})})
+        error = await self.received(socket, 'error')
+        self.assertIn('no compatible', error['data']['message'])
+        socket.incoming.put_nowait({'type': 'websocket.disconnect'});await asyncio.wait_for(task, 2)
+
+
+if __name__ == '__main__':
+    import unittest; unittest.main()

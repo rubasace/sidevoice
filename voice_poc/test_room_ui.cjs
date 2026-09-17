@@ -4,7 +4,7 @@ function setup({strictDOM=false}={}){
  class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
  const elements=new Map(),handlers={};
  if(strictDOM)for(const match of html.split('<script>')[0].matchAll(/\bid="([^"]+)"/g))elements.set(match[1],new Element());
- const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
+ const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(__dirname+'/presentation.html','utf8').split('<script>')[1].split('</script>')[0];vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
@@ -29,6 +29,13 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),true);
 });
 
+test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
+ const s=setup({strictDOM:true});
+ s.run("voiceCatalog={models:[{id:'eleven_flash_v2_5',label:'Eleven Flash v2.5',provider:'elevenlabs',description:'Rápido'}]};entriesFor($('default-model'),voiceCatalog.models.map(x=>[x.id,x.label]),'eleven_flash_v2_5');setModelInfo($('default-model-info'),'eleven_flash_v2_5')");
+ assert.equal(s.run("$('default-model').children[0].textContent"),'Eleven Flash v2.5');
+ assert.equal(s.run("$('default-model-info').dataset.tooltip"),'Rápido');
+ assert.equal(s.run("$('default-model-info').hidden"),false);
+});
 test('Joining with ElevenLabs reaches microphone capture without loading Kokoro',async()=>{
  for(const model of ['eleven_flash_v2_5','kokoro']){
   const s=setup({strictDOM:true});let prepared=0,captured=0,unlocked=false;
@@ -328,22 +335,22 @@ test('Preview uses ElevenLabs native speed limits while Kokoro retains its range
 });
 
 test('Capture shares the playback context and hangup only disconnects the microphone graph',async()=>{
- const s=setup();let closed=0,sent=0,nodeOptions;
+ const s=setup();let closed=0,ingested=0,nodeOptions;
  const source={connect(){},disconnect(){}};
  const context={state:'running',createAnalyser:()=>({getFloatTimeDomainData(data){data.fill(0)},disconnect(){}}),createMediaStreamSource:()=>source,audioWorklet:{addModule:async()=>{}},close:async()=>{closed++}};
- s.context.window.roomVoice={context};
+ s.context.window.roomVoice={context};s.context.window.roomTranscription.ingest=()=>{ingested++};
  s.context.AudioWorkletNode=class{constructor(_context,_name,options){nodeOptions=options;this.port={}}connect(){}disconnect(){}};
  s.run("$('mute').style.setProperty=()=>{};stream={getAudioTracks:()=>[{enabled:true}]};ws={readyState:1,send(){}}");
- s.run('ws').send=()=>{sent++};
+ s.run('ws').send=()=>{throw Error('raw PCM must not be sent')};
  s.run('startMeter(16000)');
  assert.equal(s.run('audioContext'),context);
  await s.run('startCapture(ws,{sample_rate:16000})');
  const node=s.run('captureNode');
  node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(sent,1);assert.equal(nodeOptions.processorOptions.sampleRate,16000);
+ assert.equal(ingested,1);assert.equal(nodeOptions.processorOptions.sampleRate,16000);
  s.run('stopMeter()');
  node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(sent,1);assert.equal(closed,0);
+ assert.equal(ingested,1);assert.equal(closed,0);
 });
 
 test('Latency uses browser monotonic durations and original reply revision',()=>{

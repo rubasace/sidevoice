@@ -1,11 +1,8 @@
-import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 import language_settings
-from speech_filter import FilteredOpenAISTTService
 
 class PreferencesTest(unittest.TestCase):
     def test_preferences_persist_and_select_native_voice(self):
@@ -23,15 +20,13 @@ class PreferencesTest(unittest.TestCase):
         settings = language_settings.LanguageSettings()
         self.assertEqual(settings.user_speech_timeout, 2.5)
 
-class AutoLanguageTest(unittest.IsolatedAsyncioTestCase):
-    async def test_auto_omits_language_and_prompt(self):
-        stt=FilteredOpenAISTTService(api_key='test',speech_gate=object(),settings=FilteredOpenAISTTService.Settings(model='gpt-4o-transcribe',language=None,prompt=None))
-        create=AsyncMock(return_value=SimpleNamespace(text='Hello'))
-        stt._client=SimpleNamespace(audio=SimpleNamespace(transcriptions=SimpleNamespace(create=create)))
-        await stt._request_transcription(b'audio')
-        self.assertNotIn('language',create.call_args.kwargs)
-        self.assertNotIn('prompt',create.call_args.kwargs)
-        self.assertEqual(create.call_args.kwargs['include'],['logprobs'])
+    def test_legacy_server_stt_settings_migrate_to_browser(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(language_settings, 'PATH', Path(root) / 'settings.json'):
+            language_settings.PATH.write_text('{"stt_provider":"openai","stt_model":"gpt-4o-transcribe"}')
+            settings = language_settings.load_settings()
+            self.assertEqual(settings.stt_provider, 'browser')
+            self.assertEqual(settings.stt_model, 'onnx-community/whisper-tiny')
+            self.assertEqual(settings.stt_device, 'auto')
 
 class VoiceResolutionTest(unittest.TestCase):
     def test_default_and_language_override(self):

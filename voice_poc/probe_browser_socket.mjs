@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Dev probe for the browser link, no microphone needed: opens the call socket, takes the call id the
- * room announces, streams two seconds of silence and checks that the room reports that call as
+ * room announces, submits a browser-side transcript and checks that the room reports that call as
  * connected, then as disconnected once the socket closes.
  * Usage: node voice_poc/probe_browser_socket.mjs [http://127.0.0.1:8767] */
 const base=(process.argv[2]||'http://127.0.0.1:8767').replace(/\/$/,'');
@@ -22,8 +22,11 @@ const session=await new Promise((resolve,reject)=>{
 socket.onclose=null;
 check(received.at(-1)==='voice-session','the room announces voice-session after any preparation events');
 check(typeof session.session_id==='string'&&session.session_id.length>0,'voice-session carries a call id: '+session.session_id);
-const bytesPerFrame=session.sample_rate*session.channels*2/50;
-for(let i=0;i<100;i++){socket.send(new ArrayBuffer(bytesPerFrame));await sleep(20)}
+socket.send(JSON.stringify({type:'voice-stt-ready',data:{session_id:session.session_id,model:'onnx-community/whisper-tiny',device:'wasm'}}));
+socket.send(JSON.stringify({type:'voice-input-start',data:{session_id:session.session_id,turn_id:'probe-turn'}}));
+socket.send(JSON.stringify({type:'voice-input-transcript',data:{session_id:session.session_id,turn_id:'probe-turn',sequence:1,text:'Prueba local del navegador',metrics:{audio_ms:1000,recognition_ms:10}}}));
+socket.send(JSON.stringify({type:'voice-input-end',data:{session_id:session.session_id,turn_id:'probe-turn',sequence:1}}));
+await sleep(200);
 const during=await room();
 check(during.call?.id===session.session_id&&during.call?.connected===true,'GET /api/presentation reports the announced call as connected');
 check(!('ice_servers' in during),'the snapshot no longer advertises ICE servers');
@@ -31,5 +34,5 @@ socket.close();
 await sleep(1500);
 const after=await room();
 check(after.call?.id===session.session_id&&after.call?.connected===false,'closing the socket disconnects that call');
-console.log('room events seen while streaming:',received.join(', ')||'none');
+console.log('room events seen during text-only probe:',received.join(', ')||'none');
 process.exit(failures?1:0);

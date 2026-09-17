@@ -32,11 +32,9 @@ class LanguageSettings(BaseModel):
     language_overrides: dict[str, LanguageVoice] = Field(default_factory=dict)
     stt_language: Literal['auto', 'es', 'en', 'fr', 'it', 'pt', 'hi'] = 'auto'
     stt_context: str = ''
-    # 'auto' keeps the original behaviour: OpenAI when a key is available, local otherwise.
-    stt_provider: Literal['auto', 'local', 'openai'] = 'auto'
-    # Empty means the provider's own default; an unknown id is accepted so a new
-    # model works without a release.
-    stt_model: str = Field(default='', max_length=120)
+    stt_provider: Literal['browser'] = 'browser'
+    stt_device: Literal['auto', 'webgpu', 'wasm'] = 'auto'
+    stt_model: Literal['onnx-community/whisper-tiny', 'onnx-community/whisper-base'] = 'onnx-community/whisper-tiny'
     spanish_voice: Literal['inherit', 'ef_dora', 'em_alex', 'em_santa'] = 'ef_dora'
     english_voice: Literal['inherit', 'af_heart', 'af_bella', 'bf_emma', 'bm_george'] = 'af_heart'
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
@@ -61,9 +59,19 @@ class LanguageSettings(BaseModel):
 
 def load_settings():
     try:
-        return LanguageSettings.model_validate_json(PATH.read_text())
-    except FileNotFoundError:
+        data = json.loads(PATH.read_text())
+    except (FileNotFoundError, ValueError):
         return LanguageSettings()
+    # Migrate the former server-side Whisper/OpenAI settings without losing voice preferences.
+    data['stt_provider'] = 'browser'
+    data['stt_device'] = data.get('stt_device', 'auto')
+    data['stt_model'] = {
+        'tiny': 'onnx-community/whisper-tiny',
+        'base': 'onnx-community/whisper-base',
+    }.get(data.get('stt_model'), data.get('stt_model'))
+    if data['stt_model'] not in {'onnx-community/whisper-tiny', 'onnx-community/whisper-base'}:
+        data['stt_model'] = 'onnx-community/whisper-tiny'
+    return LanguageSettings.model_validate(data)
 
 
 def save_settings(settings):

@@ -19,9 +19,9 @@ CREDENTIALS = Path(os.getenv('VOICE_TTS_CREDENTIALS_FILE', str(ROOT / '.voice-po
 ELEVENLABS_API = 'https://api.elevenlabs.io'
 
 FALLBACK_MODELS = [
-    {'id': 'eleven_flash_v2_5', 'label': 'Eleven Flash v2.5 · rápido'},
-    {'id': 'eleven_multilingual_v2', 'label': 'Eleven Multilingual v2 · calidad'},
-    {'id': 'eleven_v3', 'label': 'Eleven v3 · expresivo'},
+    {'id': 'eleven_flash_v2_5', 'label': 'Eleven Flash v2.5', 'description': 'Rápido'},
+    {'id': 'eleven_multilingual_v2', 'label': 'Eleven Multilingual v2', 'description': 'Calidad multilingüe'},
+    {'id': 'eleven_v3', 'label': 'Eleven v3', 'description': 'Más expresivo'},
 ]
 
 
@@ -126,7 +126,10 @@ async def _models(http, value):
         if isinstance(model_id, str) and model_id:
             name = item.get('name') or model_id
             description = item.get('description')
-            models.append({'id': model_id, 'label': name + ((' · ' + description) if description else '')})
+            entry = {'id': model_id, 'label': name}
+            if isinstance(description, str) and description.strip():
+                entry['description'] = description.strip()
+            models.append(entry)
     return models
 
 
