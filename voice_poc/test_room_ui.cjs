@@ -50,6 +50,14 @@ test('Joining with ElevenLabs reaches microphone capture without loading Kokoro'
   assert.equal(s.run('connecting'),false);
  }
 });
+test('A queued assistant reply never hides the active user speech bubble',()=>{
+ const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
+ emit('voice-user-turn',{phase:'started',revision:1,thread_id:'a'});
+ assert.equal(s.run("$('messages').children.at(-1).className"),'message user partial');
+ emit('bot-output',{text:'Respuesta pendiente',spoken:false,segment_id:'queued'});
+ assert.equal(s.run("$('messages').children.at(-1).className"),'message user partial');
+ assert.match(s.run("$('messages').children.at(-1).textContent"),/Escuchando/);
+});
 test('TTS announcement/completion is one row; intentional repetitions remain separate',()=>{
  const s=setup();
  const emit=(spoken,id)=>s.run(`message(${JSON.stringify(JSON.stringify({type:'bot-output',data:{text:'Hola',spoken,segment_id:id,aggregated_by:'sentence'}}))})`);
