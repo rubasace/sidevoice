@@ -231,6 +231,12 @@ test('The room speaks first: the page adopts its call id and treats anything ear
  socket.onopen();assert.equal(JSON.parse(socket.sent[0]).type,'client-ready');
  socket.onmessage({data:JSON.stringify({type:'user-started-speaking',data:{}})});
  assert.equal(s.run('userLive'),true);
+ socket.onmessage({data:JSON.stringify({type:'voice-preparation',data:{kind:'transcription',phase:'loading',title:'Preparando transcripción',text:'Descargando o cargando Whisper large-v3 en Sidevoice…'}})});
+ assert.equal(s.run("$('voice-loading').open"),true);
+ assert.equal(s.run("$('loading-title').textContent"),'Preparando transcripción');
+ assert.match(s.run("$('loading-detail').textContent"),/large-v3/);
+ socket.onmessage({data:JSON.stringify({type:'voice-preparation',data:{kind:'transcription',phase:'ready'}})});
+ assert.equal(s.run("$('voice-loading').open"),false);
  socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'call-1',sample_rate:16000,channels:1}})});
  assert.deepEqual(await session,{session_id:'call-1',sample_rate:16000,channels:1});
  const refused={send(){}};const rejection=s.run('openSession')(refused);refused.onclose();

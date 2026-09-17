@@ -13,14 +13,14 @@ const socket=new WebSocket(base.replace(/^http/,'ws')+'/api/presentation/ws');
 socket.binaryType='arraybuffer';
 const received=[];
 const session=await new Promise((resolve,reject)=>{
- const timer=setTimeout(()=>reject(new Error('no voice-session within 10 s')),10000);
+ const timer=setTimeout(()=>reject(new Error('no voice-session within 120 s')),120000);
  socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:'probe',data:{}}));
  socket.onerror=()=>reject(new Error('socket error'));
  socket.onclose=event=>reject(new Error('closed before voice-session (code '+event.code+')'));
  socket.onmessage=event=>{const message=JSON.parse(event.data);received.push(message.type);if(message.type==='voice-session'){clearTimeout(timer);resolve(message.data)}};
 });
 socket.onclose=null;
-check(received[0]==='voice-session','the room speaks first with voice-session');
+check(received.at(-1)==='voice-session','the room announces voice-session after any preparation events');
 check(typeof session.session_id==='string'&&session.session_id.length>0,'voice-session carries a call id: '+session.session_id);
 const bytesPerFrame=session.sample_rate*session.channels*2/50;
 for(let i=0;i<100;i++){socket.send(new ArrayBuffer(bytesPerFrame));await sleep(20)}

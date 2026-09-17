@@ -1,5 +1,6 @@
 """Voice room server: browser audio in, durable delivery out. No LLM lives here."""
 import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
@@ -62,7 +63,51 @@ async def browser_call(websocket):
             )
         ]),
     ))
-    stt, transcription_choice = transcription.build(language_preferences, config)
+    transcription_choice = transcription.resolve(language_preferences, config)
+    local_transcription = transcription_choice['provider'] == 'local'
+    if local_transcription:
+        await websocket.send_text(json.dumps({
+            "type": "voice-preparation",
+            "data": {
+                "kind": "transcription",
+                "phase": "loading",
+                "title": "Preparando transcripción",
+                "text": f"Descargando o cargando Whisper {transcription_choice['model']} en Sidevoice…",
+                "model": transcription_choice["model"],
+                "progress": None,
+            },
+        }))
+    try:
+        # Local Whisper downloads and loads synchronously. Keep the server responsive
+        # while it does so; the browser already has a visible preparation state.
+        stt, transcription_choice = await asyncio.to_thread(
+            transcription.build, language_preferences, config
+        )
+    except Exception as error:
+        if local_transcription:
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "voice-preparation",
+                    "data": {
+                        "kind": "transcription",
+                        "phase": "error",
+                        "title": "No se pudo preparar la transcripción",
+                        "text": str(error),
+                        "model": transcription_choice["model"],
+                    },
+                }))
+            except Exception:
+                pass
+        raise
+    if local_transcription:
+        await websocket.send_text(json.dumps({
+            "type": "voice-preparation",
+            "data": {
+                "kind": "transcription",
+                "phase": "ready",
+                "model": transcription_choice["model"],
+            },
+        }))
     logger.info("Transcription: {} · {} ({})", transcription_choice['provider'],
                 transcription_choice['model'], transcription_choice['reason'])
     # Synthesis happens in the browser; no TTS service sits in this pipeline and no audio flows down.

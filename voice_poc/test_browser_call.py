@@ -62,12 +62,37 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
             if message['type'] == kind:
                 return message
 
+    async def test_local_whisper_preparation_is_visible_before_the_session(self):
+        from bot import browser_call
+        from presentation import NoInference
+        choice = {
+            'provider': 'local', 'model': 'large-v3', 'reason': 'explicit',
+            'engine': 'faster-whisper', 'location': 'local',
+            'device': 'cpu', 'compute_type': 'int8',
+        }
+        socket = FakeWebSocket()
+        with patch('bot.transcription.resolve', return_value=choice), \
+             patch('bot.transcription.build', return_value=(NoInference(), choice)):
+            session = asyncio.create_task(browser_call(socket))
+            loading = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
+            self.assertEqual(loading['type'], 'voice-preparation')
+            self.assertEqual(loading['data']['phase'], 'loading')
+            self.assertEqual(loading['data']['model'], 'large-v3')
+            ready = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
+            self.assertEqual(ready, {
+                'type': 'voice-preparation',
+                'data': {'kind': 'transcription', 'phase': 'ready', 'model': 'large-v3'},
+            })
+            announced = await self.received(socket, 'voice-session')
+            self.assertIn('session_id', announced['data'])
+            socket.incoming.put_nowait({'type': 'websocket.disconnect'})
+            await asyncio.wait_for(session, 2)
+
     async def test_the_call_speaks_first_with_its_id_relays_room_events_and_ends_with_the_socket(self):
         from bot import browser_call
         socket = FakeWebSocket()
         session = asyncio.create_task(browser_call(socket))
-        first = json.loads(await asyncio.wait_for(socket.sent.get(), 15))
-        self.assertEqual(first['type'], 'voice-session')
+        first = await self.received(socket, 'voice-session')
         call = self.hub.call
         self.assertEqual(first['data'], {'session_id': call.id, 'sample_rate': 16000, 'channels': 1})
         self.assertTrue(call.connected)
