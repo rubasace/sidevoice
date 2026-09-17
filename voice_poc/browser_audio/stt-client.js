@@ -47,7 +47,8 @@ class BrowserTranscription{
   this.socket=socket;this.silenceMs=Math.max(500,Number(silenceSeconds||2.5)*1000);this.language=language;
   this.enabled=true;this.turn=null;this.preRoll=[];this.voiceRun=0;this.noise=.002;this.generation++;
  }
- stop(){
+ stop({cancelTurn=false}={}){
+  if(cancelTurn&&this.turn)this._send('voice-input-cancel',{session_id:window.sidevoiceSessionId?.(),turn_id:this.turn.id});
   this.enabled=false;this.socket=null;this.turn=null;this.preRoll=[];this.voiceRun=0;this.generation++;
   const error=new DOMException('Transcripción cancelada','AbortError');
   for(const request of this.pending.values())request.reject(error);this.pending.clear();

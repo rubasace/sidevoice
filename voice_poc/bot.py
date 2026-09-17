@@ -127,6 +127,8 @@ async def browser_call(websocket):
                     if not turn or data.get('sequence') != turn['sequence']:
                         raise ValueError('La transcripción no está completa.')
                     await finish(data['turn_id'])
+                elif kind == 'voice-input-cancel':
+                    await finish(data.get('turn_id'))
                 elif kind == 'voice-input-error':
                     await finish(data.get('turn_id'), failed=str(data.get('error') or 'Falló la transcripción local.'))
             except (TypeError, ValueError) as error:

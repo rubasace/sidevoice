@@ -37,6 +37,9 @@ test('STT settings expose only models supported by the detected browser runtime'
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
  s.run("$('stt-model').value='onnx-community/whisper-small';$('stt-model').onchange()");
  assert.equal(s.run("$('stt-model-note').textContent"),'quality');
+ s.run("$('stt-device').value='wasm';$('stt-device').onchange()");
+ assert.equal(s.run("$('stt-device').value"),'wasm');
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny']);
 });
 test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
  const s=setup({strictDOM:true});
@@ -490,4 +493,27 @@ test('Stats renders device and session values as text and does not mislabel HTTP
  assert.ok(values.includes('36 ms'));assert.ok(values.includes('48000 Hz'));assert.ok(values.includes('610 ms'));assert.ok(values.includes('2'));assert.ok(values.includes('Misma sesión'));
  assert.ok(values.includes('local · turbo'));assert.ok(values.includes('faster-whisper'));assert.ok(values.includes('cpu · int8'));
  assert.ok(values.includes('OpenAI solicitado sin clave · fallback local'));
+});
+
+test('Changed STT settings hot-swap the active browser runtime',async()=>{
+ const s=setup({strictDOM:true});
+ s.run(`
+  var actions=[];
+  ws={readyState:1,sent:[],send(value){this.sent.push(JSON.parse(value))}};
+  sessionId='call-1';connectEpoch=7;
+  window.roomTranscription={
+   stop(options){actions.push(['stop',options.cancelTurn])},
+   prepare:async options=>{actions.push(['prepare',options.model,options.device]);return {model:options.model,device:'webgpu'}},
+   start(options){actions.push(['start',options.language,options.silenceSeconds])}
+  };
+ `);
+ const previous={stt_model:'tiny',stt_device:'wasm',stt_language:'auto',user_speech_timeout:2.5};
+ const next={stt_model:'small',stt_device:'webgpu',stt_language:'es',user_speech_timeout:3};
+ assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),true);
+ assert.equal(JSON.stringify(s.run('actions')),JSON.stringify([['stop',true],['prepare','small','webgpu'],['start','es',3]]));
+ assert.equal(s.run('ws.sent[0].type'),'voice-stt-ready');
+ assert.equal(s.run('ws.sent[0].data.model'),'small');
+ assert.equal(s.run('ws.sent[0].data.session_id'),'call-1');
+ assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(next)+','+JSON.stringify(next)+')'),false);
+ assert.equal(s.run('actions.length'),3);
 });

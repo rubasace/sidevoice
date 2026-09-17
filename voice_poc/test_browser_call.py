@@ -84,6 +84,23 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertIn('no compatible', error['data']['message'])
         socket.incoming.put_nowait({'type': 'websocket.disconnect'});await asyncio.wait_for(task, 2)
 
+    async def test_model_switch_cancels_open_turn_without_error(self):
+        from bot import browser_call
+        socket = FakeWebSocket(); task = asyncio.create_task(browser_call(socket))
+        session_id = (await self.received(socket, 'voice-session'))['data']['session_id']
+        for message in [
+            {'type': 'voice-input-start', 'data': {'session_id': session_id, 'turn_id': 'turn-old'}},
+            {'type': 'voice-input-cancel', 'data': {'session_id': session_id, 'turn_id': 'turn-old'}},
+            {'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'onnx-community/whisper-small', 'device': 'webgpu'}},
+        ]:
+            socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(message)})
+        phases = []
+        while len(phases) < 2:
+            phases.append((await self.received(socket, 'voice-user-turn'))['data']['phase'])
+        self.assertEqual(phases, ['started', 'cancelled'])
+        self.assertEqual(self.hub.journal.history('thread-a'), [])
+        self.assertEqual(self.hub.snapshot()['call']['transcription']['model'], 'onnx-community/whisper-small')
+        socket.incoming.put_nowait({'type': 'websocket.disconnect'}); await asyncio.wait_for(task, 2)
 
 if __name__ == '__main__':
     import unittest; unittest.main()

@@ -41,3 +41,13 @@ test('degenerate symbol repetition is rejected instead of reaching the agent',as
  assert.match(sent[0].data.error,/degenerada/);
  assert.equal(client.turn,null);
 });
+
+test('model switch cancels an open browser turn cleanly',()=>{
+ const {client,sent}=setup();
+ client.turn={id:'turn-open'};client.enabled=true;
+ client.stop({cancelTurn:true});
+ assert.deepEqual(sent.map(item=>item.type),['voice-input-cancel']);
+ assert.equal(sent[0].data.turn_id,'turn-open');
+ assert.equal(client.enabled,false);
+ assert.equal(client.turn,null);
+});
