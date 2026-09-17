@@ -3,7 +3,7 @@ import {env,pipeline} from '@huggingface/transformers';
 export const MODELS={
  'onnx-community/whisper-tiny':{revision:'ff4177021cc41f7db950912b73ea4fdf7d01d8e7',label:'Whisper tiny',devices:['webgpu','wasm'],dtype:{webgpu:'fp32',wasm:'q8'}},
  'onnx-community/whisper-base':{revision:'1846881b6b3a3024392c1eea3ad983695bc23925',label:'Whisper base',devices:['webgpu','wasm'],dtype:{webgpu:'fp32',wasm:'q8'}},
- 'onnx-community/whisper-small':{revision:'36050c46d777d46dc4b5f43f6d90574fc38f8732',label:'Whisper small',devices:['webgpu'],dtype:{webgpu:'fp16'},requiresFp16:true},
+ 'onnx-community/whisper-small':{revision:'36050c46d777d46dc4b5f43f6d90574fc38f8732',label:'Whisper small',devices:['webgpu'],dtype:{webgpu:'q4'}},
  'onnx-community/whisper-large-v3-turbo':{revision:'360ebcde2559d60bb474678be3c1de9ef347d01a',label:'Whisper large v3 turbo',devices:['webgpu'],dtype:{webgpu:'q4f16'},requiresFp16:true},
 };
 env.allowLocalModels=false;

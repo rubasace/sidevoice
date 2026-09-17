@@ -31,3 +31,13 @@ test('new voiced audio invalidates an in-flight snapshot',async()=>{
  assert.deepEqual(sent,[]);
  assert.equal(client.turn.transcribing,false);
 });
+
+test('degenerate symbol repetition is rejected instead of reaching the agent',async()=>{
+ const {client,sent}=setup(),voice=new Float32Array(1600);
+ client.turn={id:'turn-1',chunks:[voice],samples:voice.length,lastVoice:0,voiceRevision:1,transcribing:false,sequence:0};
+ client._request=async()=>({text:'* '.repeat(200),elapsed_ms:100,device:'webgpu',model:'model'});
+ await client._finish();
+ assert.deepEqual(sent.map(item=>item.type),['voice-input-error']);
+ assert.match(sent[0].data.error,/degenerada/);
+ assert.equal(client.turn,null);
+});

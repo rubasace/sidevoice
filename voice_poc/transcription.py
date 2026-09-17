@@ -20,7 +20,7 @@ CATALOG = {
         {
             'id': 'onnx-community/whisper-small',
             'label': 'Whisper small',
-            'description': 'Mejor calidad multilingüe. Aproximadamente 462 MiB; requiere WebGPU con fp16.',
+            'description': 'Mejor calidad multilingüe. Aproximadamente 285 MiB en Q4; requiere WebGPU.',
             'devices': ['webgpu'],
         },
         {

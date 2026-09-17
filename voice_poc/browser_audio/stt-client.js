@@ -1,3 +1,11 @@
+function usefulTranscript(value){
+ const text=String(value||'').trim(),compact=text.replace(/\s/g,'');
+ if(!text||(!/[\p{L}\p{N}]/u.test(text)&&compact.length>=8))return false;
+ if(compact.length>=24&&new Set(compact).size<=3)return false;
+ const tokens=text.split(/\s+/);
+ if(tokens.length>=10&&new Set(tokens).size/tokens.length<.15)return false;
+ return true;
+}
 class BrowserTranscription{
  constructor(){
   this.worker=null;this.pending=new Map();this.nextId=0;this.runtime=null;this.socket=null;
@@ -6,7 +14,7 @@ class BrowserTranscription{
  }
  _ensureWorker(){
   if(this.worker)return;
-  this.worker=new Worker('/voice-browser/stt-worker.js?v=browser-stt-2',{type:'module'});
+  this.worker=new Worker('/voice-browser/stt-worker.js?v=browser-stt-3',{type:'module'});
   this.worker.onmessage=({data})=>{
    const request=this.pending.get(data.id);if(!request)return;
    if(data.type==='progress'){request.progress?.(data.progress);return}
@@ -78,6 +86,7 @@ class BrowserTranscription{
     if(performance.now()-turn.lastVoice>=this.silenceMs)this._finish();
     return;
    }
+   if(!usefulTranscript(result.text))throw Error('El modelo produjo una transcripción degenerada. Inténtalo de nuevo.');
    this._send('voice-input-transcript',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence,text:result.text,metrics:{audio_ms:Math.round(snapshotSamples/16),recognition_ms:Math.round(result.elapsed_ms),device:result.device,model:result.model}});
    this._send('voice-input-end',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence});
    this.turn=null;this.preRoll=[];this.voiceRun=0;this._preparation({phase:'hidden'});
