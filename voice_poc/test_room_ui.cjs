@@ -1,11 +1,48 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
-function setup(){
+function setup({strictDOM=false}={}){
+ const html=fs.readFileSync(__dirname+'/presentation.html','utf8');
  class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this}addEventListener(){}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(){this.children=[]}remove(){}setAttribute(){}click(){this.onclick?.()}}
- const elements=new Map(),handlers={};const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
+ const elements=new Map(),handlers={};
+ if(strictDOM)for(const match of html.split('<script>')[0].matchAll(/\bid="([^"]+)"/g))elements.set(match[1],new Element());
+ const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(__dirname+'/presentation.html','utf8').split('<script>')[1].split('</script>')[0];vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
 }
+test('The shipped HTML initializes without inventing missing DOM elements',()=>{
+ const s=setup({strictDOM:true});
+ assert.equal(s.run("$('missing-element')"),null);
+ for(const id of ['connect','mute','elevenlabs-key-save','elevenlabs-key-clear'])
+  assert.equal(s.run("typeof $('"+id+"').onclick"),'function');
+ for(const id of ['elevenlabs-credential','elevenlabs-key','elevenlabs-key-state'])
+  assert.ok(s.run("$('"+id+"')"),id);
+});
+test('ElevenLabs credentials render against the actual HTML controls',async()=>{
+ const s=setup({strictDOM:true});
+ s.context.fetch=async()=>({ok:true,json:async()=>({credentials:{configured:true,source:'stored',hint:'…test'}})});
+ await s.run('loadElevenLabs()');
+ assert.match(s.run("$('elevenlabs-key-state').textContent"),/Clave guardada/);
+ assert.equal(s.run("$('elevenlabs-key-clear').disabled"),false);
+ s.context.fetch=async()=>({ok:true,json:async()=>({credentials:{configured:false,source:null,hint:null}})});
+ await s.run('loadElevenLabs()');
+ assert.match(s.run("$('elevenlabs-key-state').textContent"),/Sin clave/);
+ assert.equal(s.run("$('elevenlabs-key-clear').disabled"),true);
+});
+
+test('Joining with ElevenLabs reaches microphone capture without loading Kokoro',async()=>{
+ for(const model of ['eleven_flash_v2_5','kokoro']){
+  const s=setup({strictDOM:true});let prepared=0,captured=0,unlocked=false;
+  s.context.fetch=async()=>{assert.equal(unlocked,true,'audio unlock must precede network I/O');return {ok:true,json:async()=>({default_model:model,tts_device:'auto'})}};
+  s.context.window.roomVoice={unlock:async()=>{unlocked=true},prepare:async()=>{prepared++},cancel(){}};
+  s.context.navigator={mediaDevices:{getUserMedia:async()=>{captured++;throw Error('Microphone test boundary')}}};
+  s.run("$('mute').style.setProperty=()=>{}");
+  await s.run("$('connect').onclick()");
+  assert.equal(captured,1,model);
+  assert.equal(prepared,model==='kokoro'?1:0,model);
+  assert.equal(s.run("$('error').textContent"),'Microphone test boundary');
+  assert.equal(s.run('connecting'),false);
+ }
+});
 test('TTS announcement/completion is one row; intentional repetitions remain separate',()=>{
  const s=setup();
  const emit=(spoken,id)=>s.run(`message(${JSON.stringify(JSON.stringify({type:'bot-output',data:{text:'Hola',spoken,segment_id:id,aggregated_by:'sentence'}}))})`);
@@ -201,4 +238,25 @@ test('The room speaks first: the page adopts its call id and treats anything ear
 });
 test('The call socket follows the page scheme and host',()=>{
  const s=setup();assert.equal(s.run('roomSocketUrl()'),'wss://room.example/api/presentation/ws');
+});
+test('Cloud speech receipts track actual playout completion',async()=>{
+ const s=setup(),receipts=[];let finish;
+ s.context.fetch=async(path,options)=>{receipts.push(JSON.parse(options.body));return {ok:true,json:async()=>({})}};
+ s.context.window.roomVoice={cancel(){},playEncoded(data,status,onPlaying){assert.equal(data.audio_base64,'SUQz');onPlaying();return new Promise(resolve=>finish=resolve)}};
+ const playing=s.run("receiveServerSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'cloud',text:'Hola',audio_base64:'SUQz'})");
+ assert.equal(s.run('botLive'),true);assert.deepEqual(receipts.map(r=>r.status),['playing']);
+ finish();await playing;
+ assert.equal(s.run('botLive'),false);assert.deepEqual(receipts.map(r=>r.status),['playing','playback_finished']);
+});
+test('Cloud preview stays active and keeps the microphone muted until audio ends',async()=>{
+ const s=setup();let finish;s.context.AbortController=AbortController;
+ s.context.fetch=async()=>({ok:true,json:async()=>({audio_base64:'SUQz'})});
+ s.context.window.roomVoice={unlock:async()=>{},cancel(){},playEncoded(){return new Promise(resolve=>finish=resolve)}};
+ s.run("voiceCatalog={languages:[{id:'es',sample:'Hola',voices:[]}]};$('language-form').reportValidity=()=>true;$('preview-audio').pause=()=>{};var track={enabled:true};stream={getAudioTracks:()=>[track]};$('model-es').value='inherit';$('default-model').value='eleven_v3';$('voice-es').value='inherit';$('default-voice').value='custom';$('speed-es').value='';$('tts-speed').value='1'");
+ const preview=s.run("previewVoice('es')");
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(s.run('track.enabled'),false);assert.equal(s.run('previewJob!==null'),true);
+ finish();await preview;
+ assert.equal(s.run('track.enabled'),true);assert.equal(s.run('previewJob'),null);
+ assert.equal(s.run("$('preview-status').textContent"),'Prueba terminada');
 });

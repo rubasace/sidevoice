@@ -27,6 +27,24 @@ class RoomVoice {
   this.cancel();const device=options.device||'auto';this.ensure(device);const message=type==='load'?'Cargando modelo…':'Preparando voz…';status(message);if(!this.ready)this.announce(message);
   return new Promise((resolve,reject)=>{const id=++this.serial;this.job={id,resolve,reject,status,onPlaying,load:type==='load',sources:new Set(),end:0,done:false};this.job.timer=setTimeout(()=>this.fail(Error('No se pudo preparar el modelo a tiempo.')),180000);this.worker.postMessage({type,id,...options,device})})
  }
+ playEncoded({audio_base64},status=()=>{},onPlaying=()=>{}){
+  this.cancel();
+  return new Promise((resolve,reject)=>{
+   const job=this.job={id:++this.serial,resolve,reject,status,onPlaying,sources:new Set(),done:true};
+   job.timer=setTimeout(()=>{if(this.job===job)this.fail(Error('No se pudo preparar el audio a tiempo.'))},30000);
+   (async()=>{
+    await this.unlock();
+    if(this.job!==job)return;
+    const bytes=Uint8Array.from(atob(audio_base64),c=>c.charCodeAt(0));
+    const buffer=await this.context.decodeAudioData(bytes.buffer);
+    if(this.job!==job)return;
+    clearTimeout(job.timer);
+    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.context.destination);job.sources.add(source);
+    source.onended=()=>{job.sources.delete(source);if(this.job===job)this.complete(job)};
+    source.start();job.playing=true;onPlaying();status('Reproduciendo voz de ElevenLabs');
+   })().catch(error=>{if(this.job===job)this.fail(error)});
+  });
+ }
  prepare(options,status){return this.run('load',options,status)}
  speak(options,status,onPlaying){return this.run('speak',options,status,onPlaying)}
 }

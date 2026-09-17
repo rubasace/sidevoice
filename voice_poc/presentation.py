@@ -287,11 +287,24 @@ class PresentationCall:
         try:
             if self.browser_audio:
                 from language_settings import load_settings, resolve_voice
+                choice = resolve_voice(load_settings(), entry.get('language'))
                 self.transition(uid, 'synthesizing')
-                self.on_browser_event({'type': 'voice-speech', 'data': {
+                if choice['provider'] == 'kokoro':
+                    self.on_browser_event({'type': 'voice-speech', 'data': {
+                        'session_id': self.id, 'revision': rev, 'utterance_id': uid,
+                        'thread_id': self.target.get('thread_id'), 'text': entry['text'], **choice}})
+                    return
+                import synthesis
+                try:
+                    audio = await synthesis.synthesize(entry['text'], model=choice['model'],
+                                                       voice=choice['voice'], speed=choice['speed'])
+                except ValueError as error:
+                    self.fail_active()
+                    raise HTTPException(502, str(error)) from error
+                self.on_browser_event({'type': 'voice-speech-audio', 'data': {
                     'session_id': self.id, 'revision': rev, 'utterance_id': uid,
                     'thread_id': self.target.get('thread_id'), 'text': entry['text'],
-                    **resolve_voice(load_settings(), entry.get('language'))}})
+                    **choice, **audio}})
                 return
             await self.worker.queue_frames([
                 PresentationBoundary(utterance_id=uid, revision=rev),
@@ -530,9 +543,51 @@ def mount_presentation(app):
         return {'messages': hub.journal.history(thread_id)}
 
     @app.get('/api/presentation/voice-catalog')
-    async def voice_catalog():
+    async def voice_catalog(request: Request):
+        require_same_origin(request)
         from language_settings import CATALOG
-        return CATALOG
+        import synthesis
+        eleven = await synthesis.catalog()
+        catalog = {**CATALOG,
+                   'models': [{**item, 'provider': 'kokoro'} for item in CATALOG['models']]
+                             + [{**item, 'provider': 'elevenlabs'} for item in eleven['models']],
+                   'providers': {'elevenlabs': eleven}}
+        return catalog
+
+    @app.get('/api/presentation/synthesis')
+    async def synthesis_settings(request: Request):
+        require_same_origin(request)
+        import synthesis
+        return {'credentials': synthesis.credential_state(), 'catalog': await synthesis.catalog()}
+
+    @app.post('/api/presentation/synthesis/credential')
+    async def synthesis_credential(payload: dict, request: Request):
+        if not request.headers.get('origin'):
+            raise HTTPException(403, 'Guarda la clave desde la sala, no desde un cliente externo.')
+        require_same_origin(request)
+        import synthesis
+        try:
+            key = payload.get('key')
+            if key is None or not str(key).strip():
+                synthesis.clear_key()
+            else:
+                await synthesis.verify(str(key).strip())
+                synthesis.save_key(str(key))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {'credentials': synthesis.credential_state(), 'catalog': await synthesis.catalog()}
+
+    @app.post('/api/presentation/synthesis/preview')
+    async def synthesis_preview(payload: dict, request: Request):
+        require_same_origin(request)
+        import synthesis
+        try:
+            return await synthesis.synthesize(str(payload.get('text') or ''),
+                                             model=str(payload.get('model') or ''),
+                                             voice=str(payload.get('voice') or ''),
+                                             speed=float(payload.get('speed', 1)))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(422, str(error)) from error
 
     @app.get('/api/presentation/transcription')
     async def transcription_settings(request: Request):
