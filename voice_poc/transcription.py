@@ -17,6 +17,18 @@ CATALOG = {
             'description': 'Más preciso, con mayor descarga y latencia.',
             'devices': ['webgpu', 'wasm'],
         },
+        {
+            'id': 'onnx-community/whisper-small',
+            'label': 'Whisper small',
+            'description': 'Mejor calidad multilingüe. Aproximadamente 462 MiB; requiere WebGPU con fp16.',
+            'devices': ['webgpu'],
+        },
+        {
+            'id': 'onnx-community/whisper-large-v3-turbo',
+            'label': 'Whisper large v3 turbo',
+            'description': 'Máxima calidad local disponible. Aproximadamente 538 MiB cuantizado; requiere WebGPU con fp16.',
+            'devices': ['webgpu'],
+        },
     ],
 }
 

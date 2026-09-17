@@ -9,10 +9,15 @@ class BrowserTranscriptionTests(unittest.TestCase):
         self.assertEqual(transcription.CATALOG['provider'], 'browser')
         self.assertEqual(transcription.credential_state(), {})
         ids = {item['id'] for item in transcription.CATALOG['models']}
-        self.assertEqual(ids, {'onnx-community/whisper-tiny', 'onnx-community/whisper-base'})
+        self.assertEqual(ids, {'onnx-community/whisper-tiny', 'onnx-community/whisper-base',
+                               'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'})
         for model in transcription.CATALOG['models']:
-            self.assertEqual(set(model['devices']), {'webgpu', 'wasm'})
+            self.assertTrue(set(model['devices']) <= {'webgpu', 'wasm'})
+            self.assertTrue(model['devices'])
             self.assertTrue(model['description'])
+        large = {item['id']: item for item in transcription.CATALOG['models']}
+        self.assertEqual(large['onnx-community/whisper-small']['devices'], ['webgpu'])
+        self.assertEqual(large['onnx-community/whisper-large-v3-turbo']['devices'], ['webgpu'])
 
     def test_effective_runtime_is_always_in_the_browser(self):
         choice = transcription.resolve(LanguageSettings(stt_device='webgpu', stt_model='onnx-community/whisper-base'))

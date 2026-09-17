@@ -34,7 +34,7 @@ class LanguageSettings(BaseModel):
     stt_context: str = ''
     stt_provider: Literal['browser'] = 'browser'
     stt_device: Literal['auto', 'webgpu', 'wasm'] = 'auto'
-    stt_model: Literal['onnx-community/whisper-tiny', 'onnx-community/whisper-base'] = 'onnx-community/whisper-tiny'
+    stt_model: Literal['onnx-community/whisper-tiny', 'onnx-community/whisper-base', 'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'] = 'onnx-community/whisper-tiny'
     spanish_voice: Literal['inherit', 'ef_dora', 'em_alex', 'em_santa'] = 'ef_dora'
     english_voice: Literal['inherit', 'af_heart', 'af_bella', 'bf_emma', 'bm_george'] = 'af_heart'
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
@@ -69,7 +69,7 @@ def load_settings():
         'tiny': 'onnx-community/whisper-tiny',
         'base': 'onnx-community/whisper-base',
     }.get(data.get('stt_model'), data.get('stt_model'))
-    if data['stt_model'] not in {'onnx-community/whisper-tiny', 'onnx-community/whisper-base'}:
+    if data['stt_model'] not in {'onnx-community/whisper-tiny', 'onnx-community/whisper-base', 'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'}:
         data['stt_model'] = 'onnx-community/whisper-tiny'
     return LanguageSettings.model_validate(data)
 

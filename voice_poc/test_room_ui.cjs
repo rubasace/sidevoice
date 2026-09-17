@@ -29,6 +29,15 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),true);
 });
 
+test('STT settings expose only models supported by the detected browser runtime',()=>{
+ const s=setup({strictDOM:true});
+ s.run("voicePreferences={stt_device:'auto',stt_model:'onnx-community/whisper-small'};sttCatalog={models:[{id:'onnx-community/whisper-tiny',label:'Tiny',description:'light',devices:['webgpu','wasm']},{id:'onnx-community/whisper-small',label:'Small',description:'quality',devices:['webgpu']}]};sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny']};renderTranscription()");
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny']);
+ s.run("sttCapabilities.models.push('onnx-community/whisper-small');renderTranscription()");
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
+ s.run("$('stt-model').value='onnx-community/whisper-small';$('stt-model').onchange()");
+ assert.equal(s.run("$('stt-model-note').textContent"),'quality');
+});
 test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
  const s=setup({strictDOM:true});
  s.run("voiceCatalog={models:[{id:'eleven_flash_v2_5',label:'Eleven Flash v2.5',provider:'elevenlabs',description:'Rápido'}]};entriesFor($('default-model'),voiceCatalog.models.map(x=>[x.id,x.label]),'eleven_flash_v2_5');setModelInfo($('default-model-info'),'eleven_flash_v2_5')");
