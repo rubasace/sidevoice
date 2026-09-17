@@ -42,7 +42,7 @@ class LanguageSettings(BaseModel):
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     audio_grace_seconds: float = Field(default=2.0, ge=0, le=10)
-    user_speech_timeout: float = Field(default=5.0, ge=0.5, le=15)
+    user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
 
 
     @model_validator(mode='after')

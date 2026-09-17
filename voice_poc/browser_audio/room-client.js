@@ -1,11 +1,61 @@
+// Provider alignment is mapped to original UTF-16 text offsets. Never guess word timing.
+function alignedWordCues(text,alignment,duration){
+ if(typeof text!=='string'||!alignment)return [];
+ const chars=alignment.characters,starts=alignment.character_start_times_seconds,ends=alignment.character_end_times_seconds;
+ if(!Array.isArray(chars)||!Array.isArray(starts)||!Array.isArray(ends)||chars.length!==starts.length||chars.length!==ends.length)return [];
+ if(!chars.every(c=>typeof c==='string'&&c.length>0)||chars.join('')!==text)return [];
+ const startAt=[],endAt=[];let previous=0;
+ for(let i=0;i<chars.length;i++){
+  const start=starts[i],end=ends[i];
+  if(!Number.isFinite(start)||!Number.isFinite(end)||start<previous||end<start||end>duration+.25)return [];
+  for(let j=0;j<chars[i].length;j++){startAt.push(start);endAt.push(end)}
+  previous=start;
+ }
+ const cues=[];
+ for(const word of text.matchAll(/\S+/gu)){
+  const first=word.index,last=first+word[0].length;
+  if(endAt[last-1]>startAt[first])cues.push({from:first,to:last,start:startAt[first],end:endAt[last-1],mode:'word'});
+ }
+ return cues;
+}
+function chunkTextRange(text,chunk,from=0){
+ if(typeof text!=='string'||typeof chunk!=='string'||!chunk.trim())return null;
+ const words=chunk.trim().split(/\s+/u).map(word=>word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+ const match=new RegExp(words.join('\\s+'),'u').exec(text.slice(from));
+ return match?{from:from+match.index,to:from+match.index+match[0].length}:null;
+}
 /* Local synthesis and playout. A canceled job can never emit late audio. */
 class RoomVoice {
- constructor(){this.worker=null;this.context=null;this.job=null;this.serial=0;this.device=null;this.ready=false}
+ constructor(){this.worker=null;this.context=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default'}
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
  async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running')throw Error('Permite reproducir audio en este navegador.')}
- cancel(){this.announce('','hidden');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;clearTimeout(job.timer);for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}job.reject(new DOMException('Audio cancelado','AbortError'))}
+ get supportsOutputSelection(){return typeof (this.context||AudioContext.prototype).setSinkId==='function'}
+ async setOutputDevice(id){
+  await this.unlock();
+  if(!this.supportsOutputSelection)throw Error('Este navegador no permite elegir la salida de audio.');
+  const selected=id||'default';
+  await this.context.setSinkId(selected==='default'?'':selected);
+  this.outputDeviceId=selected;return true;
+ }
+ stopProgress(job){
+  if(job.raf!=null)globalThis.cancelAnimationFrame?.(job.raf);
+  job.raf=null;
+  if(job.onProgress){try{job.onProgress(null)}catch{}}
+ }
+ watchProgress(job){
+  if(!job.onProgress||job.raf!=null||!globalThis.requestAnimationFrame)return;
+  const tick=()=>{
+   job.raf=null;if(this.job!==job)return;
+   const now=this.context.currentTime;
+   const cue=(job.cues||[]).find(c=>now>=c.start&&now<c.end)||null;
+   if(cue!==job.lastCue){job.lastCue=cue;try{job.onProgress(cue)}catch{}}
+   if(this.job===job)job.raf=globalThis.requestAnimationFrame(tick);
+  };
+  tick();
+ }
+ cancel(){this.announce('','hidden');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;this.stopProgress(job);clearTimeout(job.timer);for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}job.reject(new DOMException('Audio cancelado','AbortError'))}
  ensure(device){if(this.worker&&this.device===device)return;this.worker?.terminate();this.ready=false;this.device=device;this.worker=new Worker('/voice-browser/worker.js',{type:'module'});this.worker.onmessage=({data})=>this.receive(data);this.worker.onerror=e=>this.fail(Error(e.message||'No se pudo iniciar el motor de voz'))}
- fail(error){this.announce(error.message,this.ready?'inline':'error');this.ready=false;const job=this.job;if(!job)return;this.job=null;clearTimeout(job.timer);for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}this.worker?.terminate();this.worker=null;job.reject(error)}
+ fail(error){this.announce(error.message,this.ready?'inline':'error');this.ready=false;const job=this.job;if(!job)return;this.job=null;this.stopProgress(job);clearTimeout(job.timer);for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}this.worker?.terminate();this.worker=null;job.reject(error)}
  receive(d){const job=this.job;if(!job||d.id!==job.id)return;
   clearTimeout(job.timer);job.timer=setTimeout(()=>this.fail(Error('El modelo tardó demasiado. Vuelve a prepararlo.')),180000);
   if(d.type==='progress'){const p=d.progress;const text=p.status==='voice'?'Cargando la voz seleccionada…':p.status==='generating'?'Preparando el primer audio…':'Cargando modelo'+(p.file?' · '+p.file:'')+(p.progress!=null?' · '+Math.round(p.progress)+'%':'');job.status(text);if(!this.ready&&!job.playing)this.announce(text,'loading',p.progress??null)}
@@ -17,20 +67,22 @@ class RoomVoice {
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.context.destination);
    const start=Math.max(this.context.currentTime+.03,job.end);job.end=start+buffer.duration;job.sources.add(source);
    source.onended=()=>{job.sources.delete(source);if(this.job===job&&job.done&&!job.sources.size)this.complete(job)};
-   source.start(start);if(!job.playing){job.playing=true;job.onPlaying()}
+   const range=chunkTextRange(job.text,d.text,job.textCursor);
+   if(range){job.textCursor=range.to;job.cues.push({...range,start,end:start+buffer.duration,mode:'chunk'})}
+   source.start(start);this.watchProgress(job);if(!job.playing){job.playing=true;job.onPlaying()}
    job.status('Voz en tu navegador · '+(d.device==='webgpu'?'GPU':'CPU'));
   }
   if(d.type==='done'){clearTimeout(job.timer);job.done=true;if(!job.sources.size)this.complete(job)}
  }
- complete(job){if(this.job!==job)return;this.announce('','hidden');clearTimeout(job.timer);this.job=null;job.resolve()}
- run(type,options={},status=()=>{},onPlaying=()=>{}){
+ complete(job){if(this.job!==job)return;this.stopProgress(job);this.announce('','hidden');clearTimeout(job.timer);this.job=null;job.resolve()}
+ run(type,options={},status=()=>{},onPlaying=()=>{},onProgress){
   this.cancel();const device=options.device||'auto';this.ensure(device);const message=type==='load'?'Cargando modelo…':'Preparando voz…';status(message);if(!this.ready)this.announce(message);
-  return new Promise((resolve,reject)=>{const id=++this.serial;this.job={id,resolve,reject,status,onPlaying,load:type==='load',sources:new Set(),end:0,done:false};this.job.timer=setTimeout(()=>this.fail(Error('No se pudo preparar el modelo a tiempo.')),180000);this.worker.postMessage({type,id,...options,device})})
+  return new Promise((resolve,reject)=>{const id=++this.serial;this.job={id,resolve,reject,status,onPlaying,onProgress,text:options.text||'',textCursor:0,cues:[],load:type==='load',sources:new Set(),end:0,done:false};this.job.timer=setTimeout(()=>this.fail(Error('No se pudo preparar el modelo a tiempo.')),180000);this.worker.postMessage({type,id,...options,device})})
  }
- playEncoded({audio_base64},status=()=>{},onPlaying=()=>{}){
+ playEncoded({audio_base64,text='',alignment},status=()=>{},onPlaying=()=>{},onProgress){
   this.cancel();
   return new Promise((resolve,reject)=>{
-   const job=this.job={id:++this.serial,resolve,reject,status,onPlaying,sources:new Set(),done:true};
+   const job=this.job={id:++this.serial,resolve,reject,status,onPlaying,onProgress,cues:[],sources:new Set(),done:true};
    job.timer=setTimeout(()=>{if(this.job===job)this.fail(Error('No se pudo preparar el audio a tiempo.'))},30000);
    (async()=>{
     await this.unlock();
@@ -41,11 +93,15 @@ class RoomVoice {
     clearTimeout(job.timer);
     const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.context.destination);job.sources.add(source);
     source.onended=()=>{job.sources.delete(source);if(this.job===job)this.complete(job)};
-    source.start();job.playing=true;onPlaying();status('Reproduciendo voz de ElevenLabs');
+    const start=this.context.currentTime;
+    const aligned=alignedWordCues(text,alignment,buffer.duration);
+    job.cues=(aligned.length?aligned:(text?[{from:0,to:text.length,start:0,end:buffer.duration,mode:'utterance'}]:[]))
+     .map(cue=>({...cue,start:cue.start+start,end:cue.end+start}));
+    source.start(start);job.playing=true;onPlaying();this.watchProgress(job);status('Reproduciendo voz de ElevenLabs');
    })().catch(error=>{if(this.job===job)this.fail(error)});
   });
  }
  prepare(options,status){return this.run('load',options,status)}
- speak(options,status,onPlaying){return this.run('speak',options,status,onPlaying)}
+ speak(options,status,onPlaying,onProgress){return this.run('speak',options,status,onPlaying,onProgress)}
 }
 window.roomVoice=new RoomVoice();

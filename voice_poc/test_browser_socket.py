@@ -1,5 +1,6 @@
 import json
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from pipecat.frames.frames import (InputAudioRawFrame, InputTransportMessageFrame, OutputAudioRawFrame,
                                    OutputTransportMessageFrame, OutputTransportMessageUrgentFrame, TextFrame)
 from browser_socket import BrowserFrameSerializer, session_message
@@ -16,6 +17,17 @@ class BrowserSocketTest(IsolatedAsyncioTestCase):
         frame = await BrowserFrameSerializer().deserialize(bytearray(b'\x00\x01\x02'))
         self.assertEqual(frame.audio, b'\x00\x01')
         self.assertIsNone(await BrowserFrameSerializer().deserialize(b'\x02'))
+
+    async def test_packet_gaps_are_measured_without_changing_audio(self):
+        serializer = BrowserFrameSerializer()
+        with patch('browser_socket.time.monotonic', side_effect=[10.0, 10.020, 10.390, 10.410]):
+            for _ in range(4):
+                frame = await serializer.deserialize(b'\x00\x01' * 320)
+                self.assertEqual(frame.audio, b'\x00\x01' * 320)
+        self.assertEqual(serializer.audio_frames, 4)
+        self.assertEqual(serializer.last_audio_gap_ms, 20)
+        self.assertEqual(serializer.max_audio_gap_ms, 370)
+        self.assertEqual(serializer.audio_gap_count, 1)
 
     async def test_text_frames_are_app_messages(self):
         ready = {'label': 'rtvi-ai', 'type': 'client-ready', 'id': '1', 'data': {}}

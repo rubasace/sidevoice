@@ -105,12 +105,19 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.patch = patch('presentation.BINDING', Path(self.temp.name) / 'binding.json')
         self.patch.start()
+        # Test the default browser provider, never the live room's preferences or paid API.
+        self.settings_patch = patch('language_settings.PATH', Path(self.temp.name) / 'settings.json')
+        self.settings_patch.start()
+        self.addAsyncCleanup(self._stop_settings_patch)
         self.hub = PresentationHub()
         from room_history import RoomHistory
         self.hub.journal = RoomHistory(Path(self.temp.name) / "history.sqlite3")
         self.c = PresentationCall('same-webrtc', {}, AsyncMock(), object(), object())
         self.c.connected = True
         self.hub.attach(self.c)
+
+    async def _stop_settings_patch(self):
+        self.settings_patch.stop()
 
     async def asyncTearDown(self):
         self.patch.stop()

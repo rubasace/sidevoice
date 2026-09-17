@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from collections import deque
 from room_history import RoomHistory
+from latency import CallLatency
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -135,8 +136,14 @@ class PresentationCall:
         self.on_browser_event = None
         self.mic = None  # Set to the serializer when a browser call owns this one.
         self.transcription = None  # Which STT engine this call resolved to.
+        self.latency = CallLatency(self.id)
 
     def input_receipt(self, payload, status):
+        if payload.get('session_id', self.id) == self.id:
+            if status == 'pending':
+                self.latency.turn(payload['thread_id'], payload['revision'], 'queued')
+            elif status == 'delivered':
+                self.latency.turn(payload['thread_id'], payload['revision'], 'delivery_accepted')
         if self.on_input_receipt:
             self.on_input_receipt({"revision": payload["revision"], "history_id": payload.get("history_id"),
                                    "thread_id": payload["thread_id"], "session_id": payload.get("session_id", self.id), "status": status})
@@ -147,7 +154,13 @@ class PresentationCall:
                 'last_delivery': self.last_delivery, 'revision': self.revision,
                 'utterances': [dict(v['result']) for v in self.utterances.values()],
                 'tts': {'engine': 'Kokoro · navegador'} if self.browser_audio else getattr(self.tts, 'runtime_status', {}),
-                'mic': {'frames': getattr(self.mic, 'audio_frames', 0), 'bytes': getattr(self.mic, 'audio_bytes', 0)} if self.mic else None,
+                'mic': {
+                    'frames': getattr(self.mic, 'audio_frames', 0),
+                    'bytes': getattr(self.mic, 'audio_bytes', 0),
+                    'last_gap_ms': getattr(self.mic, 'last_audio_gap_ms', 0),
+                    'max_gap_ms': getattr(self.mic, 'max_audio_gap_ms', 0),
+                    'gaps_over_250ms': getattr(self.mic, 'audio_gap_count', 0),
+                } if self.mic else None,
                 'transcription': self.transcription,
                 'speech_filter': getattr(self.stt, 'filter_stats', {})}
 
@@ -186,6 +199,9 @@ class PresentationCall:
         entry = self.utterances.get(uid)
         if entry and entry['result']['status'] not in {'interrupted', 'failed', 'disconnected', 'playback_finished'}:
             entry['result']['status'] = status
+            self.latency.status(uid, status)
+            if status == 'playing':
+                self.latency.mark(uid, 'playing_receipt')
             if self.journal:
                 self.journal.update(self.id+':voice:'+uid, status, reason)
 
@@ -289,19 +305,29 @@ class PresentationCall:
                 from language_settings import load_settings, resolve_voice
                 choice = resolve_voice(load_settings(), entry.get('language'))
                 self.transition(uid, 'synthesizing')
+                self.latency.start_synthesis(uid)
+                trace = self.latency.replies.get(uid)
+                reply_revision = trace['reply_revision'] if trace else rev
                 if choice['provider'] == 'kokoro':
+                    self.latency.mark(uid, 'audio_dispatched')
                     self.on_browser_event({'type': 'voice-speech', 'data': {
                         'session_id': self.id, 'revision': rev, 'utterance_id': uid,
+                        'reply_revision': reply_revision,
                         'thread_id': self.target.get('thread_id'), 'text': entry['text'], **choice}})
                     return
                 import synthesis
                 try:
                     audio = await synthesis.synthesize(entry['text'], model=choice['model'],
-                                                       voice=choice['voice'], speed=choice['speed'])
+                                                       voice=choice['voice'], speed=choice['speed'],
+                                                       with_timestamps=True)
                 except ValueError as error:
                     self.fail_active()
                     raise HTTPException(502, str(error)) from error
+                self.latency.mark(uid, 'audio_ready')
+                self.latency.provider(uid, audio.get('timings_ms'))
+                self.latency.mark(uid, 'audio_dispatched')
                 self.on_browser_event({'type': 'voice-speech-audio', 'data': {
+                    'reply_revision': reply_revision,
                     'session_id': self.id, 'revision': rev, 'utterance_id': uid,
                     'thread_id': self.target.get('thread_id'), 'text': entry['text'],
                     **choice, **audio}})
@@ -371,6 +397,8 @@ class PresentationHub:
             revision=payload.revision, status='text_only', language=payload.language)
         if record.get('_existing'):
             return {'status': record['status'], 'text_saved': True, 'utterance_id': payload.utterance_id}
+        if call and payload.session_id == call.id:
+            call.latency.reply(payload.utterance_id, payload.thread_id, payload.revision)
         reason = None
         if payload.thread_id in self.journal.closed_channels():
             reason = 'channel_closed'
@@ -399,6 +427,8 @@ class PresentationHub:
             self.journal.update(uid, 'text_only', reason)
             return {'status': 'text_only', 'text_saved': True, 'reason': reason}
         self.journal.update(uid, result['status'], {'waiting_for_turn':'user_speaking', 'waiting_for_pause':'quiet_grace'}.get(result['status']))
+        if call and payload.session_id == call.id:
+            call.latency.status(payload.utterance_id, result['status'])
         return {**result, 'text_saved': True}
 
     async def send_text(self, text, session_id, thread_id, binding_id, message_id):
@@ -645,6 +675,10 @@ def mount_presentation(app):
     async def state():
         return hub.snapshot()
 
+    @app.get('/api/presentation/latency')
+    async def latency():
+        return hub.call.latency.snapshot() if hub.call else {'session_id': None, 'replies': []}
+
     def available_participants():
         current = binding() or {}
         entries = hub.control.participants() if hub.control else [{**b, 'connected': False} for b in hub.journal.bindings()]
@@ -729,6 +763,7 @@ def mount_presentation(app):
             call.error = 'Falló la voz en el navegador. Revisa la sala; no se repetirá automáticamente.'
             call.fail_active()
         elif status == 'playing':
+            call.latency.browser(uid, payload.get('timings_ms'))
             call.transition(uid, status)
         else:
             raise HTTPException(400, 'Estado inválido.')

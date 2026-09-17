@@ -1,6 +1,7 @@
 """Wire format between the room page and its call: binary frames carry microphone PCM up,
 text frames carry JSON app messages both ways. No audio flows down; the browser synthesizes."""
 import json
+import time
 
 from pipecat.frames.frames import (Frame, InputAudioRawFrame, InputTransportMessageFrame,
                                    OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)
@@ -19,6 +20,9 @@ class BrowserFrameSerializer(FrameSerializer):
         self.sample_rate, self.channels = sample_rate, channels
         # What the microphone actually delivered, so a silent call can be told from a broken one.
         self.audio_frames = self.audio_bytes = 0
+        self.last_audio_at = None
+        self.last_audio_gap_ms = self.max_audio_gap_ms = 0
+        self.audio_gap_count = 0
 
     async def serialize(self, frame: Frame):
         if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
@@ -27,6 +31,14 @@ class BrowserFrameSerializer(FrameSerializer):
 
     async def deserialize(self, data):
         if isinstance(data, (bytes, bytearray)):
+            now = time.monotonic()
+            if self.last_audio_at is not None:
+                gap_ms = max(0, round((now - self.last_audio_at) * 1000))
+                self.last_audio_gap_ms = gap_ms
+                self.max_audio_gap_ms = max(self.max_audio_gap_ms, gap_ms)
+                if gap_ms > 250:
+                    self.audio_gap_count += 1
+            self.last_audio_at = now
             usable = len(data) - len(data) % (2 * self.channels)
             if not usable:
                 return None

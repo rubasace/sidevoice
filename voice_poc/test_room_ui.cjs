@@ -1,10 +1,10 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
 function setup({strictDOM=false}={}){
  const html=fs.readFileSync(__dirname+'/presentation.html','utf8');
- class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this}addEventListener(){}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(){this.children=[]}remove(){}setAttribute(){}click(){this.onclick?.()}}
+ class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
  const elements=new Map(),handlers={};
  if(strictDOM)for(const match of html.split('<script>')[0].matchAll(/\bid="([^"]+)"/g))elements.set(match[1],new Element());
- const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
+ const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(__dirname+'/presentation.html','utf8').split('<script>')[1].split('</script>')[0];vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
@@ -259,4 +259,203 @@ test('Cloud preview stays active and keeps the microphone muted until audio ends
  finish();await preview;
  assert.equal(s.run('track.enabled'),true);assert.equal(s.run('previewJob'),null);
  assert.equal(s.run("$('preview-status').textContent"),'Prueba terminada');
+});
+
+test('AEC includes local playback when supported and keeps capture enabled',async()=>{
+ const s=setup();let constraints,applied;
+ const track={enabled:true,getCapabilities:()=>({echoCancellation:[true,false,'all']}),applyConstraints:async value=>{applied=value}};
+ s.context.navigator={mediaDevices:{getUserMedia:async value=>{constraints=value;return {getAudioTracks:()=>[track]}}}};
+ s.run("inputDeviceId='car-mic'");
+ await s.run('acquireMicrophone()');
+ assert.equal(constraints.audio.echoCancellation,true);
+ assert.equal(constraints.audio.deviceId.exact,'car-mic');
+ assert.equal(applied.echoCancellation.exact,'all');
+ assert.equal(track.enabled,true);
+ track.applyConstraints=async()=>{throw Error('Mode unavailable')};
+ await s.run('acquireMicrophone()');
+ assert.equal(track.enabled,true,'fallback retains the already acquired AEC stream');
+});
+test('Local and ElevenLabs responses preserve open mic and voice interruption',async()=>{
+ for(const cloud of [false,true]){
+  const s=setup();let playing,finish,cancelled=0;
+  s.context.fetch=async()=>({ok:true,json:async()=>({})});
+  const speech=(_options,_status,onPlaying)=>{playing=onPlaying;return new Promise(resolve=>finish=resolve)};
+  s.context.window.roomVoice={speak:speech,playEncoded:speech,cancel(){cancelled++}};
+  s.run("var track={enabled:true};stream={getAudioTracks:()=>[track]};ws={}");
+  const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Hola'},"+cloud+")");
+  playing();
+  assert.equal(s.run('track.enabled'),true);
+  s.run('message(JSON.stringify({type:"user-started-speaking"}))');
+  assert.equal(cancelled,1);assert.equal(s.run('activeSpeech'),null);
+  finish();await pending;
+ }
+});
+test('Wake lock is released if hangup wins the pending request',async()=>{
+ const s=setup();let grant,requests=0,released=0;
+ s.context.navigator={wakeLock:{request:()=>{requests++;return new Promise(resolve=>grant=resolve)}}};
+ s.run('ws={}');
+ const pending=s.run('keepScreenAwake()');
+ await s.run('keepScreenAwake()');
+ assert.equal(requests,1);
+ s.run('ws=null;releaseScreenWakeLock()');
+ grant({release:async()=>{released++},addEventListener(){}});
+ await pending;
+ assert.equal(released,1);assert.equal(s.run('screenWakeLock'),null);
+});
+test('Failed and cancelled microphone changes preserve or release the right stream',async()=>{
+ const s=setup();let resolve,stopped=0;
+ s.run("ws={};captureNode={};stream={getAudioTracks:()=>[{enabled:true}]}");
+ s.context.navigator={mediaDevices:{getUserMedia:async()=>{throw Error('Permission denied')}}};
+ await assert.rejects(s.run("replaceMicrophone('other')"),/Permission denied/);
+ assert.equal(s.run('inputDeviceId'),'default');assert.ok(s.run('stream'));
+ s.context.navigator.mediaDevices.getUserMedia=()=>new Promise(r=>resolve=r);
+ const pending=s.run("replaceMicrophone('other')");
+ s.run('ws=null;connectEpoch++');
+ resolve({getAudioTracks:()=>[{}],getTracks:()=>[{stop(){stopped++}}]});
+ await pending;assert.equal(stopped,1);assert.equal(s.run('inputDeviceId'),'default');
+});
+test('Preview uses ElevenLabs native speed limits while Kokoro retains its range',()=>{
+ const s=setup();
+ assert.equal(s.run("effectiveSpeed('eleven_flash_v2_5',1.5)"),1.2);
+ assert.equal(s.run("effectiveSpeed('eleven_flash_v2_5',.5)"),.7);
+ assert.equal(s.run("effectiveSpeed('kokoro',1.5)"),1.5);
+});
+
+test('Capture shares the playback context and hangup only disconnects the microphone graph',async()=>{
+ const s=setup();let closed=0,sent=0,nodeOptions;
+ const source={connect(){},disconnect(){}};
+ const context={state:'running',createAnalyser:()=>({getFloatTimeDomainData(data){data.fill(0)},disconnect(){}}),createMediaStreamSource:()=>source,audioWorklet:{addModule:async()=>{}},close:async()=>{closed++}};
+ s.context.window.roomVoice={context};
+ s.context.AudioWorkletNode=class{constructor(_context,_name,options){nodeOptions=options;this.port={}}connect(){}disconnect(){}};
+ s.run("$('mute').style.setProperty=()=>{};stream={getAudioTracks:()=>[{enabled:true}]};ws={readyState:1,send(){}}");
+ s.run('ws').send=()=>{sent++};
+ s.run('startMeter(16000)');
+ assert.equal(s.run('audioContext'),context);
+ await s.run('startCapture(ws,{sample_rate:16000})');
+ const node=s.run('captureNode');
+ node.port.onmessage({data:new ArrayBuffer(640)});
+ assert.equal(sent,1);assert.equal(nodeOptions.processorOptions.sampleRate,16000);
+ s.run('stopMeter()');
+ node.port.onmessage({data:new ArrayBuffer(640)});
+ assert.equal(sent,1);assert.equal(closed,0);
+});
+
+test('Latency uses browser monotonic durations and original reply revision',()=>{
+ const s=setup();let now=100;s.context.performance={now:()=>now};
+ s.run("observeLatencyEvent('voice-user-turn',{phase:'started',thread_id:'a',revision:1})");
+ now=200;s.run("observeLatencyEvent('user-stopped-speaking',{})");
+ now=2700;s.run("observeLatencyEvent('voice-user-turn',{phase:'finished',thread_id:'a',revision:1})");
+ now=4000;
+ const metrics=s.run("browserLatency({thread_id:'a',revision:2,reply_revision:1},3900)");
+ assert.equal(metrics.audio_received_to_playback_scheduled_ms,100);
+ assert.equal(metrics.turn_finished_event_to_playback_scheduled_ms,1300);
+ assert.equal(metrics.vad_stop_event_to_turn_finished_event_ms,2500);
+ assert.equal(s.run("browserLatency({thread_id:'other',revision:1},3900).turn_finished_event_to_playback_scheduled_ms"),undefined);
+ s.run("sessionId='new-session'");
+ assert.equal(s.run("browserLatency({thread_id:'a',revision:1},3900).turn_finished_event_to_playback_scheduled_ms"),undefined);
+});
+test('Latency turn storage is bounded and absent clocks produce no fake zeros',()=>{
+ const s=setup();assert.equal(Object.keys(s.run("browserLatency({thread_id:'a',revision:1},0)")).length,0);
+ s.context.performance={now:()=>100};
+ s.run("for(let r=0;r<150;r++)observeLatencyEvent('voice-user-turn',{phase:'finished',thread_id:'a',revision:r})");
+ assert.equal(s.run('latencyTurns.size'),128);
+});
+test('Playing receipts carry only measured browser durations without delaying playback',async()=>{
+ const s=setup();let now=100,playing,finish;const receipts=[];
+ s.context.performance={now:()=>now};
+ s.context.fetch=async(path,opts)=>{receipts.push(JSON.parse(opts.body));return {ok:true,json:async()=>({})}};
+ s.context.window.roomVoice={cancel(){},playEncoded:(_d,_status,onPlaying)=>{playing=onPlaying;return new Promise(r=>finish=r)}};
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Hola'},true)");
+ now=175;playing();finish();await pending;
+ const receipt=receipts.find(r=>r.status==='playing');
+ assert.equal(receipt.timings_ms.audio_received_to_playback_scheduled_ms,75);
+ assert.equal(receipts.find(r=>r.status==='playback_finished').timings_ms,undefined);
+});
+
+test('Karaoke preserves full text, survives history redraw and clears when interrupted',()=>{
+ const s=setup();
+ s.run("var speech={session_id:'s',utterance_id:'u'};activeSpeech=speech;add('assistant','Hola <mundo>','voice:u','a');updateKaraoke(speech,{from:5,to:12,mode:'word'})");
+ let saved=s.run("karaokeNodes.get('s:voice:u')");
+ assert.equal(saved.node.children.map(n=>n.textContent).join(''),'Hola <mundo>');
+ assert.equal(saved.node.children[1].textContent,'<mundo>');
+ assert.equal(saved.node.children[1].className,'karaoke-current');
+ s.run('renderHistory()');
+ saved=s.run("karaokeNodes.get('s:voice:u')");
+ assert.equal(saved.node.children[1].textContent,'<mundo>');
+ s.run("window.roomVoice={cancel(){}};cancelBrowserSpeech()");
+ assert.equal(s.run('karaokeState'),null);
+ s.run("updateKaraoke(speech,{from:0,to:4,mode:'word'})");
+ assert.equal(s.run('karaokeState'),null);
+ assert.equal(s.run('history[0].text'),'Hola <mundo>');
+});
+
+test('Meet split control opens devices independently of mute and exposes settings',()=>{
+ const s=setup({strictDOM:true});s.run("$('audio-device-panel').hidden=true");
+ s.run("$('audio-devices').click()");
+ assert.equal(s.run("$('audio-device-panel').hidden"),false);
+ assert.equal(s.run("$('audio-devices').getAttribute('aria-expanded')"),'true');
+ assert.equal(s.run('micEnabled'),true);
+ s.run("$('audio-devices').click()");
+ assert.equal(s.run("$('audio-device-panel').hidden"),true);
+ s.run("var settingsOpened=0;$('settings-open').onclick=()=>settingsOpened++;$('audio-settings-open').click();$('call-settings-open').click()");
+ assert.equal(s.run('settingsOpened'),2);
+});
+test('Stats omit missing durations and use first reply per turn, only for selected thread',()=>{
+ const s=setup({strictDOM:true});
+ s.run(`renderLatencyStats({replies:[
+ {thread_id:'a',reply_revision:1,status:'completed',server_ms:{input_queued_to_reply_received_ms:4000},provider_ms:{request_to_complete_ms:300},browser_ms:{audio_received_to_playback_scheduled_ms:50,vad_stop_event_to_turn_finished_event_ms:2490}},
+ {thread_id:'a',reply_revision:1,status:'completed',server_ms:{input_queued_to_reply_received_ms:8000},provider_ms:{request_to_complete_ms:500}},
+ {thread_id:'a',reply_revision:2,status:'failed',server_ms:{input_queued_to_reply_received_ms:6000}},
+ {thread_id:'other',reply_revision:3,server_ms:{input_queued_to_reply_received_ms:100000}}
+ ]},'a')`);
+ assert.equal(s.run("$('stats-endpoint').textContent"),'2.49 s');
+ assert.equal(s.run("$('stats-response').textContent"),'5.00 s');
+ assert.equal(s.run("$('stats-synthesis').textContent"),'400 ms');
+ assert.equal(s.run("$('stats-playout').textContent"),'50 ms');
+ assert.equal(s.run("$('stats-rows').children.length"),3);
+ assert.equal(s.run("$('stats-rows').children[0].children[4].textContent"),'—');
+ for(const value of ['null','undefined','NaN','Infinity','-1','true',"'10'"])
+  assert.equal(s.run('statsDuration('+value+')'),'—');
+ assert.equal(s.run('statsDuration(0)'),'0 ms');
+});
+test('Stats modal polls only while open and rejects results from an earlier opening',async()=>{
+ const s=setup({strictDOM:true});let polls=0;const pending=[];
+ s.context.setTimeout=()=>1;s.context.clearTimeout=()=>{};
+ s.context.fetch=(path,options)=>new Promise(resolve=>{polls++;pending.push({path,options,resolve})});
+ const first=s.run('openConnectionStats()');
+ assert.equal(polls,2);
+ await s.run('refreshConnectionStats()');assert.equal(polls,2);
+ s.run("$('connection-stats').close()");
+ assert.equal(pending[0].options.signal.aborted,true);
+ const second=s.run('openConnectionStats()');assert.equal(polls,4);
+ const response=(session,duration)=>({session_id:session,replies:[{thread_id:'a',reply_revision:1,server_ms:{input_queued_to_reply_received_ms:duration}}]});
+ pending[2].resolve({ok:true,json:async()=>({call:{id:'s'}})});
+ pending[3].resolve({ok:true,json:async()=>response('s',1200)});
+ await second;assert.equal(s.run("$('stats-response').textContent"),'1.20 s');
+ pending[0].resolve({ok:true,json:async()=>({call:{id:'s'}})});
+ pending[1].resolve({ok:true,json:async()=>response('s',99000)});
+ await first;assert.equal(s.run("$('stats-response').textContent"),'1.20 s');
+ s.run("$('connection-stats').close()");await s.run('refreshConnectionStats()');assert.equal(polls,4);
+});
+test('Stats handle old servers, network failures and other call sessions without fake data',async()=>{
+ for(const mode of ['old','offline','other']){
+  const s=setup({strictDOM:true});s.context.setTimeout=()=>1;s.context.clearTimeout=()=>{};
+  s.context.fetch=async path=>{
+   if(mode==='offline')throw Error('Offline');
+   if(path.endsWith('/latency'))return {ok:mode!=='old',status:mode==='old'?404:200,json:async()=>({session_id:'other',replies:[{thread_id:'a',reply_revision:1,server_ms:{input_queued_to_reply_received_ms:10}}]})};
+   return {ok:true,json:async()=>({call:{id:'other'}})};
+  };
+  await s.run('openConnectionStats()');
+  assert.equal(s.run("$('stats-response').textContent"),'—');
+  assert.equal(s.run("$('stats-rows').children.length"),0);
+  assert.match(s.run("$('stats-status').textContent"),mode==='old'?/reiniciarlo/:mode==='offline'?/reintentará/:/Esperando/);
+  s.run("$('connection-stats').close()");
+ }
+});
+test('Stats renders device and session values as text and does not mislabel HTTP as audio latency',()=>{
+ const s=setup({strictDOM:true});
+ s.run(`ws={readyState:1};stream={getAudioTracks:()=>[{label:'<img onerror=boom>',readyState:'live',enabled:true,getSettings:()=>({echoCancellation:true,noiseSuppression:false,sampleRate:48000})}]};renderConnectionStats({call:{id:'s',mic:{frames:20,bytes:1024,last_gap_ms:20,max_gap_ms:610,gaps_over_250ms:2}}},36)`);
+ const values=s.run("$('stats-connection').children.map(n=>n.textContent)");
+ assert.ok(values.includes('<img onerror=boom>'));assert.ok(values.includes('Consulta al servidor (HTTP)'));
+ assert.ok(values.includes('36 ms'));assert.ok(values.includes('48000 Hz'));assert.ok(values.includes('610 ms'));assert.ok(values.includes('2'));assert.ok(values.includes('Misma sesión'));
 });

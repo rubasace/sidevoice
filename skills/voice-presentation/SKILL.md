@@ -54,19 +54,33 @@ Re-check with `voice_status` after any change rather than assuming it took.
 
 ## Conversational behavior
 
-- Answer directly when the response is short. For substantive work, publish a
-  short spoken acknowledgement FIRST, before written progress updates and before
-  lengthy investigation. Say what you understood and what you are about to do.
-  This ordering is mandatory: make the `voice_say` call, then write commentary,
-  then investigate. Do not send a written acknowledgement first. If publication
-  fails, continue in writing without a retry loop. Publishing the
-  acknowledgement is an action: a written promise to speak is not enough.
+- Answer directly when the response is short. For substantive work, use a
+  progressive communication arc rather than making the user wait in silence:
+  acknowledge first, report meaningful checkpoints while work continues, and
+  publish the result when the work finishes.
+- Publish the short spoken acknowledgement FIRST, before written progress
+  updates and before lengthy investigation. Say what you understood and the
+  concrete next action; a generic “I am working on it” is not enough. This
+  ordering is mandatory: make the `voice_say` call, then write commentary, then
+  investigate. If publication fails, continue in writing without a retry loop.
+  Publishing the acknowledgement is an action: a written promise to speak is
+  not enough.
 - Assume the user may be looking away from the screen. Pair substantive written
-  progress updates with a brief spoken update. During longer work, communicate
-  meaningful findings, the current step or a blocker, especially when a stretch
-  of silent work would leave the user unsure what is happening. Avoid repetitive
-  “still working” filler or narrating each tool call. The full written response
-  still accompanies speech.
+  progress updates with a brief spoken update when there is a useful finding,
+  decision, blocker, change of direction, or a stretch of work long enough that
+  the user could reasonably wonder what is happening. Do not wait until the
+  final answer to surface useful state. Use material milestones rather than a
+  fixed update count or cadence, and avoid repetitive “still working” filler or
+  narrating each tool call. The full written response still accompanies speech.
+- One incoming voice message may therefore receive several `voice_say`
+  publications: acknowledgement, zero or more meaningful checkpoints, and the
+  final result. Reuse the incoming message's original `session_id` and
+  `revision` for all of them. Give every publication a distinct utterance; only
+  reuse an `utterance_id` when retrying the exact same publication.
+- If another user message arrives while work is in progress, decide from its
+  meaning whether it adds to or replaces the active request. Incorporate and
+  acknowledge substantive additions promptly without abandoning relevant work
+  or later answering a stale request.
 - Make speech a concise presentation of the substantive response. Keep complete
   details, code and references on screen. Avoid reading tool output, metadata,
   long paths, Markdown formatting or code aloud unless requested.

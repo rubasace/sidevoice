@@ -8,6 +8,7 @@ workspace voices appear without a Sidevoice release.
 import base64
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -181,7 +182,7 @@ async def catalog(config=None):
     return result
 
 
-async def synthesize(text, *, model, voice, speed, config=None):
+async def synthesize(text, *, model, voice, speed, config=None, with_timestamps=False):
     """Generate one MP3 response through ElevenLabs without exposing its key."""
     value = key(config)
     if not value:
@@ -190,17 +191,40 @@ async def synthesize(text, *, model, voice, speed, config=None):
         raise ValueError('Elige una voz de ElevenLabs.')
     body = {'text': text, 'model_id': model,
             'voice_settings': {'speed': max(0.7, min(1.2, float(speed)))}}
-    url = ELEVENLABS_API + '/v1/text-to-speech/' + quote(voice, safe='') + '/stream?output_format=mp3_44100_128'
+    endpoint = '/with-timestamps' if with_timestamps else '/stream'
+    url = ELEVENLABS_API + '/v1/text-to-speech/' + quote(voice, safe='') + endpoint + '?output_format=mp3_44100_128'
+    started = time.monotonic()
+    timings = {}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as http:
             async with http.post(url, headers={**_headers(value), 'Content-Type': 'application/json'}, json=body) as response:
+                timings['request_to_headers_ms'] = (time.monotonic() - started) * 1000
                 if response.status >= 400:
                     raise ValueError(_failure(response))
-                audio = await response.read()
+                chunks = []
+                async for chunk in response.content.iter_any():
+                    if chunk:
+                        if not chunks:
+                            timings['request_to_first_chunk_ms'] = (time.monotonic() - started) * 1000
+                        chunks.append(chunk)
+                audio = b''.join(chunks)
+                timings['request_to_complete_ms'] = (time.monotonic() - started) * 1000
     except ValueError:
         raise
     except Exception as error:
         raise ValueError('No se pudo generar audio con ElevenLabs: ' + type(error).__name__) from error
+    alignment = None
+    if with_timestamps:
+        try:
+            result = json.loads(audio)
+            audio = base64.b64decode(result['audio_base64'], validate=True)
+            candidate = result.get('alignment')
+            if isinstance(candidate, dict):
+                alignment = {field: candidate.get(field) for field in
+                             ('characters', 'character_start_times_seconds', 'character_end_times_seconds')}
+        except (ValueError, KeyError, TypeError) as error:
+            raise ValueError('ElevenLabs devolvió una respuesta de audio inválida.') from error
     if not audio:
         raise ValueError('ElevenLabs no devolvió audio.')
-    return {'mime_type': 'audio/mpeg', 'audio_base64': base64.b64encode(audio).decode('ascii')}
+    return {'mime_type': 'audio/mpeg', 'audio_base64': base64.b64encode(audio).decode('ascii'),
+            'timings_ms': timings, 'alignment': alignment}

@@ -19,6 +19,10 @@ class PreferencesTest(unittest.TestCase):
             es=language_settings.resolve_voice(saved,'es')
             self.assertEqual((es['voice'],es['voice'][0]),('em_alex','e'))
 
+    def test_default_turn_silence_is_two_and_a_half_seconds(self):
+        settings = language_settings.LanguageSettings()
+        self.assertEqual(settings.user_speech_timeout, 2.5)
+
 class AutoLanguageTest(unittest.IsolatedAsyncioTestCase):
     async def test_auto_omits_language_and_prompt(self):
         stt=FilteredOpenAISTTService(api_key='test',speech_gate=object(),settings=FilteredOpenAISTTService.Settings(model='gpt-4o-transcribe',language=None,prompt=None))
@@ -53,3 +57,38 @@ class VoiceResolutionTest(unittest.TestCase):
         self.assertEqual(language_settings.resolve_voice(p,'es')['speed'],1.5)
         p.language_overrides['en'].speed=None
         self.assertEqual(language_settings.resolve_voice(p,'en')['speed'],1.5)
+
+class NativeElevenLabsSpeedTest(unittest.IsolatedAsyncioTestCase):
+    async def test_speed_is_sent_to_synthesis_with_provider_limits(self):
+        import synthesis
+        requests = []
+
+        class Response:
+            status = 200
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            @property
+            def content(self): return self
+            async def iter_any(self):
+                yield b'fake-'
+                yield b'mp3'
+
+        class Client:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            def post(self, url, **kwargs):
+                requests.append(kwargs['json'])
+                return Response()
+
+        with patch.object(synthesis, 'key', return_value='test-only'), patch.object(
+                synthesis.aiohttp, 'ClientSession', return_value=Client()):
+            for requested, effective in [(0.85, 0.85), (1.15, 1.15), (2, 1.2), (0.5, 0.7)]:
+                audio = await synthesis.synthesize('Hola', model='eleven_flash_v2_5',
+                                                   voice='test-voice', speed=requested)
+                self.assertEqual(requests[-1]['voice_settings']['speed'], effective)
+                self.assertEqual(audio['mime_type'], 'audio/mpeg')
+                import base64
+                self.assertEqual(base64.b64decode(audio['audio_base64']), b'fake-mp3')
+                timings = audio['timings_ms']
+                self.assertLessEqual(timings['request_to_headers_ms'], timings['request_to_first_chunk_ms'])
+                self.assertLessEqual(timings['request_to_first_chunk_ms'], timings['request_to_complete_ms'])

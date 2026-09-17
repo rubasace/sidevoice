@@ -25,6 +25,19 @@ from presentation import binding, hub, PresentationCall, NoInference, mount_pres
 from connector_control import mount_connector_control
 
 
+def audio_idle_timeout(config):
+    """How long missing PCM packets may stall before treating an active voice as stopped.
+
+    This is not conversational silence: regular silent PCM still reaches VAD and
+    uses its normal 2.5 s turn policy. Mobile Safari can pause AudioWorklet
+    delivery for multiple seconds while the page remains visible.
+    """
+    try:
+        return max(0.0, float(config.get("VOICE_AUDIO_IDLE_TIMEOUT", "5.0")))
+    except (TypeError, ValueError):
+        return 5.0
+
+
 async def browser_call(websocket):
     """One accepted browser socket is one call: the room mints its id and announces it first."""
     from language_settings import load_settings
@@ -36,6 +49,7 @@ async def browser_call(websocket):
     transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
         audio_in_enabled=True, serializer=serializer, allowed_origins=[]))
     user, assistant = LLMContextAggregatorPair(LLMContext(), user_params=LLMUserAggregatorParams(
+        audio_idle_timeout=audio_idle_timeout(config),
         vad_analyzer=SileroVADAnalyzer(params=VADParams(
             start_secs=float(config.get("VOICE_VAD_START_SECS", "0.08")),
             stop_secs=float(config.get("VOICE_VAD_STOP_SECS", "0.35")),

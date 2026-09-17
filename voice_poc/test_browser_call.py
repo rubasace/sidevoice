@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 from starlette.websockets import WebSocketState
 
@@ -27,6 +27,15 @@ class FakeWebSocket:
 
     async def close(self, code=1000, reason=None):
         self.client_state = self.application_state = WebSocketState.DISCONNECTED
+
+
+class AudioIdleTimeoutTest(TestCase):
+    def test_missing_packets_get_a_longer_guard_than_conversational_silence(self):
+        from bot import audio_idle_timeout
+        self.assertEqual(audio_idle_timeout({}), 5.0)
+        self.assertEqual(audio_idle_timeout({'VOICE_AUDIO_IDLE_TIMEOUT': '7.5'}), 7.5)
+        self.assertEqual(audio_idle_timeout({'VOICE_AUDIO_IDLE_TIMEOUT': 'broken'}), 5.0)
+        self.assertEqual(audio_idle_timeout({'VOICE_AUDIO_IDLE_TIMEOUT': '-1'}), 0.0)
 
 
 class BrowserCallTest(IsolatedAsyncioTestCase):
