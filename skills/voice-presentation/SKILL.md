@@ -77,10 +77,21 @@ Re-check with `voice_status` after any change rather than assuming it took.
   final result. Reuse the incoming message's original `session_id` and
   `revision` for all of them. Give every publication a distinct utterance; only
   reuse an `utterance_id` when retrying the exact same publication.
+- A progress publication is not, by itself, a listening point. For substantive
+  work, divide execution into bounded steps. After each tool result or other
+  operational boundary, process any newly arrived user input before starting
+  the next step. Do not immediately launch a long chain of operations after the
+  acknowledgement when the user's intent could still be corrected.
 - If another user message arrives while work is in progress, decide from its
-  meaning whether it adds to or replaces the active request. Incorporate and
-  acknowledge substantive additions promptly without abandoning relevant work
-  or later answering a stale request.
+  meaning whether it adds to, refines, or replaces the active request. Stop
+  not-yet-started work made obsolete by the correction, preserve completed work
+  that remains useful, and acknowledge the new interpretation before
+  continuing. Do not later answer a stale request.
+- Do not add artificial sleeps or fixed conversational pauses. The useful pause
+  is an operational boundary at which incoming messages can be applied. Be
+  honest that a tool call already in progress may finish before steering takes
+  effect; avoid starting more obsolete work once control returns. Delegation is
+  separate from listening and must not be used merely to simulate a checkpoint.
 - Make speech a concise presentation of the substantive response. Keep complete
   details, code and references on screen. Avoid reading tool output, metadata,
   long paths, Markdown formatting or code aloud unless requested.
