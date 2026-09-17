@@ -373,12 +373,20 @@ function renderConnectionStats(data,roundTrip){
  const selectedLabel=id=>$(id).selectedOptions?.[0]?.textContent||'Predeterminado del sistema';
  const flag=value=>value===true||value==='all'?'Activado':value===false?'Desactivado':'No confirmado';
  const socket=['Conectando','Conectado','Cerrando','Desconectado'][ws?.readyState]||'Desconectado';
- const context=window.roomVoice?.context||audioContext;
+ const context=window.roomVoice?.context||audioContext,stt=call?.transcription;
+ const sttReasons={explicit:'Selección explícita',auto_key:'Automático · clave disponible',auto_no_key:'Automático · sin clave, fallback local',openai_without_key:'OpenAI solicitado sin clave · fallback local'};
+ const sttExecution=!stt?'—':stt.location==='local'
+  ?[stt.device,stt.compute_type].filter(Boolean).join(' · ')
+  :'Remota';
  const facts=[
   ['WebSocket',socket],
   ['Consulta al servidor (HTTP)',statsDuration(roundTrip)],
   ['Sesión',sessionId||'Sin llamada'],
   ['Servidor y navegador',call?'Misma sesión':sessionId?'Sesión no confirmada':'Sin llamada'],
+  ['Transcripción',stt?[stt.provider,stt.model].filter(Boolean).join(' · '):'—'],
+  ['Motor STT',stt?.engine||'—'],
+  ['Ejecución STT',sttExecution],
+  ['Selección STT',sttReasons[stt?.reason]||stt?.reason||'—'],
   ['Motor de audio',({running:'Activo',suspended:'Suspendido',closed:'Cerrado'})[context?.state]||'No iniciado'],
   ['Micrófono',track?.label||selectedLabel('input-device')],
   ['Captura',!track?'No iniciada':track.readyState==='ended'?'Finalizada':track.muted?'Sin señal del dispositivo':track.enabled?'Activa':'Silenciada'],

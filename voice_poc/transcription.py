@@ -27,7 +27,8 @@ CATALOG = {
                 {'id': 'base', 'label': 'base · equilibrio por defecto'},
                 {'id': 'small', 'label': 'small · más preciso, más lento'},
                 {'id': 'medium', 'label': 'medium · preciso, notablemente más lento en CPU'},
-                {'id': 'large-v3', 'label': 'large-v3 · el más preciso, poco práctico sin GPU'},
+                {'id': 'turbo', 'label': 'turbo · mejor equilibrio calidad/velocidad; GPU recomendada'},
+                {'id': 'large-v3', 'label': 'large-v3 · máxima calidad Whisper, poco práctico sin GPU'},
             ],
         },
         {
@@ -132,7 +133,21 @@ def resolve(settings, config=None):
     model = (getattr(settings, 'stt_model', '') or '').strip()
     if not model or provider != requested:
         model = PROVIDERS[provider]['default_model']
-    return {'provider': provider, 'model': model, 'reason': reason}
+    runtime = ({
+        'local': {
+            'engine': 'faster-whisper',
+            'location': 'local',
+            'device': 'cpu',
+            'compute_type': 'int8',
+        },
+        'openai': {
+            'engine': 'OpenAI API',
+            'location': 'remote',
+            'device': 'cloud',
+            'compute_type': None,
+        },
+    })[provider]
+    return {'provider': provider, 'model': model, 'reason': reason, **runtime}
 
 
 def build(settings, config=None):

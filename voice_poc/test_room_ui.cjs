@@ -454,8 +454,10 @@ test('Stats handle old servers, network failures and other call sessions without
 });
 test('Stats renders device and session values as text and does not mislabel HTTP as audio latency',()=>{
  const s=setup({strictDOM:true});
- s.run(`ws={readyState:1};stream={getAudioTracks:()=>[{label:'<img onerror=boom>',readyState:'live',enabled:true,getSettings:()=>({echoCancellation:true,noiseSuppression:false,sampleRate:48000})}]};renderConnectionStats({call:{id:'s',mic:{frames:20,bytes:1024,last_gap_ms:20,max_gap_ms:610,gaps_over_250ms:2}}},36)`);
+ s.run(`ws={readyState:1};stream={getAudioTracks:()=>[{label:'<img onerror=boom>',readyState:'live',enabled:true,getSettings:()=>({echoCancellation:true,noiseSuppression:false,sampleRate:48000})}]};renderConnectionStats({call:{id:'s',transcription:{provider:'local',model:'turbo',reason:'openai_without_key',engine:'faster-whisper',location:'local',device:'cpu',compute_type:'int8'},mic:{frames:20,bytes:1024,last_gap_ms:20,max_gap_ms:610,gaps_over_250ms:2}}},36)`);
  const values=s.run("$('stats-connection').children.map(n=>n.textContent)");
  assert.ok(values.includes('<img onerror=boom>'));assert.ok(values.includes('Consulta al servidor (HTTP)'));
  assert.ok(values.includes('36 ms'));assert.ok(values.includes('48000 Hz'));assert.ok(values.includes('610 ms'));assert.ok(values.includes('2'));assert.ok(values.includes('Misma sesión'));
+ assert.ok(values.includes('local · turbo'));assert.ok(values.includes('faster-whisper'));assert.ok(values.includes('cpu · int8'));
+ assert.ok(values.includes('OpenAI solicitado sin clave · fallback local'));
 });

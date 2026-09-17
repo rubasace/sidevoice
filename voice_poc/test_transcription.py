@@ -17,8 +17,11 @@ class TranscriptionChoiceTests(unittest.TestCase):
 
     def test_auto_follows_the_key_and_never_leaks_it(self):
         settings = LanguageSettings()
-        self.assertEqual(transcription.resolve(settings, {}),
-                         {'provider': 'local', 'model': 'base', 'reason': 'auto_no_key'})
+        self.assertEqual(transcription.resolve(settings, {}), {
+            'provider': 'local', 'model': 'base', 'reason': 'auto_no_key',
+            'engine': 'faster-whisper', 'location': 'local',
+            'device': 'cpu', 'compute_type': 'int8',
+        })
         transcription.save_key('openai', 'sk-secret-value-1234')
         self.assertEqual(transcription.resolve(settings, {})['provider'], 'openai')
         state = transcription.credential_state({})
@@ -32,12 +35,20 @@ class TranscriptionChoiceTests(unittest.TestCase):
 
     def test_openai_without_a_key_falls_back_and_says_why(self):
         choice = transcription.resolve(LanguageSettings(stt_provider='openai'), {})
-        self.assertEqual(choice, {'provider': 'local', 'model': 'base', 'reason': 'openai_without_key'})
+        self.assertEqual(choice, {
+            'provider': 'local', 'model': 'base', 'reason': 'openai_without_key',
+            'engine': 'faster-whisper', 'location': 'local',
+            'device': 'cpu', 'compute_type': 'int8',
+        })
 
     def test_explicit_choice_keeps_a_model_the_catalogue_does_not_list(self):
         transcription.save_key('openai', 'sk-key')
         choice = transcription.resolve(LanguageSettings(stt_provider='openai', stt_model='gpt-5-transcribe-future'), {})
-        self.assertEqual(choice, {'provider': 'openai', 'model': 'gpt-5-transcribe-future', 'reason': 'explicit'})
+        self.assertEqual(choice, {
+            'provider': 'openai', 'model': 'gpt-5-transcribe-future', 'reason': 'explicit',
+            'engine': 'OpenAI API', 'location': 'remote',
+            'device': 'cloud', 'compute_type': None,
+        })
 
     def test_a_model_from_another_provider_is_not_carried_over_on_fallback(self):
         choice = transcription.resolve(LanguageSettings(stt_provider='openai', stt_model='gpt-4o-transcribe'), {})
@@ -46,6 +57,8 @@ class TranscriptionChoiceTests(unittest.TestCase):
     def test_local_provider_uses_its_default_and_honours_an_explicit_model(self):
         self.assertEqual(transcription.resolve(LanguageSettings(stt_provider='local'), {})['model'], 'base')
         self.assertEqual(transcription.resolve(LanguageSettings(stt_provider='local', stt_model='small'), {})['model'], 'small')
+        self.assertEqual(transcription.resolve(LanguageSettings(stt_provider='local', stt_model='turbo'), {})['model'], 'turbo')
+        self.assertIn('turbo', {model['id'] for model in transcription.PROVIDERS['local']['models']})
 
     def test_keys_are_stored_privately_and_can_be_removed(self):
         transcription.save_key('openai', 'sk-one')
