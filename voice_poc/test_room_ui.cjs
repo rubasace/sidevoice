@@ -436,7 +436,7 @@ test('Meet split control opens devices independently of mute and exposes setting
 test('Stats omit missing durations and use first reply per turn, only for selected thread',()=>{
  const s=setup({strictDOM:true});
  s.run(`renderLatencyStats({replies:[
- {thread_id:'a',reply_revision:1,status:'completed',server_ms:{input_queued_to_reply_received_ms:4000},provider_ms:{request_to_complete_ms:300},browser_ms:{audio_received_to_playback_scheduled_ms:50,vad_stop_event_to_turn_finished_event_ms:2490}},
+ {thread_id:'a',reply_revision:1,status:'completed',input_ms:{speech_end_to_transcript_ms:2490,endpoint_silence_ms:2000,recognition_ms:450},server_ms:{input_queued_to_reply_received_ms:4000},provider_ms:{request_to_complete_ms:300},browser_ms:{audio_received_to_playback_scheduled_ms:50}},
  {thread_id:'a',reply_revision:1,status:'completed',server_ms:{input_queued_to_reply_received_ms:8000},provider_ms:{request_to_complete_ms:500}},
  {thread_id:'a',reply_revision:2,status:'failed',server_ms:{input_queued_to_reply_received_ms:6000}},
  {thread_id:'other',reply_revision:3,server_ms:{input_queued_to_reply_received_ms:100000}}
@@ -446,7 +446,7 @@ test('Stats omit missing durations and use first reply per turn, only for select
  assert.equal(s.run("$('stats-synthesis').textContent"),'400 ms');
  assert.equal(s.run("$('stats-playout').textContent"),'50 ms');
  assert.equal(s.run("$('stats-rows').children.length"),3);
- assert.equal(s.run("$('stats-rows').children[0].children[4].textContent"),'—');
+ assert.equal(s.run("$('stats-rows').children[0].children[6].textContent"),'—');
  for(const value of ['null','undefined','NaN','Infinity','-1','true',"'10'"])
   assert.equal(s.run('statsDuration('+value+')'),'—');
  assert.equal(s.run('statsDuration(0)'),'0 ms');

@@ -59,6 +59,20 @@ class LatencyTest(unittest.TestCase):
         self.assertEqual(self.row()['server_ms'], {})
         self.assertNotIn('never retained', str(self.trace.snapshot()))
 
+    def test_input_durations_are_allowlisted_and_joined_to_the_reply(self):
+        self.trace.input('a', 1, {
+            'audio_ms': 8000, 'endpoint_silence_ms': 2500,
+            'recognition_ms': 900, 'speech_end_to_transcript_ms': 3425,
+            'transcript': 'never retained', 'negative': -1,
+        })
+        self.trace.turn('a', 1, 'queued')
+        self.trace.reply('u', 'a', 1)
+        self.assertEqual(self.row()['input_ms'], {
+            'audio_ms': 8000, 'endpoint_silence_ms': 2500,
+            'recognition_ms': 900, 'speech_end_to_transcript_ms': 3425,
+        })
+        self.assertNotIn('never retained', str(self.trace.snapshot()))
+
     def test_restarted_synthesis_does_not_mix_attempt_timings(self):
         self.trace.reply('u', 'a', 1)
         self.trace.start_synthesis('u')

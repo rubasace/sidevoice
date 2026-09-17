@@ -121,6 +121,7 @@ async def browser_call(websocket):
                         'audio_ms': max(0, int(metrics.get('audio_ms') or 0)),
                         'recognition_ms': max(0, int(metrics.get('recognition_ms') or 0)),
                     })
+                    call.latency.input(turn['target'].get('thread_id'), turn['revision'], metrics)
                     call.input_stats['turns'] += 1
                 elif kind == 'voice-input-end':
                     turn = turns.get(data.get('turn_id'))

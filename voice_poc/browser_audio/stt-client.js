@@ -78,9 +78,10 @@ class BrowserTranscription{
   turn.transcribing=true;
   const snapshotSamples=turn.samples,snapshotVoiceRevision=turn.voiceRevision,sequence=++turn.sequence,audio=new Float32Array(snapshotSamples);
   let offset=0;for(const chunk of turn.chunks){audio.set(chunk,offset);offset+=chunk.length}
-  const generation=this.generation;this._preparation({phase:'inline',text:'Transcribiendo en este navegador...'});
+  const generation=this.generation,transcriptionStarted=performance.now();this._preparation({phase:'inline',text:'Transcribiendo en este navegador...'});
   try{
    const result=await this._request('transcribe',{audio:audio.buffer,model:this.runtime.model,device:this.runtime.device,language:this.language},null,[audio.buffer]);
+   const transcriptReady=performance.now();
    if(generation!==this.generation||this.turn!==turn)return;
    turn.transcribing=false;
    if(turn.voiceRevision!==snapshotVoiceRevision||performance.now()-turn.lastVoice<this.silenceMs){
@@ -88,7 +89,7 @@ class BrowserTranscription{
     return;
    }
    if(!usefulTranscript(result.text))throw Error('El modelo produjo una transcripción degenerada. Inténtalo de nuevo.');
-   this._send('voice-input-transcript',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence,text:result.text,metrics:{audio_ms:Math.round(snapshotSamples/16),recognition_ms:Math.round(result.elapsed_ms),device:result.device,model:result.model}});
+   this._send('voice-input-transcript',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence,text:result.text,metrics:{audio_ms:Math.round(snapshotSamples/16),endpoint_silence_ms:Math.round(Math.max(0,transcriptionStarted-turn.lastVoice)),recognition_ms:Math.round(result.elapsed_ms),speech_end_to_transcript_ms:Math.round(Math.max(0,transcriptReady-turn.lastVoice)),device:result.device,model:result.model}});
    this._send('voice-input-end',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence});
    this.turn=null;this.preRoll=[];this.voiceRun=0;this._preparation({phase:'hidden'});
   }catch(error){

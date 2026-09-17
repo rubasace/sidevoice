@@ -57,7 +57,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         for message in [
             {'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}},
             {'type': 'voice-input-start', 'data': {'session_id': session_id, 'turn_id': 'turn-1'}},
-            {'type': 'voice-input-transcript', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1, 'text': 'Hola desde el navegador', 'metrics': {'audio_ms': 850, 'recognition_ms': 120}}},
+            {'type': 'voice-input-transcript', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1, 'text': 'Hola desde el navegador', 'metrics': {'audio_ms': 850, 'endpoint_silence_ms': 2500, 'recognition_ms': 120, 'speech_end_to_transcript_ms': 2640}}},
             {'type': 'voice-input-end', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1}},
         ]:
             socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(message)})
@@ -70,6 +70,9 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         snapshot = self.hub.snapshot()['call']
         self.assertEqual(snapshot['mic']['transport'], 'browser-text')
         self.assertEqual(snapshot['mic']['recognition_ms'], 120)
+        input_metrics = self.hub.call.latency.turns[('thread-a', 1)]['input_ms']
+        self.assertEqual(input_metrics['endpoint_silence_ms'], 2500)
+        self.assertEqual(input_metrics['speech_end_to_transcript_ms'], 2640)
         self.assertEqual(snapshot['transcription']['device'], 'wasm')
         socket.incoming.put_nowait({'type': 'websocket.disconnect'})
         await asyncio.wait_for(task, 2)

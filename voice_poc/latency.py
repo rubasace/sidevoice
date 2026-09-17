@@ -9,7 +9,12 @@ class CallLatency:
     BROWSER_FIELDS = {
         'audio_received_to_playback_scheduled_ms',
         'turn_finished_event_to_playback_scheduled_ms',
-        'vad_stop_event_to_turn_finished_event_ms',
+    }
+    INPUT_FIELDS = {
+        'audio_ms',
+        'endpoint_silence_ms',
+        'recognition_ms',
+        'speech_end_to_transcript_ms',
     }
 
     def __init__(self, session_id, *, clock=time.monotonic, limit=128):
@@ -28,6 +33,12 @@ class CallLatency:
             return
         marks = self._bounded(self.turns, (thread, revision), {})
         marks.setdefault(event, self.clock())
+
+    def input(self, thread, revision, durations):
+        if not thread or not isinstance(durations, dict):
+            return
+        marks = self._bounded(self.turns, (thread, revision), {})
+        marks['input_ms'] = self._durations(durations, self.INPUT_FIELDS)
 
     def reply(self, uid, thread, revision):
         self._bounded(self.replies, uid, {
@@ -90,11 +101,11 @@ class CallLatency:
             ):
                 self._interval(durations, name, start, end)
             rows.append({key: row[key] for key in ('utterance_id', 'thread_id', 'reply_revision', 'status', 'synthesis_attempt')} |
-                        {'server_ms': durations, 'provider_ms': dict(row['provider_ms']),
-                         'browser_ms': dict(row['browser_ms'])})
+                        {'input_ms': dict(turn.get('input_ms', {})), 'server_ms': durations,
+                         'provider_ms': dict(row['provider_ms']), 'browser_ms': dict(row['browser_ms'])})
         return {'session_id': self.session_id, 'limit': self.limit, 'replies': rows,
                 'notes': ['Durations only; server and browser clocks are never subtracted.',
                           'Delivery acceptance is not model execution or reading.',
                           'Playing means Web Audio scheduled playback, not Bluetooth audibility.',
-                          'Browser VAD/turn markers are received server events, not raw microphone timestamps.',
+                          'Input durations are measured in the browser from the last voiced microphone frame.',
                           'Missing measurements are omitted, not zero. Data expires with the call.']}

@@ -20,6 +20,7 @@ test('silence received during inference does not discard and repeat a final tran
  assert.equal(requests,1);
  assert.deepEqual(sent.map(item=>item.type),['voice-input-transcript','voice-input-end']);
  assert.equal(sent[0].data.text,'Hola');
+ assert.deepEqual({...sent[0].data.metrics},{audio_ms:100,endpoint_silence_ms:3000,recognition_ms:100,speech_end_to_transcript_ms:3000,device:'webgpu',model:'model'});
  assert.equal(client.turn,null);
 });
 
