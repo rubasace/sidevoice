@@ -6,10 +6,29 @@ function usefulTranscript(value){
  if(tokens.length>=10&&new Set(tokens).size/tokens.length<.15)return false;
  return true;
 }
+/* The room sends a finished turn as a 16-bit PCM WAV; Whisper wants float samples at 16 kHz. */
+function decodeWav(base64){
+ const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0)),view=new DataView(bytes.buffer);
+ if(bytes.length<12||String.fromCharCode(...bytes.subarray(0,4))!=='RIFF'||String.fromCharCode(...bytes.subarray(8,12))!=='WAVE')throw Error('La sala envió un audio que no es WAV.');
+ let offset=12,channels=1,rate=16000,bits=16,data=null;
+ while(offset+8<=bytes.length){
+  const id=String.fromCharCode(...bytes.subarray(offset,offset+4)),size=view.getUint32(offset+4,true),body=offset+8;
+  if(id==='fmt '){channels=view.getUint16(body+2,true);rate=view.getUint32(body+4,true);bits=view.getUint16(body+14,true)}
+  else if(id==='data'){data=bytes.subarray(body,Math.min(bytes.length,body+size));break}
+  offset=body+size+(size%2);
+ }
+ if(!data||bits!==16)throw Error('La sala envió un WAV que este navegador no entiende.');
+ const frames=Math.floor(data.length/(2*channels)),mono=new Float32Array(frames),samples=new Int16Array(data.buffer,data.byteOffset,frames*channels);
+ for(let i=0;i<frames;i++){let sum=0;for(let c=0;c<channels;c++)sum+=samples[i*channels+c];mono[i]=sum/channels/32768}
+ if(rate===16000)return mono;
+ const out=new Float32Array(Math.round(frames*16000/rate)),step=rate/16000;
+ for(let i=0;i<out.length;i++){const p=i*step,j=Math.floor(p),a=mono[Math.min(j,frames-1)],b=mono[Math.min(j+1,frames-1)];out[i]=a+(b-a)*(p-j)}
+ return out;
+}
+/* Whisper in this browser, as a transcription provider the room calls: it never decides where a turn ends. */
 class BrowserTranscription{
  constructor(){
   this.worker=null;this.pending=new Map();this.nextId=0;this.runtime=null;this.socket=null;
-  this.turn=null;this.preRoll=[];this.voiceRun=0;this.noise=.002;this.silenceMs=2500;
   this.language='auto';this.enabled=false;this.generation=0;
  }
  _ensureWorker(){
@@ -43,59 +62,35 @@ class BrowserTranscription{
   try{this.runtime=await this._request('load',{model,device},value=>this._progress(value));this._preparation({phase:'ready'});return this.runtime}
   catch(error){this._preparation({phase:'error',title:'No se pudo preparar la transcripcion',text:error.message,progress:null});throw error}
  }
- start({socket,silenceSeconds=2.5,language='auto'}){
-  this.socket=socket;this.silenceMs=Math.max(500,Number(silenceSeconds||2.5)*1000);this.language=language;
-  this.enabled=true;this.turn=null;this.preRoll=[];this.voiceRun=0;this.noise=.002;this.generation++;
+ start({socket,language='auto'}){
+  this.socket=socket;this.language=language;this.enabled=true;this.generation++;
  }
- stop({cancelTurn=false}={}){
-  if(cancelTurn&&this.turn)this._send('voice-input-cancel',{session_id:window.sidevoiceSessionId?.(),turn_id:this.turn.id});
-  this.enabled=false;this.socket=null;this.turn=null;this.preRoll=[];this.voiceRun=0;this.generation++;
+ stop(){
+  this.enabled=false;this.socket=null;this.generation++;
   const error=new DOMException('Transcripción cancelada','AbortError');
   for(const request of this.pending.values())request.reject(error);this.pending.clear();
   this.worker?.postMessage({type:'cancel'});
  }
  _send(type,data){if(this.socket?.readyState===WebSocket.OPEN)this.socket.send(JSON.stringify({type,data}))}
- _begin(){
-  const id=crypto.randomUUID(),chunks=this.preRoll.splice(0);
-  this.turn={id,chunks,samples:chunks.reduce((n,c)=>n+c.length,0),lastVoice:performance.now(),voiceRevision:0,transcribing:false,sequence:0};
-  this._send('voice-input-start',{session_id:window.sidevoiceSessionId?.(),turn_id:id});
- }
- ingest(buffer){
-  if(!this.enabled||!this.socket)return;
-  const source=new Int16Array(buffer),samples=new Float32Array(source.length);let squares=0;
-  for(let i=0;i<source.length;i++){const value=source[i]/32768;samples[i]=value;squares+=value*value}
-  const rms=Math.sqrt(squares/Math.max(1,source.length)),threshold=Math.max(.012,this.noise*3),voiced=rms>threshold;
-  if(!this.turn){
-   if(!voiced)this.noise=this.noise*.97+rms*.03;
-   this.preRoll.push(samples);if(this.preRoll.length>15)this.preRoll.shift();
-   this.voiceRun=voiced?this.voiceRun+1:0;if(this.voiceRun>=4)this._begin();return;
-  }
-  this.turn.chunks.push(samples);this.turn.samples+=samples.length;if(voiced){this.turn.lastVoice=performance.now();this.turn.voiceRevision++}
-  if(!this.turn.transcribing&&performance.now()-this.turn.lastVoice>=this.silenceMs)this._finish();
- }
- async _finish(){
-  const turn=this.turn;if(!turn||turn.transcribing||!this.runtime)return;
-  turn.transcribing=true;
-  const snapshotSamples=turn.samples,snapshotVoiceRevision=turn.voiceRevision,sequence=++turn.sequence,audio=new Float32Array(snapshotSamples);
-  let offset=0;for(const chunk of turn.chunks){audio.set(chunk,offset);offset+=chunk.length}
-  const generation=this.generation,transcriptionStarted=performance.now();this._preparation({phase:'inline',text:'Transcribiendo en este navegador...'});
+ /* One finished turn from the room: decode it, run Whisper, answer with the text or the reason. */
+ async transcribe(request){
+  const generation=this.generation,session_id=window.sidevoiceSessionId?.(),request_id=request?.request_id;
+  if(!this.enabled||!this.socket||!request_id)return;
+  if(!this.runtime){this._send('voice-transcript-error',{session_id,request_id,error:'El modelo de transcripción no está preparado.'});return}
+  const started=performance.now();
   try{
-   const result=await this._request('transcribe',{audio:audio.buffer,model:this.runtime.model,device:this.runtime.device,language:this.language},null,[audio.buffer]);
-   const transcriptReady=performance.now();
-   if(generation!==this.generation||this.turn!==turn)return;
-   turn.transcribing=false;
-   if(turn.voiceRevision!==snapshotVoiceRevision||performance.now()-turn.lastVoice<this.silenceMs){
-    if(performance.now()-turn.lastVoice>=this.silenceMs)this._finish();
-    return;
-   }
+   const audio=decodeWav(request.audio_base64),audio_ms=Math.round(audio.length/16);
+   this._preparation({phase:'inline',text:'Transcribiendo en este navegador...'});
+   const language=request.language||(this.language==='auto'?null:this.language);
+   const result=await this._request('transcribe',{audio:audio.buffer,model:this.runtime.model,device:this.runtime.device,language:language||'auto'},null,[audio.buffer]);
+   if(generation!==this.generation)return;
    if(!usefulTranscript(result.text))throw Error('El modelo produjo una transcripción degenerada. Inténtalo de nuevo.');
-   this._send('voice-input-transcript',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence,text:result.text,metrics:{audio_ms:Math.round(snapshotSamples/16),endpoint_silence_ms:Math.round(Math.max(0,transcriptionStarted-turn.lastVoice)),recognition_ms:Math.round(result.elapsed_ms),speech_end_to_transcript_ms:Math.round(Math.max(0,transcriptReady-turn.lastVoice)),device:result.device,model:result.model}});
-   this._send('voice-input-end',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,sequence});
-   this.turn=null;this.preRoll=[];this.voiceRun=0;this._preparation({phase:'hidden'});
+   this._send('voice-transcript',{session_id,request_id,text:result.text,metrics:{audio_ms,recognition_ms:Math.round(result.elapsed_ms),request_to_transcript_ms:Math.round(performance.now()-started),device:result.device,model:result.model}});
+   this._preparation({phase:'hidden'});
   }catch(error){
-   if(generation!==this.generation||this.turn!==turn)return;
-   turn.transcribing=false;this._send('voice-input-error',{session_id:window.sidevoiceSessionId?.(),turn_id:turn.id,error:error.message});
-   this.turn=null;this._preparation({phase:'error',title:'No se pudo transcribir',text:error.message,progress:null});
+   if(generation!==this.generation)return;
+   this._send('voice-transcript-error',{session_id,request_id,error:error.message});
+   this._preparation({phase:'error',title:'No se pudo transcribir',text:error.message,progress:null});
   }
  }
 }

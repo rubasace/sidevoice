@@ -461,23 +461,23 @@ test('Preview uses ElevenLabs native speed limits while Kokoro retains its range
  assert.equal(s.run("effectiveSpeed('kokoro',1.5)"),1.5);
 });
 
-test('Capture shares the playback context and hangup only disconnects the microphone graph',async()=>{
- const s=setup();let closed=0,ingested=0,nodeOptions;
+test('Capture shares the playback context, streams PCM to the room, and hangup only disconnects the microphone graph',async()=>{
+ const s=setup();let closed=0,sentFrames=0,nodeOptions;
  const source={connect(){},disconnect(){}};
  const context={state:'running',createAnalyser:()=>({getFloatTimeDomainData(data){data.fill(0)},disconnect(){}}),createMediaStreamSource:()=>source,audioWorklet:{addModule:async()=>{}},close:async()=>{closed++}};
- s.context.window.roomVoice={context};s.context.window.roomTranscription.ingest=()=>{ingested++};
+ s.context.window.roomVoice={context};
  s.context.AudioWorkletNode=class{constructor(_context,_name,options){nodeOptions=options;this.port={}}connect(){}disconnect(){}};
  s.run("$('mute').style.setProperty=()=>{};stream={getAudioTracks:()=>[{enabled:true}]};ws={readyState:1,send(){}}");
- s.run('ws').send=()=>{throw Error('raw PCM must not be sent')};
+ s.run('ws').send=frame=>{if(typeof frame==='string'||frame?.byteLength!==640)throw Error('the room expects raw PCM frames');sentFrames++};
  s.run('startMeter(16000)');
  assert.equal(s.run('audioContext'),context);
  await s.run('startCapture(ws,{sample_rate:16000})');
  const node=s.run('captureNode');
  node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(ingested,1);assert.equal(nodeOptions.processorOptions.sampleRate,16000);
+ assert.equal(sentFrames,1);assert.equal(nodeOptions.processorOptions.sampleRate,16000);
  s.run('stopMeter()');
  node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(ingested,1);assert.equal(closed,0);
+ assert.equal(sentFrames,1);assert.equal(closed,0);
 });
 
 test('Latency uses browser monotonic durations and original reply revision',()=>{
@@ -622,13 +622,13 @@ test('Changed STT settings hot-swap the active browser runtime',async()=>{
   window.roomTranscription={
    stop(options){actions.push(['stop',options.cancelTurn])},
    prepare:async options=>{actions.push(['prepare',options.model,options.device]);return {model:options.model,device:'webgpu'}},
-   start(options){actions.push(['start',options.language,options.silenceSeconds])}
+   start(options){actions.push(['start',options.language])}
   };
  `);
- const previous={stt_model:'tiny',stt_device:'wasm',stt_language:'auto',user_speech_timeout:2.5};
- const next={stt_model:'small',stt_device:'webgpu',stt_language:'es',user_speech_timeout:3};
+ const previous={stt_model:'tiny',stt_device:'wasm',stt_language:'auto'};
+ const next={stt_model:'small',stt_device:'webgpu',stt_language:'es'};
  assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),true);
- assert.equal(JSON.stringify(s.run('actions')),JSON.stringify([['stop',true],['prepare','small','webgpu'],['start','es',3]]));
+ assert.equal(JSON.stringify(s.run('actions')),JSON.stringify([['stop',true],['prepare','small','webgpu'],['start','es']]));
  assert.equal(s.run('ws.sent[0].type'),'voice-stt-ready');
  assert.equal(s.run('ws.sent[0].data.model'),'small');
  assert.equal(s.run('ws.sent[0].data.session_id'),'call-1');
