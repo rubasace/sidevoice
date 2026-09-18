@@ -111,6 +111,8 @@ class RoomClient:
         self.mic = None            # the serializer, when a PCM socket owns this client
         self.input_stats = None    # what the browser-side transcription transport reports
         self.transcription = None  # which STT engine this client resolved to
+        self.mic_settings = None   # how this device's turns are detected
+        self.voice = None          # the call flow driving this client's turns, when a pipeline owns it
         self.latency = CallLatency(self.id)
         if room is not None:
             room.join(self)
@@ -149,7 +151,7 @@ class RoomClient:
         """What the room may say about a browser to the rest of the room."""
         return {'id': self.id, 'connected': self.connected, 'user_speaking': self.speaking,
                 'turn_revision': self.turn_revision,
-                'transport': (self.input_stats or {}).get('transport', 'openai-pcm'),
+                'transport': (self.input_stats or {}).get('transport', 'pcm'),
                 'transcription': self.transcription}
 
     def snapshot(self):
@@ -158,13 +160,14 @@ class RoomClient:
                 'last_delivery': self.last_delivery, 'revision': self.revision,
                 'utterances': [u.view(self.id) for u in self.utterances.values() if self.id in u.clients],
                 'tts': {'engine': 'Kokoro · navegador'} if self.tts is None else getattr(self.tts, 'runtime_status', {}),
-                'mic': self.input_stats or ({
+                'mic': ({
                     'frames': getattr(self.mic, 'audio_frames', 0),
                     'bytes': getattr(self.mic, 'audio_bytes', 0),
                     'last_gap_ms': getattr(self.mic, 'last_audio_gap_ms', 0),
                     'max_gap_ms': getattr(self.mic, 'max_audio_gap_ms', 0),
                     'gaps_over_250ms': getattr(self.mic, 'audio_gap_count', 0),
-                } if self.mic else None),
+                } if self.mic else {}) | (self.input_stats or {}) or None,
+                'mic_settings': self.mic_settings,
                 'transcription': self.transcription,
                 'speech_filter': getattr(self.stt, 'filter_stats', {})}
 

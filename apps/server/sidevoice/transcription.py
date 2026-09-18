@@ -29,7 +29,7 @@ MODEL_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$')
 CATALOG = {
     'providers': [
         {'id': 'browser', 'label': 'En este navegador', 'needs_key': False,
-         'note': 'El audio no sale del dispositivo. WebGPU usa la GPU; CPU usa WebAssembly.',
+         'note': 'La sala recibe el audio para detectar tus turnos; el texto se reconoce en este navegador, sin ninguna API. WebGPU usa la GPU; CPU usa WebAssembly.',
          'default_model': 'onnx-community/whisper-tiny', 'models': BROWSER_MODELS},
         {'id': 'openai', 'label': 'OpenAI', 'needs_key': True,
          'note': 'El audio de tus intervenciones se envía a OpenAI para transcribirlo.',
@@ -124,23 +124,19 @@ def resolve(settings, config=None):
             'compute_type': None, 'available': bool(key)}
 
 
-def build(settings, config=None):
-    from pipecat.transcriptions.language import Language
-    choice = resolve(settings, config)
-    if choice['provider'] != 'openai':
-        raise ValueError('La transcripción del navegador no se construye en el servidor.')
+def build(settings, choice, *, config=None, send=None, session_id=None):
+    """The transcription provider for one call: OpenAI from here, or the browser that is speaking."""
+    language = None if settings.stt_language == 'auto' else settings.stt_language
+    if choice['provider'] == 'browser':
+        if send is None or not session_id:
+            raise ValueError('La transcripción del navegador necesita su conexión.')
+        from .transcribers import BrowserTranscriber
+        return BrowserTranscriber(send, session_id, language=language)
     key = stored_key('openai') or environment_key(config)
     if not key:
         raise ValueError('OpenAI necesita una clave de API antes de conectar.')
-    from .speech_filter import FilteredOpenAISTTService
-    language = None if settings.stt_language == 'auto' else Language(settings.stt_language)
-    service = FilteredOpenAISTTService(
-        api_key=key,
-        turn_silence_seconds=settings.user_speech_timeout,
-        settings=FilteredOpenAISTTService.Settings(
-            model=choice['model'], language=language, prompt=settings.stt_context or None),
-    )
-    return service, choice
+    from .transcribers import OpenAITranscriber
+    return OpenAITranscriber(key, model=choice['model'], language=language, prompt=settings.stt_context or None)
 
 
 async def verify(provider, key):

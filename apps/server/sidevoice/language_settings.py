@@ -1,8 +1,8 @@
 """User-selected language preferences, independent of agent instructions."""
 import json
 import os
-from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import ClassVar, Literal
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from .paths import BROWSER_AUDIO_ROOT, RUNTIME_ROOT
 
 CATALOG = json.loads((BROWSER_AUDIO_ROOT / 'catalog.json').read_text())
@@ -40,7 +40,12 @@ class LanguageSettings(BaseModel):
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     audio_grace_seconds: float = Field(default=2.0, ge=0, le=10)
+    # Microphone defaults for a device that sends none of its own (see MicSettings).
+    turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
     user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
+    smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
+    vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
+    vad_min_volume: float = Field(default=0.35, ge=0, le=1)
 
 
     @model_validator(mode='after')
@@ -114,3 +119,33 @@ def resolve_voice(settings, language=None):
             'voice': voice, 'language': language,
             'speed': override.speed if override and override.speed is not None else settings.tts_speed,
             'device': settings.tts_device}
+
+
+class MicSettings(BaseModel):
+    """How one device's microphone turns are detected. The room keeps defaults; each browser may send its own."""
+    model_config = ConfigDict(extra='ignore')
+    turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
+    user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
+    smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
+    vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
+    vad_min_volume: float = Field(default=0.35, ge=0, le=1)
+
+    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume')
+
+
+def mic_settings(settings, overrides=None):
+    """The room's defaults, overridden by what the device sent when it can be trusted.
+
+    Returns (settings, problem): an invalid override falls back to the room's
+    defaults and says why, so a browser never silently gets a pipeline it did
+    not ask for.
+    """
+    base = MicSettings(**{key: getattr(settings, key) for key in MicSettings.FIELDS})
+    if not isinstance(overrides, dict) or not overrides:
+        return base, None
+    merged = {**base.model_dump(), **{key: value for key, value in overrides.items() if key in MicSettings.FIELDS}}
+    try:
+        return MicSettings.model_validate(merged), None
+    except ValidationError as error:
+        return base, 'Ajustes de micrófono no válidos; se usan los de la sala: ' + '; '.join(
+            str(item.get('loc', ('?',))[0]) + ' ' + item.get('msg', '') for item in error.errors())

@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from starlette.websockets import WebSocketState
 
 
@@ -19,9 +19,32 @@ class FakeWebSocket:
     async def send_text(self, text):
         self.sent.put_nowait(text)
 
+    async def send_bytes(self, data):
+        self.sent.put_nowait(data)
+
     async def close(self, code=1000, reason=None):
         self.client_state = self.application_state = WebSocketState.DISCONNECTED
         self.incoming.put_nowait({'type': 'websocket.disconnect', 'code': code})
+
+
+class FakeTranscriber:
+    """Stands in for the pipeline's transcriber: hands back scripted results, one per finished turn."""
+
+    def __init__(self, results):
+        self.results, self.calls = list(results), 0
+
+    async def transcribe_turn(self):
+        self.calls += 1
+        result = self.results.pop(0)
+        if callable(result):
+            return await result()
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+TIMER_HELLO = {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 1.0},
+               'transcription': {'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}}
 
 
 class BrowserCallTest(IsolatedAsyncioTestCase):
@@ -44,58 +67,201 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         for active in self.patches: active.stop()
         self.temp.cleanup()
 
-    async def received(self, socket, kind):
+    async def received(self, socket, kind, timeout=5):
         while True:
-            message = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
+            raw = await asyncio.wait_for(socket.sent.get(), timeout)
+            if isinstance(raw, (bytes, bytearray)):
+                continue
+            message = json.loads(raw)
             if message['type'] == kind: return message
 
     async def settled(self):
-        # Let the socket's receive loop drain what the test already queued.
-        for _ in range(10):
+        for _ in range(20):
             await asyncio.sleep(0)
 
-    async def join(self, socket):
+    def hello(self, socket, data=None):
+        socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(
+            {'label': 'rtvi-ai', 'type': 'client-ready', 'id': 'x', 'data': data if data is not None else TIMER_HELLO})})
+
+    async def join(self, socket, hello=None):
         from sidevoice.app import browser_call
         task = asyncio.create_task(browser_call(socket))
-        self.addCleanup(task.cancel)
+
+        async def hang_up():
+            # A failed assertion must still end the call the way a browser does, or the runner outlives the test.
+            if not task.done():
+                socket.incoming.put_nowait({'type': 'websocket.disconnect'})
+                try:
+                    await asyncio.wait_for(task, 5)
+                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                    task.cancel()
+        self.addAsyncCleanup(hang_up)
+        self.hello(socket, hello)
         session_id = (await self.received(socket, 'voice-session'))['data']['session_id']
         return task, self.hub.clients[session_id]
 
-    async def test_only_browser_text_reaches_the_server(self):
-        from sidevoice.app import browser_call
-        socket = FakeWebSocket()
-        task = asyncio.create_task(browser_call(socket))
-        first = await self.received(socket, 'voice-session')
-        session_id = first['data']['session_id']
-        self.assertEqual(first['data']['sample_rate'], 16000)
-        socket.incoming.put_nowait({'type': 'websocket.receive', 'bytes': b'pcm'})
-        error = await self.received(socket, 'error')
-        self.assertIn('rechazó PCM', error['data']['message'])
-        for message in [
-            {'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}},
-            {'type': 'voice-input-start', 'data': {'session_id': session_id, 'turn_id': 'turn-1'}},
-            {'type': 'voice-input-transcript', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1, 'text': 'Hola desde el navegador', 'metrics': {'audio_ms': 850, 'endpoint_silence_ms': 2500, 'recognition_ms': 120, 'speech_end_to_transcript_ms': 2640}}},
-            {'type': 'voice-input-end', 'data': {'session_id': session_id, 'turn_id': 'turn-1', 'sequence': 1}},
-        ]:
-            socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(message)})
-        finished = await self.received(socket, 'voice-user-turn')
-        if finished['data']['phase'] == 'started': finished = await self.received(socket, 'voice-user-turn')
-        self.assertEqual(finished['data']['phase'], 'finished')
-        self.assertEqual(finished['data']['text'], 'Hola desde el navegador')
-        rows = self.hub.journal.history('thread-a')
-        self.assertEqual(rows[-1]['text'], 'Hola desde el navegador')
-        snapshot = self.hub.snapshot(session_id)['call']
-        self.assertEqual(snapshot['mic']['transport'], 'browser-text')
-        self.assertEqual(snapshot['mic']['recognition_ms'], 120)
-        input_metrics = self.hub.clients[session_id].latency.turns[('thread-a', 1)]['input_ms']
-        self.assertEqual(input_metrics['endpoint_silence_ms'], 2500)
-        self.assertEqual(input_metrics['speech_end_to_transcript_ms'], 2640)
-        self.assertEqual(snapshot['transcription']['device'], 'wasm')
-        client = self.hub.clients[session_id]
+    async def leave(self, socket, task):
         socket.incoming.put_nowait({'type': 'websocket.disconnect'})
-        await asyncio.wait_for(task, 2)
+        await asyncio.wait_for(task, 5)
+
+    # ----- the call: one pipeline, the device's settings, PCM in -----
+
+    async def test_hello_configures_the_device_and_the_room_owns_its_turns(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket)
+        session = self.hub.snapshot(client.id)['call']
+        self.assertEqual(session['mic_settings']['turn_end_mode'], 'timer')
+        self.assertEqual(session['mic_settings']['user_speech_timeout'], 1.0)
+        self.assertEqual(session['mic_settings']['vad_confidence'], 0.6)
+        self.assertEqual((session['transcription']['provider'], session['transcription']['model'],
+                          session['transcription']['device']), ('browser', 'onnx-community/whisper-tiny', 'wasm'))
+        self.assertEqual(session['mic']['transport'], 'pcm')
+        self.assertEqual(client.stt.provider.kind, 'browser')
+        self.assertIs(client.voice.transcriber, client.stt)
+        # Microphone frames reach the room's pipeline instead of being refused.
+        socket.incoming.put_nowait({'type': 'websocket.receive', 'bytes': bytes(640)})
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if client.mic.audio_frames:
+                break
+        self.assertEqual(client.mic.audio_frames, 1)
+        self.assertTrue(socket.sent.empty() or all(
+            json.loads(m)['type'] != 'error' for m in list(socket.sent._queue) if isinstance(m, str)))
+        await self.leave(socket, task)
         self.assertFalse(client.connected)
         self.assertEqual(self.hub.clients, {})
+
+    async def test_smart_turn_is_the_default_and_builds_the_analyzer(self):
+        from sidevoice.app import turn_stop_strategy
+        from sidevoice.language_settings import LanguageSettings, mic_settings
+        from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
+        from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
+        mic, problem = mic_settings(LanguageSettings(), {})
+        self.assertIsNone(problem)
+        self.assertEqual(mic.turn_end_mode, 'smart_turn')
+        strategy = turn_stop_strategy(mic, {})
+        self.assertIsInstance(strategy, TurnAnalyzerUserTurnStopStrategy)
+        self.assertFalse(strategy.wait_for_transcript)
+        self.assertEqual(strategy._turn_analyzer.params.stop_secs, 3.0)
+        timer, _ = mic_settings(LanguageSettings(), {'turn_end_mode': 'timer', 'user_speech_timeout': 4})
+        self.assertIsInstance(turn_stop_strategy(timer, {}), SpeechTimeoutUserTurnStopStrategy)
+
+    async def test_invalid_device_settings_fall_back_to_the_room_defaults(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'vad_confidence': 5}})
+        error = await self.received(socket, 'error')
+        self.assertIn('Ajustes de micrófono no válidos', error['data']['message'])
+        self.assertEqual(client.mic_settings['vad_confidence'], 0.6)
+        self.assertEqual(client.mic_settings['turn_end_mode'], 'smart_turn')
+        await self.leave(socket, task)
+
+    async def test_incompatible_runtime_is_rejected_but_the_call_stays(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'mic': TIMER_HELLO['mic'],
+                                                'transcription': {'model': 'server-whisper', 'device': 'cuda'}})
+        error = await self.received(socket, 'error')
+        self.assertIn('no compatible', error['data']['message'])
+        self.assertTrue(client.connected)
+        # The rejected runtime never overrides what the room resolved.
+        self.assertEqual((client.transcription['model'], client.transcription['device']), ('onnx-community/whisper-tiny', 'auto'))
+        await self.leave(socket, task)
+
+    async def test_openai_provider_is_built_from_the_saved_key(self):
+        socket = FakeWebSocket()
+        choice = {'provider': 'openai', 'available': True, 'model': 'gpt-4o-transcribe', 'reason': 'explicit'}
+        with patch('sidevoice.app.transcription.resolve', return_value=choice), \
+                patch('sidevoice.transcription.stored_key', return_value='sk-test-not-used'):
+            task, client = await self.join(socket)
+            self.assertEqual(client.stt.provider.kind, 'openai')
+            self.assertEqual(client.stt.provider.model, 'gpt-4o-transcribe')
+            await self.leave(socket, task)
+
+    async def test_openai_without_key_fails_before_accepting_audio(self):
+        from sidevoice.app import browser_call
+        socket = FakeWebSocket()
+        choice = {'provider': 'openai', 'available': False, 'model': 'gpt-4o-transcribe'}
+        with patch('sidevoice.app.transcription.resolve', return_value=choice):
+            await browser_call(socket)
+        error = json.loads(socket.sent.get_nowait())
+        self.assertEqual(error['type'], 'error')
+        self.assertIn('clave de API', error['data']['message'])
+        self.assertEqual(socket.application_state, WebSocketState.DISCONNECTED)
+
+    # ----- what a turn does, whatever closed it -----
+
+    def voice(self, results, session_id='s1'):
+        from sidevoice.app import VoiceCall
+        from sidevoice.room import RoomClient
+        from sidevoice.language_settings import MicSettings
+        sent = []
+        client = RoomClient(session_id, self.hub)
+        client.connected = True
+        voice = VoiceCall(client, FakeTranscriber(results), sent.append, mic=MicSettings(),
+                          choice={'provider': 'browser', 'model': 'onnx-community/whisper-tiny', 'reason': 'explicit'},
+                          runtime={'model': 'onnx-community/whisper-tiny', 'device': 'webgpu'})
+        return voice, client, sent
+
+    async def test_a_finished_turn_is_transcribed_once_and_delivered(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript('Hola desde el navegador', metrics={'audio_ms': 850, 'recognition_ms': 120})])
+        voice.turn_started()
+        # Starting to speak also cancels this browser's own pending audio, like everyone else's.
+        self.assertEqual([m['type'] for m in sent], ['voice-cancel', 'voice-user-turn'])
+        self.assertEqual(sent[1]['data'], {'phase': 'started', 'revision': 1, 'thread_id': 'thread-a'})
+        self.assertTrue(client.speaking)
+        await voice.turn_stopped()
+        phases = [m['data']['phase'] for m in sent if m['type'] == 'voice-user-turn']
+        self.assertEqual(phases, ['started', 'finished'])
+        finished = [m for m in sent if m['type'] == 'voice-user-turn'][-1]['data']
+        self.assertEqual((finished['text'], finished['revision']), ('Hola desde el navegador', 1))
+        rows = self.hub.journal.history('thread-a')
+        self.assertEqual(rows[-1]['text'], 'Hola desde el navegador')
+        self.assertEqual(client.latency.turns[('thread-a', 1)]['input_ms'], {'audio_ms': 850, 'recognition_ms': 120})
+        self.assertEqual((client.input_stats['turns'], client.input_stats['recognition_ms'], client.input_stats['pending']), (1, 120, 0))
+        self.assertFalse(client.speaking)
+        self.assertEqual(voice.transcriber.calls, 1)
+
+    async def test_a_model_switch_in_the_browser_updates_what_the_room_reports(self):
+        voice, client, sent = self.voice([])
+        voice.browser_message({'type': 'voice-stt-ready', 'data': {'session_id': client.id, 'model': 'onnx-community/whisper-small', 'device': 'webgpu'}})
+        self.assertEqual(client.transcription['model'], 'onnx-community/whisper-small')
+        voice.browser_message({'type': 'voice-stt-ready', 'data': {'session_id': 'other', 'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}})
+        self.assertEqual(client.transcription['model'], 'onnx-community/whisper-small')
+        voice.browser_message({'type': 'voice-stt-ready', 'data': {'session_id': client.id, 'model': 'server-whisper', 'device': 'cuda'}})
+        self.assertEqual(sent[-1]['type'], 'error')
+        self.assertEqual(client.transcription['model'], 'onnx-community/whisper-small')
+
+    async def test_empty_failed_or_cancelled_turns_are_not_delivered(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript(''), RuntimeError('worker died'), Transcript('Descarta esto')])
+        for expectation in ('empty', 'failed', 'cancelled'):
+            del sent[:]
+            voice.turn_started()
+            if expectation == 'cancelled':
+                client.cancelled_turn = client.turn_revision
+            await voice.turn_stopped()
+            outcome = [m for m in sent if m['type'] == 'voice-user-turn'][-1]['data']
+            self.assertEqual(outcome['phase'], 'cancelled', expectation)
+            self.assertFalse(client.speaking, expectation)
+        self.assertEqual(self.hub.journal.history('thread-a'), [])
+        errors = [m for m in sent if m['type'] == 'error']
+        self.assertEqual(errors, [])
+        self.assertIn('worker died', client.error)
+
+    async def test_turns_are_delivered_in_the_order_they_were_spoken(self):
+        from sidevoice.transcribers import Transcript
+        async def slow():
+            await asyncio.sleep(0.05)
+            return Transcript('Primera')
+        voice, client, sent = self.voice([slow, Transcript('Segunda')])
+        voice.turn_started(); first = voice.turn_stopped()
+        voice.turn_started(); second = voice.turn_stopped()
+        await asyncio.gather(first, second)
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Primera', 'Segunda'])
+        self.assertEqual([r['revision'] for r in self.hub.journal.history('thread-a')], [1, 2])
+        self.assertFalse(client.speaking)
+
+    # ----- several browsers -----
 
     async def test_two_devices_stay_in_the_room_and_neither_ends_the_other(self):
         first_socket, second_socket = FakeWebSocket(), FakeWebSocket()
@@ -108,8 +274,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(first_socket.application_state, WebSocketState.CONNECTED)
 
         # A microphone turn on one device moves the room's epoch on both.
-        second_socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(
-            {'type': 'voice-input-start', 'data': {'session_id': second.id, 'turn_id': 'turn-1'}})})
+        second.voice.turn_started()
         self.assertEqual((await self.received(second_socket, 'voice-cancel'))['data'],
                          {'session_id': second.id, 'revision': 1})
         self.assertEqual((await self.received(first_socket, 'voice-cancel'))['data'],
@@ -118,15 +283,12 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(first.turn_revision, 0)
 
         # One device leaving takes nothing else with it.
-        first_socket.incoming.put_nowait({'type': 'websocket.disconnect'})
-        await asyncio.wait_for(first_task, 2)
+        await self.leave(first_socket, first_task)
         self.assertFalse(first.connected)
         self.assertTrue(second.connected)
         self.assertEqual(list(self.hub.clients), [second.id])
         self.assertEqual(self.hub.revision, 1)
-
-        second_socket.incoming.put_nowait({'type': 'websocket.disconnect'})
-        await asyncio.wait_for(second_task, 2)
+        await self.leave(second_socket, second_task)
         self.assertEqual(self.hub.clients, {})
 
     async def test_a_browser_over_the_limit_is_refused_without_disturbing_the_room(self):
@@ -143,56 +305,8 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
         self.assertTrue(all(client.connected for _, _, client in joined))
         for socket, task, _ in joined:
-            socket.incoming.put_nowait({'type': 'websocket.disconnect'})
-            await asyncio.wait_for(task, 2)
+            await self.leave(socket, task)
 
-    async def test_incompatible_runtime_is_rejected(self):
-        from sidevoice.app import browser_call
-        socket = FakeWebSocket();task = asyncio.create_task(browser_call(socket))
-        session_id = (await self.received(socket, 'voice-session'))['data']['session_id']
-        socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps({'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'server-whisper', 'device': 'cuda'}})})
-        error = await self.received(socket, 'error')
-        self.assertIn('no compatible', error['data']['message'])
-        socket.incoming.put_nowait({'type': 'websocket.disconnect'});await asyncio.wait_for(task, 2)
-
-    async def test_model_switch_cancels_open_turn_without_error(self):
-        from sidevoice.app import browser_call
-        socket = FakeWebSocket(); task = asyncio.create_task(browser_call(socket))
-        session_id = (await self.received(socket, 'voice-session'))['data']['session_id']
-        for message in [
-            {'type': 'voice-input-start', 'data': {'session_id': session_id, 'turn_id': 'turn-old'}},
-            {'type': 'voice-input-cancel', 'data': {'session_id': session_id, 'turn_id': 'turn-old'}},
-            {'type': 'voice-stt-ready', 'data': {'session_id': session_id, 'model': 'onnx-community/whisper-small', 'device': 'webgpu'}},
-        ]:
-            socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(message)})
-        phases = []
-        while len(phases) < 2:
-            phases.append((await self.received(socket, 'voice-user-turn'))['data']['phase'])
-        self.assertEqual(phases, ['started', 'cancelled'])
-        self.assertEqual(self.hub.journal.history('thread-a'), [])
-        await self.settled()
-        self.assertEqual(self.hub.snapshot(session_id)['call']['transcription']['model'], 'onnx-community/whisper-small')
-        socket.incoming.put_nowait({'type': 'websocket.disconnect'}); await asyncio.wait_for(task, 2)
-
-    async def test_openai_provider_routes_to_cloud_pipeline(self):
-        from sidevoice.app import browser_call
-        socket = FakeWebSocket()
-        choice = {'provider': 'openai', 'available': True, 'model': 'gpt-4o-transcribe'}
-        with patch('sidevoice.app.transcription.resolve', return_value=choice), patch('sidevoice.app.openai_call', new_callable=AsyncMock) as cloud:
-            await browser_call(socket)
-            cloud.assert_awaited_once()
-            self.assertIs(cloud.await_args.args[0], socket)
-
-    async def test_openai_without_key_fails_before_accepting_audio(self):
-        from sidevoice.app import browser_call
-        socket = FakeWebSocket()
-        choice = {'provider': 'openai', 'available': False, 'model': 'gpt-4o-transcribe'}
-        with patch('sidevoice.app.transcription.resolve', return_value=choice):
-            await browser_call(socket)
-        error = json.loads(socket.sent.get_nowait())
-        self.assertEqual(error['type'], 'error')
-        self.assertIn('clave de API', error['data']['message'])
-        self.assertEqual(socket.application_state, WebSocketState.DISCONNECTED)
 
 if __name__ == '__main__':
     import unittest; unittest.main()

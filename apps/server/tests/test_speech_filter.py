@@ -11,10 +11,26 @@ import wave
 
 import numpy as np
 
-try:
-    from .speech_filter import SegmentSpeechGate, FilteredOpenAISTTService, unreliable_transcription
-except ImportError:
-    from sidevoice.speech_filter import SegmentSpeechGate, FilteredOpenAISTTService, unreliable_transcription
+from sidevoice.speech_filter import SegmentSpeechGate, unreliable_transcription
+from sidevoice.transcribers import Transcript, TurnTranscriber
+
+
+class FakeProvider:
+    def __init__(self, result):
+        self.result, self.received = result, []
+
+    async def transcribe(self, wav):
+        self.received.append(wav)
+        return self.result
+
+
+def turn_transcriber(provider, **kwargs):
+    service = TurnTranscriber(provider, **kwargs)
+    service._sample_rate = 16000
+    service._audio_buffer_size_1s = 32000
+    service._record_stt_audio_usage = lambda pcm: None
+    service.emit_stt_usage_metrics = AsyncMock()
+    return service
 
 
 def wav(samples, rate=16000):
@@ -86,55 +102,64 @@ class SpeechFilterTests(unittest.TestCase):
         from sidevoice.speech_filter import SpeechEvidence
         async def run():
             gate = SimpleNamespace(assess=lambda audio: SpeechEvidence(True, 'speech', 128, .8))
-            service = FilteredOpenAISTTService(api_key='test-not-used', speech_gate=gate)
-            response = SimpleNamespace(text='Sorry', logprobs=[{'logprob': -4}])
-            with patch('pipecat.services.openai.stt.OpenAISTTService._transcribe',
-                       new_callable=AsyncMock, return_value=response):
-                result = await service._transcribe(b'not-stored')
+            service = turn_transcriber(FakeProvider(Transcript('Sorry', confidence=-4)), speech_gate=gate)
+            service._turn_audio.extend(b'\0\0' * 1600)
+            result = await service.transcribe_turn()
             self.assertEqual(result.text, '')
             self.assertEqual(service.filter_stats['recent_segments'], [{
                 'speech_ms': 128, 'peak_probability': .8,
                 'mean_logprob': -4, 'decision': 'low_confidence'}])
         asyncio.run(run())
 
-    def test_rejected_audio_never_calls_cloud(self):
+    def test_rejected_audio_never_reaches_the_provider(self):
         async def run():
-            service = FilteredOpenAISTTService(api_key='test-not-used', speech_gate=self.gate)
-            with patch('pipecat.services.openai.stt.OpenAISTTService._transcribe', new_callable=AsyncMock) as cloud:
-                result = await service._transcribe(wav(np.zeros(32000)))
-                self.assertEqual(result.text, '')
-                cloud.assert_not_awaited()
+            provider = FakeProvider(Transcript('never'))
+            service = turn_transcriber(provider, speech_gate=self.gate)
+            service._turn_audio.extend(np.zeros(16000, dtype='<i2').tobytes())
+            result = await service.transcribe_turn()
+            self.assertEqual(result.text, '')
+            self.assertEqual(provider.received, [])
+            self.assertEqual(service.filter_stats['audio_rejected'], 1)
         asyncio.run(run())
 
     def test_short_vad_pauses_are_batched_into_one_complete_turn(self):
         async def run():
-            service = FilteredOpenAISTTService(
-                api_key='test-not-used', speech_gate=self.gate,
-                turn_silence_seconds=0.01,
-            )
-            service._sample_rate = 16000
-            service._audio_buffer_size_1s = 32000
-            service._record_stt_audio_usage = lambda pcm: None
-            service.emit_stt_usage_metrics = AsyncMock()
+            provider = FakeProvider(Transcript('Hola, sigo hablando'))
+            service = turn_transcriber(provider, speech_gate=SimpleNamespace(
+                assess=lambda audio: __import__('sidevoice.speech_filter', fromlist=['SpeechEvidence']).SpeechEvidence(True, 'speech', 500, .95)))
             first = np.full(1600, 1000, dtype='<i2').tobytes()
             second = np.full(1600, 2000, dtype='<i2').tobytes()
 
+            await service._handle_user_started_speaking(None)
             service._audio_buffer.extend(first)
             await service._handle_user_stopped_speaking(None)
+            self.assertIsNone(service.provider.received or None)
             await service._handle_user_started_speaking(None)
-            await asyncio.sleep(0.02)
-            self.assertTrue(service._segment_queue.empty())
-
             service._audio_buffer.extend(second)
             await service._handle_user_stopped_speaking(None)
-            audio = await asyncio.wait_for(service._segment_queue.get(), 0.1)
-            with wave.open(BytesIO(audio), 'rb') as stream:
+
+            result = await service.transcribe_turn()
+            self.assertEqual(result.text, 'Hola, sigo hablando')
+            self.assertEqual(len(provider.received), 1)
+            with wave.open(BytesIO(provider.received[0]), 'rb') as stream:
                 content = stream.readframes(stream.getnframes())
             self.assertEqual(content[:len(first)], first)
             self.assertEqual(content[len(first):len(first) + len(second)], second)
             self.assertEqual(len(content), len(first) + len(second) + 16000)
             service.emit_stt_usage_metrics.assert_awaited_once()
-            await service._cancel_turn_flush()
+            self.assertIsNone(await service.transcribe_turn())
+        asyncio.run(run())
+
+    def test_a_turn_that_went_idle_mid_speech_still_uses_the_live_buffer(self):
+        async def run():
+            provider = FakeProvider(Transcript('Corte'))
+            service = turn_transcriber(provider, speech_gate=SimpleNamespace(
+                assess=lambda audio: __import__('sidevoice.speech_filter', fromlist=['SpeechEvidence']).SpeechEvidence(True, 'speech', 500, .95)))
+            await service._handle_user_started_speaking(None)
+            service._audio_buffer.extend(np.full(1600, 500, dtype='<i2').tobytes())
+            result = await service.transcribe_turn()
+            self.assertEqual(result.text, 'Corte')
+            self.assertEqual(len(service._audio_buffer), 0)
         asyncio.run(run())
 
 

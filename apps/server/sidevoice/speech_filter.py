@@ -1,22 +1,17 @@
-"""Validate segmented microphone audio before sending it to cloud STT.
+"""Validate a turn's audio and text before they reach the agent, whatever transcribes it.
 
 This is separate from the fast barge-in VAD: no microphone muting, transcript
 deduplication or word blacklist. Echo containing real speech still needs AEC.
 """
-import asyncio
 from dataclasses import dataclass
 from io import BytesIO
 from math import gcd
-from types import SimpleNamespace
 import wave
 import unicodedata
 
 import numpy as np
 from scipy.signal import resample_poly
-from loguru import logger
-from pipecat.audio.utils import pcm_to_wav
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.services.openai.stt import OpenAISTTService
 
 
 @dataclass(frozen=True)
@@ -72,16 +67,19 @@ class SegmentSpeechGate:
         return SpeechEvidence(True, 'speech', speech_ms, peak)
 
 
-def unreliable_transcription(response, *, threshold=-2.0):
+def unreliable_text(text, confidence, *, threshold=-2.0):
     """Reject uncertain text, with a more tolerant threshold for short commands.
 
     Logprobs measure decoder certainty, not whether a person actually spoke.
     They are a secondary signal; the audio gate is the primary defense.
     """
-    if len(response.text.split()) <= 2:
+    if len(text.split()) <= 2:
         threshold = -3.0
-    confidence = transcription_confidence(response)
     return confidence is not None and confidence < threshold
+
+
+def unreliable_transcription(response, *, threshold=-2.0):
+    return unreliable_text(response.text, transcription_confidence(response), threshold=threshold)
 
 
 def transcription_confidence(response):
@@ -101,124 +99,3 @@ def isolated_foreign_script(text):
     """
     letters = [char for char in text if char.isalpha()]
     return bool(letters) and not any('LATIN' in unicodedata.name(char, '') for char in letters)
-
-
-class FilteredOpenAISTTService(OpenAISTTService):
-    async def _request_transcription(self, audio):
-        # Pipecat 1.10's parent asserts a language; omit it for API auto-detection.
-        if self._settings.language is not None:
-            return await super()._transcribe(audio)
-        model = self._settings.model
-        kwargs = {'file': ('audio.wav', audio, 'audio/wav'), 'model': model}
-        if self._include_prob_metrics:
-            if model.startswith('whisper'):
-                kwargs['response_format'] = 'verbose_json'
-            elif 'diarize' not in model:
-                kwargs.update(response_format='json', include=['logprobs'])
-        if self._settings.prompt:
-            kwargs['prompt'] = self._settings.prompt
-        return await self._client.audio.transcriptions.create(**kwargs)
-
-    def __init__(self, *, speech_gate=None, turn_silence_seconds=2.5, **kwargs):
-        kwargs.setdefault('include_prob_metrics', True)
-        super().__init__(**kwargs)
-        self.speech_gate = speech_gate or SegmentSpeechGate()
-        self.filter_stats = {'audio_rejected': 0, 'confidence_rejected': 0, 'submitted': 0, 'script_rejected': 0}
-        # Pipecat's segmented STT normally uploads every VAD fragment. A short
-        # hesitation therefore deprived OpenAI of the rest of the sentence and
-        # made automatic language detection unstable. Preserve those fragments
-        # and upload once, at the same silence boundary used by the user turn.
-        self._turn_silence_seconds = max(0, float(turn_silence_seconds))
-        self._turn_audio = bytearray()
-        self._turn_flush_task = None
-
-    async def _cancel_turn_flush(self):
-        task, self._turn_flush_task = self._turn_flush_task, None
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-    async def _handle_user_started_speaking(self, frame):
-        await super()._handle_user_started_speaking(frame)
-        await self._cancel_turn_flush()
-
-    async def _handle_user_stopped_speaking(self, frame):
-        # Deliberately do not call SegmentedSTTService's stop handler: that
-        # would queue this VAD fragment as a separate OpenAI request.
-        self._user_speaking = False
-        if not self.is_usable:
-            self._audio_buffer.clear()
-            self._turn_audio.clear()
-            await self._cancel_turn_flush()
-            return
-        self._turn_audio.extend(self._audio_buffer)
-        self._audio_buffer.clear()
-        await self._cancel_turn_flush()
-        self._turn_flush_task = asyncio.create_task(self._flush_after_turn_silence())
-
-    async def _flush_after_turn_silence(self):
-        try:
-            await asyncio.sleep(self._turn_silence_seconds)
-            if not self._user_speaking:
-                await self._flush_complete_turn()
-        finally:
-            if self._turn_flush_task is asyncio.current_task():
-                self._turn_flush_task = None
-
-    async def _flush_complete_turn(self):
-        if not self._turn_audio:
-            return
-        pcm = bytes(self._turn_audio) + self._trailing_silence()
-        self._turn_audio.clear()
-        self._record_stt_audio_usage(pcm)
-        await self.emit_stt_usage_metrics()
-        audio = pcm_to_wav(pcm, self.sample_rate) if self.wants_wav_segments else pcm
-        await self._segment_queue.put(audio)
-
-    async def stop(self, frame):
-        await self._cancel_turn_flush()
-        if self._audio_buffer:
-            self._turn_audio.extend(self._audio_buffer)
-            self._audio_buffer.clear()
-        await self._flush_complete_turn()
-        await super().stop(frame)
-
-    async def cancel(self, frame):
-        await self._cancel_turn_flush()
-        self._turn_audio.clear()
-        self._audio_buffer.clear()
-        await super().cancel(frame)
-
-    async def _transcribe(self, audio):
-        evidence = await asyncio.to_thread(self.speech_gate.assess, audio)
-        # Only acoustic/decoder measurements: no waveform or transcript archive.
-        measurement = {'speech_ms': evidence.speech_ms,
-                       'peak_probability': round(evidence.peak_probability, 4),
-                       'mean_logprob': None, 'decision': evidence.reason}
-        history = self.filter_stats.setdefault('recent_segments', [])
-        history.append(measurement)
-        del history[:-20]
-        if not evidence.accepted:
-            self.filter_stats['audio_rejected'] += 1
-            logger.info('STT ignored non-speech segment: speech_ms={} peak_probability={:.3f}',
-                        evidence.speech_ms, evidence.peak_probability)
-            return SimpleNamespace(text='')
-        self.filter_stats['submitted'] += 1
-        response = await self._request_transcription(audio)
-        measurement['mean_logprob'] = transcription_confidence(response)
-        measurement['decision'] = 'accepted'
-        if isolated_foreign_script(response.text) and self._settings.language != 'hi':
-            measurement['decision'] = 'isolated_foreign_script'
-            self.filter_stats['script_rejected'] += 1
-            logger.info('STT ignored isolated non-Latin text: {}', measurement)
-            return SimpleNamespace(text='')
-        if unreliable_transcription(response):
-            measurement['decision'] = 'low_confidence'
-            self.filter_stats['confidence_rejected'] += 1
-            logger.info('STT ignored a low-confidence transcript')
-            return SimpleNamespace(text='')
-        logger.info('STT segment evidence: {}', measurement)
-        return response

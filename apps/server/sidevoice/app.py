@@ -8,6 +8,8 @@ from loguru import logger
 from fastapi import HTTPException, WebSocket
 
 from . import transcription
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import OutputTransportMessageUrgentFrame
@@ -16,8 +18,10 @@ from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
-from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
 from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
+from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from .browser_socket import BrowserFrameSerializer, session_message
@@ -25,6 +29,9 @@ from .presentation import (hub, RoomClient, NoInference, mount_presentation,
                           PresentationGate, PresentationPlayback, require_same_origin)
 from .connector_control import mount_connector_control
 from .paths import REPOSITORY_ROOT
+from .transcribers import TurnTranscriber
+
+HELLO_TIMEOUT = 10.0
 
 
 async def room_is_full(websocket):
@@ -37,138 +44,6 @@ async def room_is_full(websocket):
     return True
 
 
-async def browser_text_call(websocket, settings=None):
-    """Local STT call: microphone audio never leaves the page; only turn control and text arrive."""
-    if settings is None:
-        from .language_settings import load_settings
-        settings = load_settings()
-    serializer = BrowserFrameSerializer()
-    transcription_choice = transcription.resolve(settings)
-    outbox = asyncio.Queue()
-    turns = {}
-
-    async def deliver():
-        while True:
-            await websocket.send_text(json.dumps(await outbox.get()))
-
-    send = outbox.put_nowait
-    # Joining the room is independent of whether an agent has joined it, and of
-    # whether other browsers are already in it.
-    call = RoomClient(str(uuid.uuid4()), hub)
-    call.transcription = transcription_choice
-    call.input_stats = {'transport': 'browser-text', 'turns': 0, 'audio_ms': 0,
-                        'recognition_ms': 0, 'pending': 0}
-    call.on_browser_event = send
-    call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
-    call.audio_grace_seconds = settings.audio_grace_seconds
-    sender = asyncio.create_task(deliver())
-    call.connected = True
-    await websocket.send_text(json.dumps(session_message(call.id, serializer)))
-
-    def payload(message):
-        data = message.get('data')
-        if not isinstance(data, dict) or data.get('session_id') != call.id:
-            raise ValueError('Mensaje de transcripción para otra sesión.')
-        return data
-
-    async def finish(turn_id, *, failed=None):
-        turn = turns.pop(turn_id, None)
-        if not turn:
-            return
-        current = turn['revision'] == call.turn_revision
-        text = turn.get('text', '').strip()
-        cancelled = bool(failed or getattr(call, 'cancelled_turn', None) == turn['revision'] or not text)
-        send({'type': 'user-stopped-speaking', 'data': {}})
-        send({'type': 'voice-user-turn', 'data': {
-            'phase': 'cancelled' if cancelled else 'finished',
-            'revision': turn['revision'], 'turn_id': turn_id,
-            'thread_id': turn['target'].get('thread_id'), 'text': text,
-        }})
-        # The browser must create the final bubble before its receipt arrives.
-        if not cancelled:
-            call.enqueue_input(text, target=turn['target'], revision=turn['revision'])
-        if failed:
-            call.error = failed
-            send({'type': 'error', 'data': {'message': failed}})
-        if current:
-            await call.finish_user_turn()
-        call.input_stats['pending'] = len(turns)
-
-    try:
-        while True:
-            event = await websocket.receive()
-            if event.get('type') == 'websocket.disconnect':
-                break
-            if event.get('bytes') is not None:
-                send({'type': 'error', 'data': {
-                    'message': 'El audio debe transcribirse en el navegador; el servidor rechazó PCM.'
-                }})
-                continue
-            try:
-                message = json.loads(event.get('text') or '{}')
-            except ValueError:
-                continue
-            kind = message.get('type')
-            if kind == 'client-ready':
-                continue
-            try:
-                data = payload(message)
-                if kind == 'voice-stt-ready':
-                    model, device = data.get('model'), data.get('device')
-                    models = {item['id'] for item in transcription.PROVIDERS['browser']['models']}
-                    if model not in models or device not in {'webgpu', 'wasm'}:
-                        raise ValueError('Motor de transcripción del navegador no compatible.')
-                    call.transcription = {**transcription_choice, 'model': model, 'device': device}
-                elif kind == 'voice-input-start':
-                    turn_id = data.get('turn_id')
-                    if not isinstance(turn_id, str) or not turn_id or len(turn_id) > 100:
-                        raise ValueError('Identificador de turno inválido.')
-                    if turn_id in turns:
-                        continue
-                    if turns:
-                        raise ValueError('Ya hay una intervención abierta.')
-                    call.user_started()
-                    turns[turn_id] = {'revision': call.turn_revision, 'target': dict(call.turn_target),
-                                      'sequence': 0, 'text': ''}
-                    call.input_stats['pending'] = 1
-                    send({'type': 'user-started-speaking', 'data': {}})
-                    send({'type': 'voice-user-turn', 'data': {
-                        'phase': 'started', 'revision': call.turn_revision, 'turn_id': turn_id,
-                        'thread_id': call.turn_target.get('thread_id'),
-                    }})
-                elif kind == 'voice-input-transcript':
-                    turn = turns.get(data.get('turn_id'))
-                    sequence, text = data.get('sequence'), data.get('text')
-                    if not turn or not isinstance(sequence, int) or sequence <= turn['sequence']:
-                        raise ValueError('Resultado de transcripción obsoleto.')
-                    if not isinstance(text, str) or len(text) > 12000:
-                        raise ValueError('Transcripción inválida o demasiado larga.')
-                    turn['sequence'], turn['text'] = sequence, text
-                    metrics = data.get('metrics') if isinstance(data.get('metrics'), dict) else {}
-                    call.input_stats.update({
-                        'audio_ms': max(0, int(metrics.get('audio_ms') or 0)),
-                        'recognition_ms': max(0, int(metrics.get('recognition_ms') or 0)),
-                    })
-                    call.latency.input(turn['target'].get('thread_id'), turn['revision'], metrics)
-                    call.input_stats['turns'] += 1
-                elif kind == 'voice-input-end':
-                    turn = turns.get(data.get('turn_id'))
-                    if not turn or data.get('sequence') != turn['sequence']:
-                        raise ValueError('La transcripción no está completa.')
-                    await finish(data['turn_id'])
-                elif kind == 'voice-input-cancel':
-                    await finish(data.get('turn_id'))
-                elif kind == 'voice-input-error':
-                    await finish(data.get('turn_id'), failed=str(data.get('error') or 'Falló la transcripción local.'))
-            except (TypeError, ValueError) as error:
-                send({'type': 'error', 'data': {'message': str(error)}})
-    finally:
-        for turn_id in list(turns):
-            await finish(turn_id, failed='La llamada terminó durante la transcripción.')
-        # Only this client leaves; the room and everyone else in it carry on.
-        call.disconnect()
-        sender.cancel()
-
 def audio_idle_timeout(config):
     try:
         return max(0.0, float(config.get('VOICE_AUDIO_IDLE_TIMEOUT', '5.0')))
@@ -176,32 +51,157 @@ def audio_idle_timeout(config):
         return 5.0
 
 
-async def openai_call(websocket, settings, config):
-    """Cloud STT call: PCM reaches this server and OpenAI; TTS still plays in the browser."""
+def browser_runtime(data):
+    """The local Whisper runtime a browser reports, or None when it reports none or an unsupported one."""
+    if not isinstance(data, dict):
+        return None
+    model, device = data.get('model'), data.get('device')
+    models = {item['id'] for item in transcription.PROVIDERS['browser']['models']}
+    if model not in models or device not in {'webgpu', 'wasm'}:
+        raise ValueError('Motor de transcripción del navegador no compatible.')
+    return {'model': model, 'device': device}
+
+
+async def client_hello(websocket):
+    """The browser's first message names the device's microphone settings and its transcription runtime."""
+    try:
+        event = await asyncio.wait_for(websocket.receive(), HELLO_TIMEOUT)
+    except asyncio.TimeoutError:
+        return {}
+    if event.get('type') == 'websocket.disconnect':
+        return None
+    try:
+        message = json.loads(event.get('text') or '{}')
+    except ValueError:
+        return {}
+    data = message.get('data') if isinstance(message, dict) and isinstance(message.get('data'), dict) else {}
+    return data
+
+
+def turn_stop_strategy(mic, config):
+    """How a device's turn is declared over: a fixed silence, or smart-turn deciding from the audio."""
+    if mic.turn_end_mode == 'smart_turn':
+        analyzer = LocalSmartTurnAnalyzerV3(sample_rate=16000, params=SmartTurnParams(stop_secs=mic.smart_turn_max_silence))
+        return TurnAnalyzerUserTurnStopStrategy(turn_analyzer=analyzer, wait_for_transcript=False)
+    return SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=mic.user_speech_timeout, wait_for_transcript=False)
+
+
+def vad_analyzer(mic, config):
+    # Both strategies want the pause reported early; they decide how long it may last.
+    return SileroVADAnalyzer(params=VADParams(
+        start_secs=float(config.get('VOICE_VAD_START_SECS', '0.08')),
+        stop_secs=float(config.get('VOICE_VAD_STOP_SECS', '0.2')),
+        confidence=mic.vad_confidence,
+        min_volume=mic.vad_min_volume,
+    ))
+
+
+class VoiceCall:
+    """What one browser's turns do to the room: open the epoch, transcribe once closed, deliver in order.
+
+    The pipeline reports turn boundaries; this object owns everything after them,
+    so the same flow serves any turn-end strategy and any transcription provider.
+    """
+
+    def __init__(self, call, transcriber, send, *, mic, choice, runtime=None, audio_grace_seconds=2.0):
+        self.call, self.transcriber, self.send = call, transcriber, send
+        self.finishing = set()
+        self.lock = asyncio.Lock()
+        call.stt = transcriber
+        call.voice = self
+        call.transcription = {**choice, **(runtime or {})}
+        call.mic_settings = mic.model_dump()
+        call.input_stats = {'transport': 'pcm', 'turns': 0, 'audio_ms': 0, 'recognition_ms': 0, 'pending': 0}
+        call.on_browser_event = send
+        call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
+        call.audio_grace_seconds = audio_grace_seconds
+        transcriber.on_message = self.browser_message
+
+    def browser_message(self, message):
+        """A browser that switched its local Whisper says so; the room only records what it can run."""
+        if not isinstance(message, dict) or message.get('type') != 'voice-stt-ready':
+            return
+        data = message.get('data') if isinstance(message.get('data'), dict) else {}
+        if data.get('session_id') != self.call.id:
+            return
+        try:
+            runtime = browser_runtime(data)
+        except ValueError as error:
+            self.send({'type': 'error', 'data': {'message': str(error)}})
+            return
+        if runtime:
+            self.call.transcription = {**self.call.transcription, **runtime}
+
+    def turn_started(self):
+        call = self.call
+        call.user_started()
+        call.input_stats['pending'] = 1
+        # The transport already tells the browser about speaking state; this names the turn.
+        self.send({'type': 'voice-user-turn', 'data': {
+            'phase': 'started', 'revision': call.turn_revision,
+            'thread_id': call.turn_target.get('thread_id'),
+        }})
+
+    def turn_stopped(self):
+        task = asyncio.create_task(self.finish_turn(self.call.turn_revision, dict(self.call.turn_target)))
+        self.finishing.add(task)
+        task.add_done_callback(self.finishing.discard)
+        return task
+
+    async def finish_turn(self, revision, target):
+        call = self.call
+        # Turns are transcribed and delivered in the order they were spoken.
+        async with self.lock:
+            text, failed, metrics = '', None, {}
+            try:
+                result = await self.transcriber.transcribe_turn()
+                if result is not None:
+                    text, metrics = result.text.strip(), dict(result.metrics or {})
+            except Exception as error:
+                failed = 'No se pudo transcribir tu intervención: ' + (str(error) or type(error).__name__)
+            if metrics:
+                call.input_stats.update({
+                    'audio_ms': max(0, int(metrics.get('audio_ms') or 0)),
+                    'recognition_ms': max(0, int(metrics.get('recognition_ms') or 0)),
+                })
+                call.latency.input(target.get('thread_id'), revision, metrics)
+            call.input_stats['turns'] += 1
+            current = revision == call.turn_revision
+            cancelled = bool(failed or call.cancelled_turn == revision or not text)
+            self.send({'type': 'voice-user-turn', 'data': {
+                'phase': 'cancelled' if cancelled else 'finished', 'revision': revision,
+                'thread_id': target.get('thread_id'), 'text': text,
+            }})
+            # The browser must create the final bubble before its receipt arrives.
+            if not cancelled:
+                call.enqueue_input(text, target=target, revision=revision)
+            if failed:
+                call.error = failed
+                self.send({'type': 'error', 'data': {'message': failed}})
+            if current:
+                call.input_stats['pending'] = 0
+                await call.finish_user_turn()
+
+    def close(self):
+        for task in list(self.finishing):
+            task.cancel()
+
+
+async def voice_call(websocket, settings, config, choice, hello):
+    """One pipeline for every call: PCM in, the room's turn detection, and a transcription provider.
+
+    The provider is OpenAI or the browser itself; the pipeline never knows which.
+    """
+    from .language_settings import mic_settings
+    mic, problem = mic_settings(settings, hello.get('mic'))
     serializer = BrowserFrameSerializer()
     transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
         audio_in_enabled=True, serializer=serializer, allowed_origins=[]))
     user, assistant = LLMContextAggregatorPair(LLMContext(), user_params=LLMUserAggregatorParams(
         audio_idle_timeout=audio_idle_timeout(config),
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(
-            start_secs=float(config.get('VOICE_VAD_START_SECS', '0.08')),
-            stop_secs=float(config.get('VOICE_VAD_STOP_SECS', '0.35')),
-            confidence=float(config.get('VOICE_VAD_CONFIDENCE', '0.6')),
-            min_volume=float(config.get('VOICE_VAD_MIN_VOLUME', '0.35')),
-        )),
-        user_turn_strategies=UserTurnStrategies(stop=[
-            SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=settings.user_speech_timeout)
-        ]),
+        vad_analyzer=vad_analyzer(mic, config),
+        user_turn_strategies=UserTurnStrategies(start=[VADUserTurnStartStrategy()], stop=[turn_stop_strategy(mic, config)]),
     ))
-    stt, transcription_choice = transcription.build(settings, config)
-    logger.info('Transcription: {} · {} ({})', transcription_choice['provider'],
-                transcription_choice['model'], transcription_choice['reason'])
-    gate, playback = PresentationGate(), PresentationPlayback()
-    pipeline = Pipeline([transport.input(), stt, user, NoInference(), gate,
-                         transport.output(), playback, assistant])
-    worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=True))
-    runner = WorkerRunner(handle_sigint=False)
-    await runner.add_workers(worker)
     outbox = asyncio.Queue()
     send = outbox.put_nowait
 
@@ -210,42 +210,47 @@ async def openai_call(websocket, settings, config):
             message = await outbox.get()
             await transport.output().send_message(OutputTransportMessageUrgentFrame(message=message))
 
-    call = RoomClient(str(uuid.uuid4()), hub, worker=worker, stt=stt)
+    call = RoomClient(str(uuid.uuid4()), hub)
+    provider = transcription.build(settings, choice, config=config, send=send, session_id=call.id)
+    transcriber = TurnTranscriber(provider, language=None if settings.stt_language == 'auto' else settings.stt_language)
+    runtime, runtime_problem = None, None
+    try:
+        runtime = browser_runtime(hello.get('transcription'))
+    except ValueError as error:
+        runtime_problem = str(error)
+    voice = VoiceCall(call, transcriber, send, mic=mic, choice=choice, runtime=runtime,
+                      audio_grace_seconds=settings.audio_grace_seconds)
     call.mic = serializer
-    call.transcription = transcription_choice
-    call.on_browser_event = send
-    call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
-    call.audio_grace_seconds = settings.audio_grace_seconds
+    problems = [message for message in (problem, runtime_problem) if message]
+    logger.info('Call {}: transcription {} · {} ({}), turn end {}', call.id[:8], choice['provider'],
+                call.transcription.get('model'), choice['reason'], mic.turn_end_mode)
+
+    gate, playback = PresentationGate(), PresentationPlayback()
+    pipeline = Pipeline([transport.input(), transcriber, user, NoInference(), gate,
+                         transport.output(), playback, assistant])
+    worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=True))
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    call.worker = worker
     gate.client = playback.client = call
     sender = asyncio.create_task(deliver())
 
     @user.event_handler('on_user_turn_started')
-    async def presentation_started(aggregator, strategy):
-        call.user_started()
-        send({'type': 'voice-user-turn', 'data': {
-            'phase': 'started', 'revision': call.turn_revision,
-            'thread_id': call.turn_target.get('thread_id'),
-        }})
+    async def turn_started(aggregator, strategy):
+        voice.turn_started()
 
     @user.event_handler('on_user_turn_stopped')
-    async def presentation_stopped(aggregator, strategy, message):
-        call.speaking = False
-        text = str(message.content or '').strip()
-        cancelled = getattr(call, 'cancelled_turn', None) == call.turn_revision or not text
-        send({'type': 'voice-user-turn', 'data': {
-            'phase': 'cancelled' if cancelled else 'finished',
-            'revision': call.turn_revision,
-            'thread_id': call.turn_target.get('thread_id'), 'text': text,
-        }})
-        if not cancelled:
-            call.enqueue_input(text)
-        await call.finish_user_turn()
+    async def turn_stopped(aggregator, strategy, message):
+        voice.turn_stopped()
 
     @transport.event_handler('on_client_connected')
     async def connected(transport, client):
         call.connected = True
         await transport.output().send_message(
             OutputTransportMessageUrgentFrame(message=session_message(call.id, serializer)))
+        # Only now can anything reach the browser: what its hello got wrong goes right after the session.
+        for message in problems:
+            send({'type': 'error', 'data': {'message': message}})
 
     @transport.event_handler('on_client_disconnected')
     async def disconnected(transport, client):
@@ -255,27 +260,28 @@ async def openai_call(websocket, settings, config):
     try:
         await runner.run()
     finally:
+        voice.close()
         call.disconnect()
         sender.cancel()
 
 
 async def browser_call(websocket):
-    """Select the transport from the saved provider for this connection."""
+    """Every browser gets the same call; only the transcription provider comes from the saved settings."""
     from .language_settings import load_settings
     settings = load_settings()
     config = {**dotenv_values(REPOSITORY_ROOT / '.env.voice'), **os.environ}
     if await room_is_full(websocket):
         return
     choice = transcription.resolve(settings, config)
-    if choice['provider'] == 'openai':
-        if not choice.get('available'):
-            await websocket.send_text(json.dumps({'type': 'error', 'data': {
-                'message': 'OpenAI necesita una clave de API antes de conectar.'}}))
-            await websocket.close(code=1008)
-            return
-        await openai_call(websocket, settings, config)
-    else:
-        await browser_text_call(websocket, settings)
+    if choice['provider'] == 'openai' and not choice.get('available'):
+        await websocket.send_text(json.dumps({'type': 'error', 'data': {
+            'message': 'OpenAI necesita una clave de API antes de conectar.'}}))
+        await websocket.close(code=1008)
+        return
+    hello = await client_hello(websocket)
+    if hello is None:
+        return
+    await voice_call(websocket, settings, config, choice, hello)
 
 
 def mount_browser_call(app):
