@@ -92,3 +92,20 @@ test('Alignment validates Unicode offsets, timing bounds, and regex punctuation 
  const range=vm.runInContext("chunkTextRange('Hola (sí).  Hola (sí).','Hola (sí).',10)",s.context);
  assert.equal(range.from,12);assert.equal(range.to,22);
 });
+
+test('Speech leaves through a media element when the context can feed one, so echo cancellation hears it',async()=>{
+ const s=setup();const sink={stream:{id:'sink'}};let played=0,elementSink;
+ s.context.Audio=class{constructor(){this.srcObject=null}async play(){played++}async setSinkId(id){elementSink=id}};
+ s.voice.context=new s.context.AudioContext();s.voice.context.createMediaStreamDestination=()=>sink;
+ await s.voice.unlock();
+ assert.equal(played,1);assert.equal(s.voice.output.element.srcObject,sink.stream);assert.equal(s.voice.destination,sink);
+ let connected;s.voice.context.createBufferSource=()=>{const src={connect(target){connected=target},start(){},stop(){}};return src};
+ const p=s.voice.speak({text:'hello'});const w=s.workers[0],id=w.last.id;
+ w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});
+ assert.equal(connected,sink);
+ assert.equal(s.voice.supportsOutputSelection,true);await s.voice.setOutputDevice('headset');assert.equal(elementSink,'headset');
+ s.voice.cancel();await assert.rejects(p);
+});
+test('Without media-element output the context destination is used, as before',async()=>{
+ const s=setup();await s.voice.unlock();assert.equal(s.voice.output,null);assert.equal(s.voice.destination,s.voice.context.destination);
+});

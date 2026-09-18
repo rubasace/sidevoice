@@ -26,15 +26,27 @@ function chunkTextRange(text,chunk,from=0){
 }
 /* Local synthesis and playout. A canceled job can never emit late audio. */
 class RoomVoice {
- constructor(){this.worker=null;this.context=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default'}
+ constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default'}
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
- async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running')throw Error('Permite reproducir audio en este navegador.')}
- get supportsOutputSelection(){return typeof (this.context||AudioContext.prototype).setSinkId==='function'}
+ async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running')throw Error('Permite reproducir audio en este navegador.');await this.ensureOutput()}
+ /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only
+  * media-element playback is part of the echo-cancellation reference, so this is what lets the
+  * microphone subtract our own voice instead of opening a turn with it. Falls back to the context. */
+ async ensureOutput(){
+  if(this.output||typeof this.context.createMediaStreamDestination!=='function'||typeof Audio==='undefined')return;
+  const sink=this.context.createMediaStreamDestination(),element=new Audio();
+  element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;
+  try{await element.play()}catch{return}
+  this.output={sink,element};
+ }
+ get destination(){return this.output?.sink||this.context.destination}
+ get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
  async setOutputDevice(id){
   await this.unlock();
   if(!this.supportsOutputSelection)throw Error('Este navegador no permite elegir la salida de audio.');
   const selected=id||'default';
-  await this.context.setSinkId(selected==='default'?'':selected);
+  if(typeof this.output?.element?.setSinkId==='function')await this.output.element.setSinkId(selected==='default'?'':selected);
+  else await this.context.setSinkId(selected==='default'?'':selected);
   this.outputDeviceId=selected;return true;
  }
  stopProgress(job){
@@ -64,7 +76,7 @@ class RoomVoice {
   if(d.type==='error')this.fail(Error(d.error));
   if(d.type==='audio'){this.announce('','hidden');
    const buffer=this.context.createBuffer(1,d.samples.length,d.sampleRate);buffer.copyToChannel(d.samples,0);
-   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.context.destination);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
    const start=Math.max(this.context.currentTime+.03,job.end);job.end=start+buffer.duration;job.sources.add(source);
    source.onended=()=>{job.sources.delete(source);if(this.job===job&&job.done&&!job.sources.size)this.complete(job)};
    const range=chunkTextRange(job.text,d.text,job.textCursor);
@@ -91,7 +103,7 @@ class RoomVoice {
     const buffer=await this.context.decodeAudioData(bytes.buffer);
     if(this.job!==job)return;
     clearTimeout(job.timer);
-    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.context.destination);job.sources.add(source);
+    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);job.sources.add(source);
     source.onended=()=>{job.sources.delete(source);if(this.job===job)this.complete(job)};
     const start=this.context.currentTime;
     const aligned=alignedWordCues(text,alignment,buffer.duration);
