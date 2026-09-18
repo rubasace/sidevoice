@@ -90,3 +90,26 @@ class NativeElevenLabsSpeedTest(unittest.IsolatedAsyncioTestCase):
                 timings = audio['timings_ms']
                 self.assertLessEqual(timings['request_to_headers_ms'], timings['request_to_first_chunk_ms'])
                 self.assertLessEqual(timings['request_to_first_chunk_ms'], timings['request_to_complete_ms'])
+
+
+class ElevenLabsVoiceCatalogTest(unittest.TestCase):
+    def test_primary_language_wins_over_multilingual_previews(self):
+        from sidevoice import synthesis
+        voice = synthesis._voice_entry({
+            'voice_id': 'spanish-voice',
+            'name': 'Lucia',
+            'labels': {'language': 'es'},
+            'verified_languages': [{'language': 'en'}, {'language': 'fr'}],
+        })
+        self.assertEqual(voice['languages'], ['es'])
+
+    def test_verified_languages_are_a_fallback_when_primary_is_missing(self):
+        from sidevoice import synthesis
+        voice = synthesis._voice_entry({
+            'voice_id': 'multilingual-voice',
+            'name': 'Polyglot',
+            'verified_languages': [
+                {'language': 'EN-us'}, {'language': 'de_DE'}, {'language': 'en'},
+            ],
+        })
+        self.assertEqual(voice['languages'], ['de', 'en'])

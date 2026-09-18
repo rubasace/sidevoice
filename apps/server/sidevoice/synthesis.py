@@ -157,13 +157,37 @@ async def _voices(http, value):
     return voices
 
 
+def _language_code(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    code = value.strip().lower().replace('_', '-').split('-', 1)[0]
+    return code if code.isalpha() and 2 <= len(code) <= 3 else None
+
+
+def _voice_languages(item):
+    # Prefer the voice's native/primary language. A multilingual voice can have
+    # many verified previews, but that does not make every accent appropriate
+    # as the default choice for every language.
+    labels = item.get('labels') if isinstance(item.get('labels'), dict) else {}
+    primary = _language_code(labels.get('language') or item.get('language'))
+    if primary:
+        return [primary]
+    verified = item.get('verified_languages')
+    languages = {
+        code for entry in verified if isinstance(entry, dict)
+        if (code := _language_code(entry.get('language')))
+    } if isinstance(verified, list) else set()
+    return sorted(languages)
+
+
 def _voice_entry(item):
     voice_id = item.get('voice_id')
     if not isinstance(voice_id, str) or not voice_id:
         return None
     name = item.get('name') or voice_id
     category = item.get('category') or item.get('voice_type')
-    return {'id': voice_id, 'label': name + ((' · ' + category) if category else '')}
+    return {'id': voice_id, 'label': name + ((' · ' + category) if category else ''),
+            'languages': _voice_languages(item)}
 
 
 async def catalog(config=None):

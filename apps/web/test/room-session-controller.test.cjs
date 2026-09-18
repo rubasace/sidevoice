@@ -86,6 +86,22 @@ test('Model descriptions stay out of labels and appear in optional tooltips',()=
  assert.equal(s.run("$('default-model-info').dataset.tooltip"),'Rápido');
  assert.equal(s.run("$('default-model-info').hidden"),false);
 });
+test('ElevenLabs voices are filtered by primary language until all voices are requested',()=>{
+ const s=setup({strictDOM:true});
+ s.run(`voiceCatalog={
+  models:[{id:'eleven_flash_v2_5',label:'Eleven Flash',provider:'elevenlabs'}],
+  languages:[{id:'es',label:'Español',voices:[]}],
+  providers:{elevenlabs:{voices:[
+   {id:'lucia',label:'Lucía',languages:['es']},
+   {id:'alice',label:'Alice',languages:['en']},
+   {id:'mystery',label:'Sin idioma',languages:[]}
+  ]}}
+ };elevenCredentials={configured:true};$('tts-device').closest=()=>({hidden:false});$('default-model').value='eleven_flash_v2_5';$('default-tts-language').value='es';renderDefaultVoices('alice')`);
+ assert.deepEqual(s.run("$('default-voice').children.map(x=>x.value)"),['lucia','__show_all_voices__']);
+ assert.equal(s.run("$('default-voice').value"),'lucia','a stored voice from another language must not bypass the filter');
+ s.run("window.sidevoiceUI={setLanguageModels(){}};$('default-voice').selectedOptions=[{textContent:'Lucía'}];$('default-voice').value=SHOW_ALL_VOICES;$('default-voice').onchange()");
+ assert.deepEqual(s.run("$('default-voice').children.map(x=>x.value)"),['lucia','alice','mystery']);
+});
 test('Joining with ElevenLabs reaches microphone capture without loading Kokoro',async()=>{
  for(const model of ['eleven_flash_v2_5','kokoro']){
   const s=setup({strictDOM:true});let prepared=0,captured=0,unlocked=false;

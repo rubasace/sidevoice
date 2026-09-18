@@ -114,6 +114,7 @@ function setupAudioControls(){
 }
 let voiceCatalog=null;let voiceDraft={};let editingLanguage=null;let voicePreferences=null;let activeSpeech=null;let callExecution='browser';let roomRevision=0;let previewJob=null;let elevenCredentials={};let sttCredentials={};let rosterSignature='';let pendingBotText=[];let userTurn=null;
 let cancelledInput=false;let textSending=false;let textAttempt=null;const inputReceipts=new Map();
+const SHOW_ALL_VOICES='__show_all_voices__';let defaultVoicesExpanded=false;const expandedVoiceLanguages=new Set();
 let closedThreads=[];let viewedThread=null;let roomSeen={};try{roomSeen=JSON.parse(sessionStorage.getItem('voice-room-seen')||'{}')}catch{}
 let history=[];try{history=JSON.parse(sessionStorage.getItem('voice-room-transcript')||'[]');if(!Array.isArray(history))history=[]}catch{}
 function save(){try{sessionStorage.setItem('voice-room-transcript',JSON.stringify(history.slice(-1000)))}catch{}}
@@ -415,14 +416,64 @@ document.addEventListener('click',()=>document.querySelectorAll('.model-info[ari
 
 function providerFor(model){return modelInfo(model||'kokoro').provider||'kokoro'}
 function entriesFor(select,entries,value){select.replaceChildren();const values=new Set(entries.map(entry=>entry[0]));if(value&& !values.has(value))entries=[[value,value],...entries];for(const [id,label] of entries){const option=document.createElement('option');option.value=id;option.textContent=label;select.append(option)}select.value=value||entries[0]?.[0]||''}
-function voicesFor(model,language){if(providerFor(model)==='elevenlabs')return (voiceCatalog?.providers?.elevenlabs?.voices||[]).map(item=>[item.id,item.label]);return (voiceCatalog.languages.find(item=>item.id===language)?.voices||[])}
-function renderDefaultVoices(value){const model=$('default-model').value,voices=voicesFor(model,$('default-tts-language').value||'es');setModelInfo($('default-model-info'),model);entriesFor($('default-voice'),voices,value);const cloud=providerFor(model)==='elevenlabs';updateSpeedRange();$('elevenlabs-credential').hidden=!cloud;$('tts-device').closest('label').hidden=cloud;$('prepare-model').hidden=cloud;$('model-status').textContent=cloud?(elevenCredentials.configured?'Las respuestas se generan mediante ElevenLabs; las voces son las de esta cuenta.':'Guarda una clave de ElevenLabs para cargar las voces de la cuenta.'):'Kokoro se prepara automáticamente al conectar o probar una voz.'}
+function elevenVoiceItems(){return voiceCatalog?.providers?.elevenlabs?.voices||[]}
+function voicesFor(model,language,showAll=false){
+ if(providerFor(model)!=='elevenlabs')return voiceCatalog.languages.find(item=>item.id===language)?.voices||[];
+ const voices=elevenVoiceItems(),visible=showAll?voices:voices.filter(item=>item.languages?.includes(language));
+ return visible.map(item=>[item.id,item.label]);
+}
+function voiceEntriesFor(model,language,showAll=false){
+ const voices=voicesFor(model,language,showAll);
+ if(providerFor(model)==='elevenlabs'&&!showAll&&voices.length<elevenVoiceItems().length)return [...voices,[SHOW_ALL_VOICES,'Mostrar todas las voces…']];
+ return voices;
+}
+function validVoice(entries,value){return entries.some(([id])=>id!==SHOW_ALL_VOICES&&id===value)?value:entries.find(([id])=>id!==SHOW_ALL_VOICES)?.[0]}
+function renderDefaultVoices(value){
+ const model=$('default-model').value,language=$('default-tts-language').value||'es',voices=voiceEntriesFor(model,language,defaultVoicesExpanded);
+ setModelInfo($('default-model-info'),model);entriesFor($('default-voice'),voices,validVoice(voices,value));
+ const cloud=providerFor(model)==='elevenlabs';updateSpeedRange();$('elevenlabs-credential').hidden=!cloud;$('tts-device').closest('label').hidden=cloud;$('prepare-model').hidden=cloud;
+ $('model-status').textContent=cloud?(elevenCredentials.configured?'Voces filtradas por '+language.toUpperCase()+'. Usa «Mostrar todas las voces…» para quitar el filtro.':'Guarda una clave de ElevenLabs para cargar las voces de la cuenta.'):'Kokoro se prepara automáticamente al conectar o probar una voz.';
+}
 function stopPreview(){const job=previewJob;previewJob=null;if(!job)return;job.controller.abort();if(job.browser)window.roomVoice?.cancel();$('preview-audio').pause();$('preview-audio').removeAttribute('src');if(job.url)URL.revokeObjectURL(job.url);if(job.track&&stream?.getAudioTracks()[0]===job.track){job.track.enabled=job.enabled;updateMic()}for(const item of voiceCatalog?.languages||[])$('preview-'+item.id).textContent='▶'}
 async function previewVoice(language){if(!$('language-form').reportValidity())return;if(previewJob){stopPreview();$('preview-status').textContent='Prueba detenida';return}if(botLive){$('preview-status').textContent='Espera a que termine la locución antes de probar una voz.';return}const track=stream?.getAudioTracks()[0],choice=selectedVoice(language),job={controller:new AbortController(),track,enabled:track?.enabled};previewJob=job;if(track){track.enabled=false;updateMic()}$('preview-'+language).textContent='■';$('preview-status').textContent='Preparando muestra…';try{job.browser=true;await window.roomVoice.unlock();if(previewJob!==job)return;const sample=voiceCatalog.languages.find(item=>item.id===language).sample;if(choice.provider==='elevenlabs'){const audio=await post('/api/presentation/synthesis/preview',{...choice,text:sample});if(previewJob!==job)return;await window.roomVoice.playEncoded(audio,text=>$('preview-status').textContent=text)}else{job.browser=true;await window.roomVoice.unlock();await window.roomVoice.speak({...choice,text:sample},text=>$('preview-status').textContent=text)}if(previewJob===job){stopPreview();$('preview-status').textContent='Prueba terminada'}}catch(e){if(previewJob!==job)return;stopPreview();$('preview-status').textContent=e.name==='AbortError'?'Prueba detenida':e.message}}
 function selectedVoice(language){const selected=$('model-'+language).value,model=(selected==='inherit'?$('default-model').value:selected)||'kokoro',provider=providerFor(model),item=voiceCatalog.languages.find(item=>item.id===language);let voice=$('voice-'+language).value;if(voice==='inherit')voice=$('default-voice').value;if(provider==='kokoro'&&!item.voices.some(value=>value[0]===voice))voice=item.voices[0][0];return {model,provider,voice,speed:effectiveSpeed(model,$('speed-'+language).value||$('tts-speed').value),device:$('tts-device').value}}
 function storeLanguage(){for(const item of voiceCatalog.languages)voiceDraft[item.id]={model:$('model-'+item.id).value,voice:$('voice-'+item.id).value,speed:$('speed-'+item.id).value===''?null:Number($('speed-'+item.id).value)}}
-function renderLanguageRows(){const rows=$("language-rows");if(window.sidevoiceUI){const defaultModel=$("default-model").value,defaultVoice=$("default-voice").selectedOptions[0]?.textContent||$("default-voice").value,globalSpeed=$("tts-speed").value;window.sidevoiceUI.setLanguageModels(voiceCatalog.languages.map(item=>{const draft=voiceDraft[item.id]||{model:"inherit",voice:"inherit",speed:null},actualModel=(draft.model==="inherit"?defaultModel:draft.model)||"kokoro",[speedMin,speedMax]=speedLimits(actualModel);return {language:item.id,label:item.label,model:draft.model||"inherit",actualModel,modelDescription:modelInfo(actualModel).description,modelOptions:[["inherit","Usar por defecto"],...voiceCatalog.models.map(entry=>[entry.id,entry.label])].map(([value,label])=>({value,label})),voice:draft.voice||"inherit",voiceOptions:[["inherit","Por defecto · "+defaultVoice],...voicesFor(actualModel,item.id)].map(([value,label])=>({value,label})),speed:draft.speed==null?null:effectiveSpeed(actualModel,draft.speed),speedMin,speedMax,inheritedSpeed:effectiveSpeed(actualModel,globalSpeed)}}));return}rows.replaceChildren();const header=document.createElement('div');header.className='language-row language-row-head';for(const label of ['Idioma','Modelo','Voz','Velocidad','']){const cell=document.createElement('span');cell.textContent=label;header.append(cell)}rows.append(header);for(const item of voiceCatalog.languages){const row=document.createElement('div');row.className='language-row';const name=document.createElement('strong');name.textContent=item.label;row.append(name);const draft=voiceDraft[item.id]||{model:'inherit',voice:'inherit'},model=document.createElement('select');model.id='model-'+item.id;model.setAttribute('aria-label','Modelo · '+item.label);entriesFor(model,[['inherit','Usar por defecto'],...voiceCatalog.models.map(entry=>[entry.id,entry.label])],draft.model);model.onchange=()=>{voiceDraft[item.id]={...voiceDraft[item.id],model:model.value,voice:'inherit'};renderLanguageRows()};const actual=model.value==='inherit'?$('default-model').value:model.value,modelCell=document.createElement('span');modelCell.className='model-picker';modelCell.append(model,modelInfoButton(actual));row.append(modelCell);const voice=document.createElement('select');voice.id='voice-'+item.id;voice.setAttribute('aria-label','Voz · '+item.label);entriesFor(voice,[['inherit','Por defecto · '+$('default-voice').selectedOptions[0]?.textContent],...voicesFor(actual,item.id)],draft.voice);voice.onchange=()=>{voiceDraft[item.id]={...voiceDraft[item.id],voice:voice.value}};row.append(voice);const speed=document.createElement('input');speed.type='number';const [speedMin,speedMax]=speedLimits(actual);speed.min=String(speedMin);speed.max=String(speedMax);speed.step='0.05';speed.id='speed-'+item.id;speed.value=draft.speed==null?'':effectiveSpeed(actual,draft.speed);speed.placeholder=effectiveSpeed(actual,$('tts-speed').value).toFixed(2)+'×';speed.title='Vacío: velocidad global, ajustada al rango del motor ('+speedMin+'–'+speedMax+'×).';speed.onchange=()=>{voiceDraft[item.id]={...voiceDraft[item.id],speed:speed.value===''?null:Number(speed.value)}};speed.setAttribute('aria-label','Velocidad · '+item.label);row.append(speed);const button=document.createElement('button');button.type='button';button.id='preview-'+item.id;button.textContent='▶';button.setAttribute('aria-label','Probar voz · '+item.label);button.title='Probar voz · '+item.label;button.onclick=()=>previewVoice(item.id);row.append(button);rows.append(row)}}
-function populateVoiceSettings(p){voiceDraft=JSON.parse(JSON.stringify(p.language_overrides||{}));for(const [lang,prefix] of [['es','spanish'],['en','english']]){const voice=p[prefix+'_voice'],standard=lang==='es'?'ef_dora':'af_heart';voiceDraft[lang]??={model:p[prefix+'_model']||'inherit',voice:voice===standard?'inherit':voice||'inherit'}}entriesFor($('default-model'),voiceCatalog.models.map(item=>[item.id,item.label]),p.default_model);for(const id of ['default-tts-language','stt-language']){const select=$(id);select.replaceChildren();const entries=id==='stt-language'?[{id:'auto',label:'Detectar automáticamente'},...voiceCatalog.languages]:voiceCatalog.languages;for(const item of entries){const option=document.createElement('option');option.value=item.id;option.textContent=item.label;select.append(option)}select.value=p[id]||select.value}renderDefaultVoices(p.default_voice);renderLanguageRows();$('language-support').textContent='Las voces de ElevenLabs son las disponibles en tu cuenta, incluidas las personalizadas.'}
+function renderLanguageRows(){
+ const rows=$('language-rows');
+ if(window.sidevoiceUI){
+  const defaultModel=$('default-model').value,defaultVoice=$('default-voice').selectedOptions[0]?.textContent||$('default-voice').value,globalSpeed=$('tts-speed').value;
+  window.sidevoiceUI.setLanguageModels(voiceCatalog.languages.map(item=>{
+   const draft=voiceDraft[item.id]||{model:'inherit',voice:'inherit',speed:null},actualModel=(draft.model==='inherit'?defaultModel:draft.model)||'kokoro',[speedMin,speedMax]=speedLimits(actualModel);
+   const choices=voiceEntriesFor(actualModel,item.id,expandedVoiceLanguages.has(item.id)),voice=draft.voice==='inherit'||choices.some(([id])=>id===draft.voice)?(draft.voice||'inherit'):'inherit';
+   return {language:item.id,label:item.label,model:draft.model||'inherit',actualModel,modelDescription:modelInfo(actualModel).description,
+    modelOptions:[['inherit','Usar por defecto'],...voiceCatalog.models.map(entry=>[entry.id,entry.label])].map(([value,label])=>({value,label})),
+    voice,voiceOptions:[['inherit','Por defecto · '+defaultVoice],...choices].map(([value,label])=>({value,label})),
+    speed:draft.speed==null?null:effectiveSpeed(actualModel,draft.speed),speedMin,speedMax,inheritedSpeed:effectiveSpeed(actualModel,globalSpeed)};
+  }));return;
+ }
+ rows.replaceChildren();const header=document.createElement('div');header.className='language-row language-row-head';
+ for(const label of ['Idioma','Modelo','Voz','Velocidad','']){const cell=document.createElement('span');cell.textContent=label;header.append(cell)}rows.append(header);
+ for(const item of voiceCatalog.languages){
+  const row=document.createElement('div'),draft=voiceDraft[item.id]||{model:'inherit',voice:'inherit'};row.className='language-row';
+  const name=document.createElement('strong');name.textContent=item.label;row.append(name);
+  const model=document.createElement('select');model.id='model-'+item.id;model.setAttribute('aria-label','Modelo · '+item.label);entriesFor(model,[['inherit','Usar por defecto'],...voiceCatalog.models.map(entry=>[entry.id,entry.label])],draft.model);
+  model.onchange=()=>{expandedVoiceLanguages.delete(item.id);voiceDraft[item.id]={...voiceDraft[item.id],model:model.value,voice:'inherit'};renderLanguageRows()};
+  const actual=model.value==='inherit'?$('default-model').value:model.value,modelCell=document.createElement('span');modelCell.className='model-picker';modelCell.append(model,modelInfoButton(actual));row.append(modelCell);
+  const voice=document.createElement('select'),choices=voiceEntriesFor(actual,item.id,expandedVoiceLanguages.has(item.id));voice.id='voice-'+item.id;voice.setAttribute('aria-label','Voz · '+item.label);
+  const selected=draft.voice==='inherit'||choices.some(([id])=>id===draft.voice)?draft.voice:'inherit';entriesFor(voice,[['inherit','Por defecto · '+$('default-voice').selectedOptions[0]?.textContent],...choices],selected);
+  voice.onchange=()=>{if(voice.value===SHOW_ALL_VOICES){expandedVoiceLanguages.add(item.id);renderLanguageRows();return}voiceDraft[item.id]={...voiceDraft[item.id],voice:voice.value}};
+  row.append(voice);
+  const speed=document.createElement('input'),[speedMin,speedMax]=speedLimits(actual);speed.type='number';speed.min=String(speedMin);speed.max=String(speedMax);speed.step='0.05';speed.id='speed-'+item.id;speed.value=draft.speed==null?'':effectiveSpeed(actual,draft.speed);speed.placeholder=effectiveSpeed(actual,$('tts-speed').value).toFixed(2)+'×';speed.title='Vacío: velocidad global, ajustada al rango del motor ('+speedMin+'–'+speedMax+'×).';speed.onchange=()=>{voiceDraft[item.id]={...voiceDraft[item.id],speed:speed.value===''?null:Number(speed.value)}};speed.setAttribute('aria-label','Velocidad · '+item.label);row.append(speed);
+  const button=document.createElement('button');button.type='button';button.id='preview-'+item.id;button.textContent='▶';button.setAttribute('aria-label','Probar voz · '+item.label);button.title='Probar voz · '+item.label;button.onclick=()=>previewVoice(item.id);row.append(button);rows.append(row);
+ }
+}
+function populateVoiceSettings(p){
+ defaultVoicesExpanded=false;expandedVoiceLanguages.clear();voiceDraft=JSON.parse(JSON.stringify(p.language_overrides||{}));
+ for(const [lang,prefix] of [['es','spanish'],['en','english']]){const voice=p[prefix+'_voice'],standard=lang==='es'?'ef_dora':'af_heart';voiceDraft[lang]??={model:p[prefix+'_model']||'inherit',voice:voice===standard?'inherit':voice||'inherit'}}
+ entriesFor($('default-model'),voiceCatalog.models.map(item=>[item.id,item.label]),p.default_model);
+ for(const id of ['default-tts-language','stt-language']){const select=$(id),preference=p[id.replaceAll('-','_')];select.replaceChildren();const entries=id==='stt-language'?[{id:'auto',label:'Detectar automáticamente'},...voiceCatalog.languages]:voiceCatalog.languages;for(const item of entries){const option=document.createElement('option');option.value=item.id;option.textContent=item.label;select.append(option)}select.value=preference||select.value}
+ renderDefaultVoices(p.default_voice);renderLanguageRows();$('language-support').textContent='Las voces de ElevenLabs se filtran por su idioma principal. «Mostrar todas las voces…» quita el filtro para ese selector.';
+}
 $('reset-languages').onclick=()=>{stopPreview();voiceDraft={};renderLanguageRows();$('preview-status').textContent='Todos los idiomas usan los valores por defecto. Pulsa Guardar cambios para aplicarlo.'};
 $('prepare-model').onclick=async()=>{if(activeSpeech||previewJob){$('model-status').textContent='Espera a que termine la voz.';return}const button=$('prepare-model');button.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.prepare({device:$('tts-device').value},text=>$('model-status').textContent=text)}catch(e){$('model-status').textContent=e.message}finally{button.disabled=false}};
 function cancelBrowserSpeech(){if(!activeSpeech)return;const speech=activeSpeech;clearKaraoke(speech);activeSpeech=null;window.roomVoice?.cancel();post('/api/presentation/browser-receipt',{session_id:speech.session_id,revision:speech.revision,utterance_id:speech.utterance_id,status:speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});const row=history.find(r=>r.segment===speech.session_id+':voice:'+speech.utterance_id);if(row){row.interrupted=!!speech.started;save();renderHistory()}botLive=false;live()}
@@ -442,7 +493,9 @@ $('settings-open').onclick=async()=>{try{
  $('settings-error').textContent=eleven.error||'';
 }catch(e){$('settings-error').textContent=e.message;setRoomError(e.message)}};
 $('tts-speed').oninput=()=>{$('speed-value').textContent=Number($('tts-speed').value).toFixed(2)+'×';if(voiceCatalog){storeLanguage();renderLanguageRows()}};
-$('default-model').onchange=()=>{storeLanguage();renderDefaultVoices();renderLanguageRows()};$('default-voice').onchange=()=>{storeLanguage();renderLanguageRows()};
+$('default-model').onchange=()=>{storeLanguage();defaultVoicesExpanded=false;expandedVoiceLanguages.clear();renderDefaultVoices();renderLanguageRows()};
+$('default-voice').onchange=()=>{if($('default-voice').value===SHOW_ALL_VOICES){defaultVoicesExpanded=true;renderDefaultVoices();renderLanguageRows();return}storeLanguage();renderLanguageRows()};
+$('default-tts-language').onchange=()=>{defaultVoicesExpanded=false;renderDefaultVoices();renderLanguageRows()};
 function settingsSection(name){for(const section of ['general','voice','transcription','advanced']){$('pane-'+section).hidden=section!==name;$('settings-'+section).setAttribute('aria-pressed',String(section===name))}}
 $('settings-advanced').onclick=()=>settingsSection('advanced');
 $('settings-general').onclick=()=>settingsSection('general');
@@ -542,9 +595,10 @@ window.sidevoiceActions={
   catch(e){setRoomError(e.message);throw e}
  },
  updateLanguageModel(language,model){
-  voiceDraft[language]={...voiceDraft[language],model,voice:'inherit'};renderLanguageRows();
+  expandedVoiceLanguages.delete(language);voiceDraft[language]={...voiceDraft[language],model,voice:'inherit'};renderLanguageRows();
  },
  updateLanguageVoice(language,voice){
+  if(voice===SHOW_ALL_VOICES){expandedVoiceLanguages.add(language);renderLanguageRows();return}
   voiceDraft[language]={...voiceDraft[language],voice};renderLanguageRows();
  },
  updateLanguageSpeed(language,speed){
