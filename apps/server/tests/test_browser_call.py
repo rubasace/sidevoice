@@ -175,6 +175,14 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(client.mic_settings['turn_end_mode'], 'smart_turn')
         await self.leave(socket, task)
 
+    async def test_a_gpu_fallback_reported_by_the_browser_is_kept_with_its_reason(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'mic': TIMER_HELLO['mic'], 'transcription': {
+            'model': 'onnx-community/whisper-tiny', 'device': 'wasm', 'fallback_from': 'webgpu', 'fallback_error': 'GPU adapter lost'}})
+        self.assertEqual((client.transcription['device'], client.transcription['fallback_from'], client.transcription['fallback_error']),
+                         ('wasm', 'webgpu', 'GPU adapter lost'))
+        await self.leave(socket, task)
+
     async def test_incompatible_runtime_is_rejected_but_the_call_stays(self):
         socket = FakeWebSocket()
         task, client = await self.join(socket, {'mic': TIMER_HELLO['mic'],
@@ -236,7 +244,9 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual((finished['text'], finished['revision']), ('Hola desde el navegador', 1))
         rows = self.hub.journal.history('thread-a')
         self.assertEqual(rows[-1]['text'], 'Hola desde el navegador')
-        self.assertEqual(client.latency.turns[('thread-a', 1)]['input_ms'], {'audio_ms': 850, 'recognition_ms': 120})
+        measured = client.latency.turns[('thread-a', 1)]['input_ms']
+        self.assertEqual((measured['audio_ms'], measured['recognition_ms']), (850, 120))
+        self.assertGreaterEqual(measured['transcript_to_delivery_ms'], 0)
         self.assertEqual((client.input_stats['turns'], client.input_stats['recognition_ms'], client.input_stats['pending']), (1, 120, 0))
         self.assertFalse(client.speaking)
         self.assertEqual(voice.transcriber.calls, 1)

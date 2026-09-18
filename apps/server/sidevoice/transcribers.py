@@ -8,6 +8,7 @@ and both go through the same speech gate and text filters.
 """
 import asyncio
 import base64
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -110,6 +111,7 @@ class TurnTranscriber(SegmentedSTTService):
         self.speech_gate = speech_gate or SegmentSpeechGate()
         self.filter_stats = {'audio_rejected': 0, 'confidence_rejected': 0, 'submitted': 0, 'script_rejected': 0}
         self.on_message = None   # browser messages that are not a transcription answer go here
+        self.vad_stopped_at = None  # when the detector last reported the pause that may end this turn
         self._turn_audio = bytearray()
 
     async def run_stt(self, audio):
@@ -126,6 +128,7 @@ class TurnTranscriber(SegmentedSTTService):
 
     async def _handle_user_stopped_speaking(self, frame):
         self._user_speaking = False
+        self.vad_stopped_at = time.monotonic()
         self._turn_audio.extend(self._audio_buffer)
         self._audio_buffer.clear()
 

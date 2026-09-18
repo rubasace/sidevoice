@@ -1,7 +1,8 @@
 # Karaoke playback
 
-The room highlights the currently spoken word inside the assistant's existing
-message, keeping the entire original text visible. It follows AudioContext time,
+The room colours the part of the assistant's message that has already been
+spoken and leaves the rest dimmed, keeping the entire original text visible;
+there is no mark on the current word. It follows AudioContext time,
 not text generation, network receipt time or an estimated words-per-second timer.
 Highlighting clears on cancellation, failure and completion; late callbacks cannot
 highlight another utterance. A history refresh reapplies the current highlight.

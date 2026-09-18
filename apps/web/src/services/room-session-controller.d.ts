@@ -1,6 +1,6 @@
 export {};
 
-import type { ConversationView, LanguageModelView, ParticipantView, SidevoiceActions } from "../state/room-types";
+import type { ConversationView, KaraokeRange, LanguageModelView, ParticipantView, SidevoiceActions } from "../state/room-types";
 
 declare global {
   interface Window {
@@ -22,6 +22,7 @@ declare global {
       setParticipants(value: ParticipantView[]): void;
       setLanguageModels(value: LanguageModelView[]): void;
       setBootError(value: string | null): void;
+      updateKaraoke?(segment: string, karaoke: KaraokeRange | null): void;
     };
     sidevoiceActions?: SidevoiceActions;
   }

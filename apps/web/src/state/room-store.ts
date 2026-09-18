@@ -35,5 +35,7 @@ export function installRoomBridge(store: RoomStore) {
     setParticipants: (participants) => store.setState({ participants }),
     setLanguageModels: (languageModels) => store.setState({ languageModels }),
     setBootError: (bootError) => store.setState({ bootError }),
+    // A playback cue changes one message's karaoke; nothing else in the list moves.
+    updateKaraoke: (segment, karaoke) => store.setState((state) => ({ conversation: { ...state.conversation, messages: state.conversation.messages.map((m) => (m.segment === segment ? { ...m, karaoke, playback: "playing" } : m)) } })),
   };
 }

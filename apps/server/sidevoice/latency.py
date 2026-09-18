@@ -14,7 +14,9 @@ class CallLatency:
         'audio_ms',
         'endpoint_silence_ms',
         'recognition_ms',
+        'request_to_transcript_ms',
         'speech_end_to_transcript_ms',
+        'transcript_to_delivery_ms',
     }
 
     def __init__(self, session_id, *, clock=time.monotonic, limit=128):
@@ -38,7 +40,7 @@ class CallLatency:
         if not thread or not isinstance(durations, dict):
             return
         marks = self._bounded(self.turns, (thread, revision), {})
-        marks['input_ms'] = self._durations(durations, self.INPUT_FIELDS)
+        marks['input_ms'] = {**marks.get('input_ms', {}), **self._durations(durations, self.INPUT_FIELDS)}
 
     def reply(self, uid, thread, revision):
         self._bounded(self.replies, uid, {

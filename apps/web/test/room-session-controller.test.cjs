@@ -538,11 +538,12 @@ test('Karaoke preserves full text, survives history redraw and clears when inter
  s.run("var speech={session_id:'s',utterance_id:'u'};activeSpeech=speech;add('assistant','Hola <mundo>','voice:u','a');updateKaraoke(speech,{from:5,to:12,mode:'word'})");
  let saved=s.run("karaokeNodes.get('s:voice:u')");
  assert.equal(saved.node.children.map(n=>n.textContent).join(''),'Hola <mundo>');
- assert.equal(saved.node.children[1].textContent,'<mundo>');
- assert.equal(saved.node.children[1].className,'karaoke-current');
+ assert.equal(saved.node.children[0].textContent,'Hola <mundo>');
+ assert.equal(saved.node.children[0].className,'karaoke-played');
+ assert.equal(saved.node.children[1].className,'karaoke-upcoming');
  s.run('renderHistory()');
  saved=s.run("karaokeNodes.get('s:voice:u')");
- assert.equal(saved.node.children[1].textContent,'<mundo>');
+ assert.equal(saved.node.children[0].textContent,'Hola <mundo>');
  s.run("window.roomVoice={cancel(){}};cancelBrowserSpeech()");
  assert.equal(s.run('karaokeState'),null);
  s.run("updateKaraoke(speech,{from:0,to:4,mode:'word'})");
@@ -701,4 +702,12 @@ test('Stopping playback reports it for this browser and keeps the shared message
  assert.equal(s.run('history.length'),1);
  assert.equal(s.run('history[0].text'),'Respuesta compartida');
  assert.equal(s.run('history[0].interrupted'),true);
+});
+
+test('The engine badge says what this call uses, in a few words',()=>{
+ const s=setup();
+ assert.equal(s.run("engineBadgeText({stt_provider:'openai',stt_model:'gpt-4o-transcribe',turn_end_mode:'smart_turn'},null)"),'OpenAI · gpt-4o-transcribe · smart-turn');
+ assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-base',turn_end_mode:'timer',user_speech_timeout:2.5},{model:'onnx-community/whisper-base',device:'wasm'})"),'Whisper base · CPU · silencio 2,5 s');
+ assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',turn_end_mode:'smart_turn'},{model:'onnx-community/whisper-tiny',device:'wasm',fallback_from:'webgpu'})"),'Whisper tiny · CPU (GPU falló) · smart-turn');
+ s.run("showEngineBadge('x')");assert.equal(s.run("$('engine-badge').hidden"),false);s.run("showEngineBadge('')");assert.equal(s.run("$('engine-badge').hidden"),true);
 });

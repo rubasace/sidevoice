@@ -157,11 +157,12 @@ function paintKaraoke(node,text,range,playback='complete'){
  const valid=range&&Number.isInteger(range.from)&&Number.isInteger(range.to)&&range.from>=0&&range.to>range.from&&range.to<=text.length;
  node.dataset.playback=valid?'playing':playback;
  if(!valid){node.textContent=text;return}
- const before=document.createElement('span'),current=document.createElement('mark'),after=document.createElement('span');
- before.textContent=text.slice(0,range.from);current.textContent=text.slice(range.from,range.to);after.textContent=text.slice(range.to);
- before.className='karaoke-played';current.className='karaoke-current';after.className='karaoke-upcoming';node.dataset.progress='true';
- node.title=range.mode==='word'?'Siguiendo la voz · palabras':range.mode==='chunk'?'Siguiendo la voz · fragmentos':'Reproduciendo esta respuesta · sin tiempos por palabra';
- node.replaceChildren(before,current,after);
+ // Only what has been said is coloured; no mark on the current word.
+ const played=document.createElement('span'),upcoming=document.createElement('span');
+ played.textContent=text.slice(0,range.to);upcoming.textContent=text.slice(range.to);
+ played.className='karaoke-played';upcoming.className='karaoke-upcoming';node.dataset.progress='true';
+ node.title=range.mode==='word'?'Siguiendo la voz · palabras':range.mode==='chunk'?'Siguiendo la voz · fragmentos':'Reproduciendo esta respuesta';
+ node.replaceChildren(played,upcoming);
 }
 function clearKaraoke(speech){
  const segment=speechSegment(speech);
@@ -174,7 +175,7 @@ function updateKaraoke(speech,range){
  if(!range){clearKaraoke(speech);return}
  const segment=speechSegment(speech);
  karaokeState={segment,...range};
- if(window.sidevoiceUI){renderHistory();return}
+ if(window.sidevoiceUI){if(window.sidevoiceUI.updateKaraoke)window.sidevoiceUI.updateKaraoke(segment,{...range});else renderHistory();return}
  const saved=karaokeNodes.get(segment);if(saved)paintKaraoke(saved.node,saved.text,range,'playing');
 }
 function renderHistory(){karaokeNodes.clear();const id=historyThreadId();roomSeen[id]=Math.max(roomSeen[id]||0,...history.filter(r=>r.thread===id).map(r=>r.seq||0));try{sessionStorage.setItem('voice-room-seen',JSON.stringify(roomSeen))}catch{};const records=orderedHistory(historyThreadId());if(window.sidevoiceUI){const activeDraft=userTurn&&userTurn.thread===id?sessionId+':'+userTurn.key:null;window.sidevoiceUI.setConversation({messages:records.map(r=>({...r,cancellable:!!activeDraft&&!cancelledInput&&r.draft===true&&r.segment===activeDraft,audioNote:audioNote(r),playback:playbackState(r),karaoke:karaokeState?.segment===r.segment?karaokeState:null})),pendingText:userTurn?.thread===id?pendingUserText:'',pendingCancellable:!!userTurn&&!cancelledInput});return}if(!records.length&&!pendingUserText){$('messages').innerHTML='<div class="empty"><b>Hablemos de lo que sigue.</b><span>Tu voz y la respuesta aparecerán aquí.<br>El historial de la sala se conserva al reconectar.</span></div>';return}const box=$('messages');box.replaceChildren();for(const [i,r] of records.entries()){const row=document.createElement('div');row.className='message '+r.role+(i===records.length-1?' latest':'')+(r.interrupted?' interrupted':'');const label=document.createElement('span');label.className='who';label.textContent=r.name;const text=document.createElement('span');karaokeNodes.set(r.segment,{node:text,text:r.text});paintKaraoke(text,r.text,karaokeState?.segment===r.segment?karaokeState:null,playbackState(r));row.append(label,text);const metadata=document.createElement('div');metadata.className='message-meta';if(!r.draft){const time=document.createElement('time');time.className='message-time';time.textContent=new Date(r.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});metadata.append(time)}else if(userTurn&&!cancelledInput){row.append(cancelInputButton())}if(r.role==='user'&&r.delivery){const receipt=document.createElement('span');receipt.className='receipt delivery'+(r.delivery==='unconfirmed'?' unconfirmed':'');receipt.textContent=({pending:'◷',sending:'◷',delivered:'✓',unconfirmed:'✓',uncertain:'!',not_sent:'!'})[r.delivery]||'';receipt.title=({pending:'Enviando',sending:'Enviando',delivered:'Entregado a la conversación; lectura sin confirmar',unconfirmed:'Escrito en la conversación, sin acuse: este harness no confirma la entrega',uncertain:'Entrega sin confirmar',not_sent:'No enviado'})[r.delivery]||'';receipt.setAttribute('aria-label',receipt.title);metadata.append(receipt)}if(metadata.children.length)row.append(metadata);const explanation=audioNote(r);if(explanation){const note=document.createElement('span');note.className='receipt';note.textContent=explanation;row.append(note)}box.append(row)}renderPendingUser();box.scrollTop=box.scrollHeight}
@@ -397,14 +398,14 @@ function disconnect(){
  releaseScreenWakeLock();audioSession(false);++deviceEpoch;
  window.roomVoice?.cancel();window.roomTranscription?.stop();if($('voice-loading').open)$('voice-loading').close();
  cancelBrowserSpeech();stopPreview();
- const socket=ws;ws=null;socket?.close();
+ const socket=ws;ws=null;socket?.close();showEngineBadge('');
  stream?.getTracks().forEach(t=>t.stop());stream=null;
  stopMeter();sessionId=null;userLive=botLive=holding=spaceDown=false;userTurn=null;pendingBotText=[];partial('');
  $('connect').disabled=false;$('connect').classList.remove('joined');
  $('connect').title='Entrar en la sala';$('connect').setAttribute('aria-label','Entrar en la sala');
  $('mute').classList.remove('holding');updateMic();
 }
-$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';const session=await openSession(socket,{settings:voicePreferences,transcription:sttRuntime});if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await openSession(socket,{settings:voicePreferences,transcription:sttRuntime});if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
 function speedLimits(model){return providerFor(model)==='elevenlabs'?[.7,1.2]:[.5,2]}
 function effectiveSpeed(model,value){const [min,max]=speedLimits(model);return Math.max(min,Math.min(max,Number(value)||1))}
 function updateSpeedRange(){
@@ -585,6 +586,7 @@ $('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('setting
 async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;$('elevenlabs-key-state').textContent=state.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.';$('elevenlabs-key-clear').disabled=!state.configured||state.source==='environment'}
 $('elevenlabs-key-save').onclick=async()=>{const key=$('elevenlabs-key').value.trim();if(!key)return;$('elevenlabs-key-save').disabled=true;$('settings-error').textContent='';$('elevenlabs-key-state').textContent='Comprobando la clave con ElevenLabs…';try{const result=await post('/api/presentation/synthesis/credential',{key});$('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=result.credentials||{};renderDefaultVoices($('default-voice').value);renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{$('elevenlabs-key-save').disabled=false;await loadElevenLabs()}};
 $('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
+$('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para conservarlo; los cambios de transcripción y micrófono se aplican al volver a entrar.'};
 $('settings-close').onclick=()=>{stopPreview();$('language-settings').close()};$('language-settings').addEventListener('close',stopPreview);
 const MIC_KEYS=['turn_end_mode','user_speech_timeout','smart_turn_min_silence','smart_turn_max_silence','vad_confidence','vad_min_volume'];
 // Every setting belongs to this device. The room answers with its defaults and keeps no copy; what this browser saved wins.
@@ -594,6 +596,15 @@ function storePreferences(p){try{localStorage.setItem(SETTINGS_KEY,JSON.stringif
 async function loadPreferences(){const defaults=await api('/api/presentation/languages');return {...defaults,...storedPreferences()}}
 // WebKit on the iPhone offers WebGPU and then fails while loading Whisper on it. A failed GPU load falls back to
 // CPU for this call and is remembered for this device, so 'automatic' starts on CPU next time; choosing GPU explicitly still tries it.
+// What this call is actually using, said small next to the controls: engine, model and processor, plus how the turn ends.
+function engineBadgeText(p,runtime){
+ if(!p)return '';
+ const turn=p.turn_end_mode==='timer'?'silencio '+String(p.user_speech_timeout??2.5).replace('.',',')+' s':'smart-turn';
+ if(p.stt_provider==='openai')return 'OpenAI · '+(p.stt_model||'')+' · '+turn;
+ const model=String(runtime?.model||p.stt_model||'').split('/').pop().replace('whisper-','Whisper '),where=runtime?.device==='webgpu'?'GPU':runtime?.device==='wasm'?'CPU':'';
+ return [model,where+(runtime?.fallback_from?' (GPU falló)':''),turn].filter(Boolean).join(' · ');
+}
+function showEngineBadge(text){const badge=$('engine-badge');if(!badge)return;badge.textContent=text||'';badge.title=text||'';badge.hidden=!text}
 async function prepareLocalWhisper(model,device){
  const caps=sttCapabilities||(window.roomTranscription.capabilities?await window.roomTranscription.capabilities():{wasm:true});
  if(device==='auto'&&storedPreferences().stt_gpu_failed)device='wasm';
@@ -602,7 +613,8 @@ async function prepareLocalWhisper(model,device){
   if(device==='wasm'||!caps.wasm)throw error;
   $('live').textContent='La GPU no pudo cargar '+model.split('/').pop()+'; este dispositivo usa la CPU';
   storePreferences({...(voicePreferences||{}),stt_device:'wasm',stt_gpu_failed:true});if(voicePreferences)voicePreferences.stt_device='wasm';
-  return await window.roomTranscription.prepare({model,device:'wasm'});
+  const runtime=await window.roomTranscription.prepare({model,device:'wasm'});
+  return {...runtime,fallback_from:device,fallback_error:String(error?.message||error).slice(0,300)};
  }
 }
 function micSettingsChanged(previous,next){return MIC_KEYS.some(key=>String(previous?.[key]??'')!==String(next?.[key]??''))}
@@ -615,7 +627,7 @@ async function applyTranscriptionSettings(previous,next){
  try{
   const runtime=await prepareLocalWhisper(next.stt_model,next.stt_device);
   if(ws!==socket||connectEpoch!==epoch)return false;
-  socket.send(JSON.stringify({type:'voice-stt-ready',data:{session_id:sessionId,...runtime}}));
+  socket.send(JSON.stringify({type:'voice-stt-ready',data:{session_id:sessionId,...runtime}}));showEngineBadge(engineBadgeText(next,runtime));
   window.roomTranscription.start({socket,language:next.stt_language});
   return true;
  }finally{switchingTranscription=false}

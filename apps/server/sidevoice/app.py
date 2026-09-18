@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import time
 import uuid
 from dotenv import dotenv_values
 from loguru import logger
@@ -105,8 +106,9 @@ class VoiceCall:
     so the same flow serves any turn-end strategy and any transcription provider.
     """
 
-    def __init__(self, call, transcriber, send, *, settings, mic, choice, runtime=None):
+    def __init__(self, call, transcriber, send, *, settings, mic, choice, runtime=None, vad_stop_secs=0.2):
         self.call, self.transcriber, self.send = call, transcriber, send
+        self.vad_stop_secs = vad_stop_secs
         self.finishing = set()
         self.lock = asyncio.Lock()
         self.held = None   # text of a turn the user resumed before it was delivered; the next turn carries it
@@ -161,13 +163,17 @@ class VoiceCall:
         }})
 
     def turn_stopped(self):
-        task = asyncio.create_task(self.finish_turn(self.call.turn_revision, dict(self.call.turn_target)))
+        task = asyncio.create_task(self.finish_turn(self.call.turn_revision, dict(self.call.turn_target), time.monotonic()))
         self.finishing.add(task)
         task.add_done_callback(self.finishing.discard)
         return task
 
-    async def finish_turn(self, revision, target):
+    async def finish_turn(self, revision, target, stopped_at=None):
         call = self.call
+        stopped_at = stopped_at or time.monotonic()
+        # The detector reports the pause once it has lasted vad_stop_secs, so speech ended that much earlier.
+        vad_stopped_at = getattr(self.transcriber, 'vad_stopped_at', None)
+        speech_end = (vad_stopped_at - self.vad_stop_secs) if vad_stopped_at else None
         # Turns are transcribed and delivered in the order they were spoken.
         async with self.lock:
             text, failed, metrics = '', None, {}
@@ -177,6 +183,13 @@ class VoiceCall:
                     text, metrics = result.text.strip(), dict(result.metrics or {})
             except Exception as error:
                 failed = 'No se pudo transcribir tu intervención: ' + (str(error) or type(error).__name__)
+            transcript_at = time.monotonic()
+            if text or metrics:
+                # Server-side stages of this turn, on one clock: what the browser measured stays as it came.
+                metrics.setdefault('recognition_ms', round((transcript_at - stopped_at) * 1000, 1))
+                if speech_end is not None and speech_end <= stopped_at:
+                    metrics['endpoint_silence_ms'] = round((stopped_at - speech_end) * 1000, 1)
+                    metrics['speech_end_to_transcript_ms'] = round((transcript_at - speech_end) * 1000, 1)
             if metrics:
                 call.input_stats.update({
                     'audio_ms': max(0, int(metrics.get('audio_ms') or 0)),
@@ -207,6 +220,8 @@ class VoiceCall:
             # The browser must create the final bubble before its receipt arrives.
             if not cancelled:
                 call.enqueue_input(text, target=target, revision=revision)
+                call.latency.input(target.get('thread_id'), revision, {
+                    'transcript_to_delivery_ms': round((time.monotonic() - transcript_at) * 1000, 1)})
             if failed:
                 call.error = failed
                 self.send({'type': 'error', 'data': {'message': failed}})
@@ -230,9 +245,10 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
     serializer = BrowserFrameSerializer()
     transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
         audio_in_enabled=True, serializer=serializer, allowed_origins=[]))
+    vad = vad_analyzer(mic, config)
     user, assistant = LLMContextAggregatorPair(LLMContext(), user_params=LLMUserAggregatorParams(
         audio_idle_timeout=audio_idle_timeout(config),
-        vad_analyzer=vad_analyzer(mic, config),
+        vad_analyzer=vad,
         user_turn_strategies=UserTurnStrategies(start=[VADUserTurnStartStrategy()], stop=[turn_stop_strategy(mic, config)]),
     ))
     outbox = asyncio.Queue()
@@ -251,7 +267,15 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
         runtime = browser_runtime(hello.get('transcription'))
     except ValueError as error:
         runtime_problem = str(error)
-    voice = VoiceCall(call, transcriber, send, settings=settings, mic=mic, choice=choice, runtime=runtime)
+    reported = hello.get('transcription') if isinstance(hello.get('transcription'), dict) else {}
+    if runtime and reported.get('fallback_error'):
+        # The browser offered a GPU and could not load Whisper on it: keep the reason where the stats can show it.
+        runtime['fallback_from'] = str(reported.get('fallback_from') or '')[:20]
+        runtime['fallback_error'] = str(reported['fallback_error'])[:300]
+        logger.warning('Call {}: local Whisper fell back from {} to {}: {}', call.id[:8], runtime['fallback_from'],
+                       runtime['device'], runtime['fallback_error'])
+    voice = VoiceCall(call, transcriber, send, settings=settings, mic=mic, choice=choice, runtime=runtime,
+                      vad_stop_secs=float(vad.params.stop_secs))
     call.mic = serializer
     problems = [message for message in (problem, runtime_problem) if message]
     logger.info('Call {}: transcription {} · {} ({}), turn end {}', call.id[:8], choice['provider'],
