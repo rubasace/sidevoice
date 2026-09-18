@@ -340,7 +340,7 @@ class RoomClient:
         reply_revision = trace['reply_revision'] if trace else rev
         common = {'session_id': self.id, 'revision': rev, 'utterance_id': uid,
                   'reply_revision': reply_revision, 'thread_id': self.target.get('thread_id'),
-                  'text': utterance.text}
+                  'text': utterance.text, 'history_id': utterance.row_id}
         if choice['provider'] == 'kokoro':
             self.latency.mark(uid, 'audio_dispatched')
             self.on_browser_event({'type': 'voice-speech', 'data': {**common, **choice}})

@@ -660,6 +660,20 @@ test('A reply the room addressed to another browser is not played by this one',a
  assert.equal(s.run("played.join('|')"),'kokoro:s|shared:YQ==');
 });
 
+test('A shared reply keeps one bubble when live delivery and history name different browsers',async()=>{
+ const s=setup();
+ s.context.window.roomVoice={speak(){return new Promise(()=>{})},cancel(){}};
+ s.context.fetch=async path=>({ok:true,json:async()=>path==='/api/presentation/history'?{messages:[{
+  id:'mobile:voice:shared',thread:'a',role:'assistant',text:'Respuesta compartida',name:'A',
+  session:'mobile',revision:1,time:1,seq:1,status:'playing'
+ }]}:{}});
+ s.run("receiveBrowserSpeech({session_id:'s',revision:1,utterance_id:'shared',history_id:'mobile:voice:shared',thread_id:'a',text:'Respuesta compartida'})");
+ assert.equal(s.run('history.length'),1,'the live event creates the bubble');
+ await s.run('refreshHistory()');
+ assert.equal(s.run('history.length'),1,'history reconciles with that same bubble');
+ assert.equal(s.run('history[0].segment'),'mobile:voice:shared');
+});
+
 test('Stopping playback reports it for this browser and keeps the shared message',()=>{
  const s=setup(),posts=[];
  s.context.fetch=async(path,options)=>{posts.push(JSON.parse(options.body));return {ok:true,json:async()=>({})}};

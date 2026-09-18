@@ -77,6 +77,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
             self.assertEqual(len(spoken), 1)
             self.assertEqual((spoken[0]['session_id'], spoken[0]['text'], spoken[0]['utterance_id']),
                              (client.id, 'Ya está listo', 'shared'))
+            self.assertEqual(spoken[0]['history_id'], 'one:voice:shared')
         # One reply, one row, one text; two independent playbacks of it.
         self.assertEqual(len(self.hub.journal.history('task')), 1)
         self.assertEqual(set(self.hub.utterances['shared'].clients), {'one', 'two'})
