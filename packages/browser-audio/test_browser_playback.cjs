@@ -120,3 +120,41 @@ test('Output pauses while the page is hidden or the context is interrupted, and 
  s.context.document.hidden=false;context.state='interrupted';listeners.statechange();assert.equal(paused,2);
  context.state='running';listeners.statechange();assert.equal(played,2);
 });
+test('An interrupted context is started again and the stream handed back, instead of leaving the room mute',async()=>{
+ const s=setup();const sink={stream:{}};let paused=0,played=0,attached=0,resumes=0;const listeners={};
+ s.context.Audio=class{async play(){played++}pause(){paused++}set srcObject(value){attached++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};s.voice.context=context;
+ await s.voice.unlock();assert.equal(attached,1);assert.equal(played,1);
+ context.resume=async()=>{resumes++;context.state='running'};
+ // The microphone taking the audio route is what an interruption looks like from a car: the
+ // context stops, and its clock with it, while the page is still on screen.
+ context.state='interrupted';listeners.statechange();
+ assert.equal(paused,1,'the element is paused while the context is not running');
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(resumes,1,'nobody else starts the context again');
+ assert.equal(attached,2,'a paused media element needs the stream handed to it again');
+ assert.equal(played,2);
+});
+test('A context that refuses to start again leaves the element paused rather than pretending',async()=>{
+ const s=setup();const sink={stream:{}};let paused=0,played=0,attached=0;const listeners={};
+ s.context.Audio=class{async play(){played++}pause(){paused++}set srcObject(value){attached++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};s.voice.context=context;
+ await s.voice.unlock();
+ context.resume=async()=>{throw Error('not allowed without a gesture')};
+ context.state='interrupted';listeners.statechange();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(attached,1);assert.equal(played,1);assert.equal(paused,1);
+ assert.equal(s.voice.resuming,null,'a refused attempt does not block the next one');
+});
+test('Audio arriving while the context is stopped asks for it back instead of scheduling against a frozen clock',async()=>{
+ const s=setup();await s.voice.unlock();
+ const speech=s.voice.speak({text:'hola'}),worker=s.workers[0],id=worker.last.id;
+ let resumes=0;const context=s.voice.context;
+ context.state='suspended';context.resume=async()=>{resumes++;context.state='running'};
+ worker.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(resumes,1);
+ const rejected=assert.rejects(speech,{name:'AbortError'});s.voice.cancel();await rejected;
+});

@@ -26,7 +26,7 @@ function chunkTextRange(text,chunk,from=0){
 }
 /* Local synthesis and playout. A canceled job can never emit late audio. */
 class RoomVoice {
- constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default'}
+ constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null}
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
  async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running')throw Error('Permite reproducir audio en este navegador.');await this.ensureOutput()}
  /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only
@@ -38,13 +38,40 @@ class RoomVoice {
   element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;
   try{await element.play()}catch{return}
   this.output={sink,element};
-  // iOS interrupts the page's audio when the user pulls down notifications or switches apps; an element left
-  // playing through that comes back as a stuck buzz. Pause it while the page is hidden or the context is not
-  // running, and resume when both are back.
-  const settle=()=>{const away=(typeof document!=='undefined'&&document.hidden)||this.context.state!=='running';if(away)element.pause();else element.play().catch(()=>{})};
+  // iOS interrupts the page's audio when the user pulls down notifications, switches apps, or the
+  // microphone takes the audio route over — which is what an interruption while we speak looks
+  // like in a car. An element left playing through that comes back as a stuck buzz, so it is
+  // paused while the page is away, and everything is put back together when it returns.
+  const settle=()=>{
+   const hidden=typeof document!=='undefined'&&document.hidden;
+   if(hidden||this.context.state!=='running')element.pause();
+   if(!hidden)this.resumeOutput();
+  };
   if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',settle);
   if(this.context.addEventListener)this.context.addEventListener('statechange',settle);
   this.output.settle=settle;
+ }
+ /* An interrupted context does not start itself again: its clock stays on the instant it stopped,
+  * so everything scheduled afterwards is queued against a frozen time and never sounds. Nor does a
+  * media element fed by a MediaStream always come back from pause — the stream has to be handed to
+  * it again. Both are asked for together, because either one alone leaves the room silent. */
+ resumeOutput(){
+  if(!this.context)return Promise.resolve();
+  if(this.context.state==='running')return this.attachOutput();
+  // One ask at a time: a statechange and a visibility change arriving together used to start two
+  // attempts, and the element was handed the stream twice for nothing.
+  this.resuming??=(async()=>{
+   try{await this.context.resume()}catch{}
+   this.resuming=null;
+   if(this.context.state==='running')await this.attachOutput();
+  })();
+  return this.resuming;
+ }
+ attachOutput(){
+  const output=this.output;
+  if(!output)return Promise.resolve();
+  try{output.element.srcObject=output.sink.stream;return Promise.resolve(output.element.play()).catch(()=>{})}
+  catch{return Promise.resolve()}
  }
  get destination(){return this.output?.sink||this.context.destination}
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
@@ -81,7 +108,7 @@ class RoomVoice {
   if(d.type==='fallback'){job.status('GPU no disponible · Preparando CPU');this.announce('GPU no disponible · Preparando CPU')}
   if(d.type==='ready'){this.ready=true;this.announce('','hidden');job.status('Modelo listo · '+(d.device==='webgpu'?'GPU':'CPU'));if(job.load)this.complete(job)}
   if(d.type==='error')this.fail(Error(d.error));
-  if(d.type==='audio'){this.announce('','hidden');
+  if(d.type==='audio'){this.announce('','hidden');if(this.context.state!=='running')this.resumeOutput();
    const buffer=this.context.createBuffer(1,d.samples.length,d.sampleRate);buffer.copyToChannel(d.samples,0);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
    const start=Math.max(this.context.currentTime+.03,job.end);job.end=start+buffer.duration;job.sources.add(source);
