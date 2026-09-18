@@ -12,10 +12,10 @@ if [ ! -x "$sidevoice_python" ]; then
  echo "Create .venv and install requirements.txt first; see README.md." >&2
  exit 1
 fi
-if [ ! -f voice_poc/browser_audio/dist/worker.js ]; then
- echo "Build browser assets first: npm ci --prefix voice_poc/browser_audio && npm run build --prefix voice_poc/browser_audio" >&2
+if [ ! -f packages/browser-audio/dist/worker.js ] || [ ! -f apps/web/dist/index.html ]; then
+ echo "Build web and browser assets first: npm install && npm run build" >&2
  exit 1
 fi
 export SSL_CERT_FILE=$("$sidevoice_python" -m certifi)
 echo "Sidevoice: http://127.0.0.1:8767/voice/"
-exec "$sidevoice_python" -u voice_poc/bot.py --host 127.0.0.1 --port 8767
+exec env PYTHONPATH="$sidevoice_root/apps/server" "$sidevoice_python" -u -m sidevoice.app --host 127.0.0.1 --port 8767

@@ -16,7 +16,7 @@ other tool. Anything marked **(from the user)** must be asked for, never guessed
    connected.
 
 Until the package is published to npm, `npx -y @sidevoice/uplink@<version>`
-below is equivalent to `node <checkout>/connector/cli.mjs` from a clone of this
+below is equivalent to `node <checkout>/packages/connector/cli.mjs` from a clone of this
 repository. Pin an exact version; bump it by hand.
 
 ## Common steps

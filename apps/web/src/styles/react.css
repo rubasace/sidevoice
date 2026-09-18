@@ -1,0 +1,12 @@
+.ui-button { border: 1px solid var(--sv-border); background: var(--sv-surface-raised); color: var(--sv-text); }
+.ui-button--primary { background: var(--sv-primary); color: #172437; }
+.ui-button--danger { background: var(--sv-danger); color: white; }
+.ui-button--ghost { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  .call-bar { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+}

@@ -44,8 +44,8 @@ git clone https://github.com/rubasace/sidevoice.git
 cd sidevoice
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-npm ci --prefix voice_poc/browser_audio
-npm run build --prefix voice_poc/browser_audio
+npm ci
+npm run build
 cp .env.example .env.voice
 ```
 
@@ -112,19 +112,18 @@ See [architecture and limitations](docs/ARCHITECTURE.md).
 With dependencies installed:
 
 ```sh
-.venv/bin/python -m unittest discover -s voice_poc -p 'test_*.py'
-node --test voice_poc/test_*.cjs connector/test/test_connector.mjs
+PYTHONPATH=apps/server .venv/bin/python -m unittest discover -s apps/server/tests -p 'test_*.py'
+npm test
 ```
 
 Tests cover routing, stale replies, playback, interruptions, persistence, closure
 and draft cancellation. They do not prove live Claude support or every browser.
 
-- `voice_poc/presentation.py`: room API, delivery and audio lifecycle.
-- `voice_poc/presentation.html`: room UI.
-- `voice_poc/browser_audio/`: browser synthesis and model catalog.
-- `voice_poc/connector_control.py`: pairing, presence, delivery, speech intake.
-- `connector/`: the client side — `mcp.mjs` (façade), `connector.mjs`,
-  `adapters.mjs` (last mile per harness), `pair.mjs`.
+- `apps/server/`: Python room API, persistence, delivery and orchestration.
+- `apps/web/`: React/TypeScript room UI and its session controller.
+- `packages/browser-audio/`: browser-only STT/TTS, worklets and model catalog.
+- `packages/connector/`: published client — MCP façade, uplink and harness adapters.
+- `packages/protocol/`: shared TypeScript contracts and JSON schemas.
 
 - `skills/voice-presentation/`: the agent-facing skill, harness-independent.
 - `docs/INSTALL.md`: install guide written for the agent.

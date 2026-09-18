@@ -1,0 +1,461 @@
+import asyncio
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
+from fastapi import HTTPException
+from pipecat.frames.frames import BotStoppedSpeakingFrame, TTSAudioRawFrame
+from pipecat.processors.frame_processor import FrameDirection
+from sidevoice.presentation import PresentationCall, PresentationBoundary, PresentationPlayback, PresentationGate, PresentationSpeech
+
+class PresentationTests(IsolatedAsyncioTestCase):
+    def call(self):
+        c = PresentationCall('call', {'thread_id': 'task'}, AsyncMock(), object(), object())
+        c.connected = True
+        return c
+
+    async def test_speech_enqueues_once_and_does_not_wait_for_playback(self):
+        c = self.call()
+        result = await asyncio.wait_for(c.speak('Hola', 'u', 'call', 0), .1)
+        self.assertEqual(result['status'], 'queued')
+        self.assertEqual(await c.speak('Hola', 'u', 'call', 0), result)
+        c.worker.queue_frames.assert_awaited_once()
+        with self.assertRaises(HTTPException) as e:
+            await c.speak('Otro', 'u', 'call', 0)
+        self.assertEqual(e.exception.status_code, 409)
+
+    async def test_stale_revision_rejected_even_after_user_finishes(self):
+        c = self.call()
+        await c.speak('Hola', 'u', 'call', 0)
+        c.user_started(); c.speaking = False
+        with self.assertRaises(HTTPException):
+            await c.speak('Respuesta antigua', 'v', 'call', 0)
+        self.assertEqual(c.snapshot()['utterances'][0]['status'], 'interrupted')
+        await c.playback_finished('u', 0)
+        self.assertEqual(c.snapshot()['utterances'][0]['status'], 'interrupted')
+        await c.speak('Nueva', 'new', 'call', 1)
+
+    async def test_reconnection_does_not_replay_and_requires_new_session(self):
+        c = self.call()
+        await c.speak('Hola', 'u', 'call', 0)
+        c.disconnect()
+        self.assertEqual(c.snapshot()['utterances'][0]['status'], 'disconnected')
+        fresh = self.call(); fresh.id = 'new-call'
+        with self.assertRaises(HTTPException):
+            await fresh.speak('Hola', 'u', 'call', 0)
+        fresh.worker.queue_frames.assert_not_awaited()
+
+    async def test_disconnected_or_speaking_never_queues(self):
+        c = self.call()
+        for connected, speaking in [(False, False), (True, True)]:
+            c.connected, c.speaking = connected, speaking
+            with self.assertRaises(HTTPException):
+                await c.speak('Hola', 'new', 'call', 0)
+        c.worker.queue_frames.assert_not_awaited()
+
+    async def test_single_dispatch_and_only_ordered_marker_finishes(self):
+        c = self.call()
+        await c.speak('Primera', 'a', 'call', 0)
+        await c.speak('Segunda', 'b', 'call', 0)
+        c.worker.queue_frames.assert_awaited_once()
+        p = PresentationPlayback(); p.call = c; p.push_frame = AsyncMock()
+        async def emit(f):
+            await p.process_frame(f, FrameDirection.DOWNSTREAM)
+        await emit(PresentationBoundary(utterance_id='a', revision=0))
+        await emit(TTSAudioRawFrame(audio=b'\x01\x00'*100, sample_rate=24000, num_channels=1))
+        self.assertEqual(c.utterances['a']['result']['status'], 'playing')
+        await emit(BotStoppedSpeakingFrame())
+        self.assertEqual(c.utterances['a']['result']['status'], 'playing')
+        await emit(PresentationBoundary(utterance_id='a', revision=0, end=True))
+        self.assertEqual(c.utterances['a']['result']['status'], 'playback_finished')
+        self.assertEqual(c.worker.queue_frames.await_count, 2)
+
+    async def test_pending_and_stale_pipeline_frames_discarded_on_barge_in(self):
+        c = self.call()
+        await c.speak('Primera', 'a', 'call', 0)
+        await c.speak('Segunda', 'b', 'call', 0)
+        c.user_started(); c.speaking = False
+        gate = PresentationGate(); gate.call = c; gate.push_frame = AsyncMock()
+        await gate.process_frame(PresentationSpeech(text='Primera', utterance_id='a', revision=0), FrameDirection.DOWNSTREAM)
+        gate.push_frame.assert_not_awaited()
+        await c.playback_finished('a', 0)
+        c.worker.queue_frames.assert_awaited_once()
+        self.assertFalse(c.pending)
+
+    async def test_failure_cannot_be_overwritten_by_completion(self):
+        c = self.call()
+        await c.speak('Hola', 'u', 'call', 0)
+        c.fail_active()
+        await c.playback_finished('u', 0)
+        self.assertEqual(c.utterances['u']['result']['status'], 'failed')
+
+    async def test_input_is_literal_ordered_and_preserves_legitimate_repeats(self):
+        c = self.call(); c.user_started(); c.speaking = False
+        c.enqueue_input('Vale, para eso.'); c.enqueue_input('Vale, para eso.')
+        first, second = c.input_queue.get_nowait(), c.input_queue.get_nowait()
+        self.assertEqual(first['text'], 'Vale, para eso.')
+        self.assertEqual(first['text'], second['text'])
+        self.assertNotEqual(first['message_id'], second['message_id'])
+        self.assertEqual((first['thread_id'], first['session_id'], first['revision']), ('task', 'call', 1))
+
+class RoomTests(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from sidevoice.presentation import PresentationHub
+        self.temp = tempfile.TemporaryDirectory()
+        self.patch = patch('sidevoice.presentation.BINDING', Path(self.temp.name) / 'binding.json')
+        self.patch.start()
+        # Test the default browser provider, never the live room's preferences or paid API.
+        self.settings_patch = patch('sidevoice.language_settings.PATH', Path(self.temp.name) / 'settings.json')
+        self.settings_patch.start()
+        self.addAsyncCleanup(self._stop_settings_patch)
+        self.hub = PresentationHub()
+        from sidevoice.room_history import RoomHistory
+        self.hub.journal = RoomHistory(Path(self.temp.name) / "history.sqlite3")
+        self.c = PresentationCall('same-webrtc', {}, AsyncMock(), object(), object())
+        self.c.connected = True
+        self.hub.attach(self.c)
+
+    async def _stop_settings_patch(self):
+        self.settings_patch.stop()
+
+    async def asyncTearDown(self):
+        self.patch.stop()
+        self.temp.cleanup()
+
+    async def test_empty_room_does_not_buffer_for_later_agent(self):
+        self.c.user_started()
+        self.c.enqueue_input('No hay nadie')
+        self.assertTrue(self.c.input_queue.empty())
+        await self.hub.activate({'thread_id': 'a'})
+        self.c.enqueue_input('Final de la frase anterior')
+        self.assertTrue(self.c.input_queue.empty())
+        self.c.user_started()
+        self.c.enqueue_input('Ahora sí')
+        self.assertEqual(self.hub.journal.pending()[0]['thread'], 'a')
+
+    async def test_transfer_preserves_room_and_invalidates_audio_and_turn(self):
+        from pipecat.frames.frames import InterruptionFrame
+        await self.hub.activate({'thread_id': 'a'})
+        self.c.user_started(); self.c.speaking = False
+        previous = self.c.revision
+        await self.c.speak('Largo', 'old', self.c.id, previous)
+        self.c.user_started()
+        result = await self.hub.activate({'thread_id': 'b'})
+        self.assertEqual(result['binding']['thread_id'], 'b')
+        self.assertTrue(self.c.connected)
+        self.assertFalse(self.c.closed)
+        self.assertEqual(self.c.id, 'same-webrtc')
+        self.assertIsInstance(self.c.worker.queue_frame.call_args.args[0], InterruptionFrame)
+        self.assertEqual(self.c.utterances['old']['result']['status'], 'interrupted')
+        self.c.enqueue_input('Frase empezada con A')
+        self.assertEqual(self.hub.journal.pending()[0]['thread'], 'a')
+        with self.assertRaises(HTTPException):
+            await self.c.speak('Respuesta vieja', 'stale', self.c.id, previous)
+        self.c.user_started(); self.c.speaking = False
+        self.c.enqueue_input('Nueva para B')
+        self.assertEqual(self.hub.journal.pending()[-1]['thread'], 'b')
+
+    async def test_reactivation_idempotent_and_leave_keeps_room(self):
+        target = {'thread_id': 'a', 'title': 'A'}
+        first = await self.hub.activate(target)
+        revision = self.c.revision
+        second = await self.hub.activate(target)
+        self.assertEqual(second['status'], 'already_active')
+        self.assertEqual(first['binding'], second['binding'])
+        self.assertEqual(self.c.revision, revision)
+        await self.hub.activate({})
+        self.assertTrue(self.c.connected)
+        self.assertFalse(self.c.target.get('thread_id'))
+        self.c.user_started(); self.c.enqueue_input('Sala vacía')
+        self.assertTrue(self.c.input_queue.empty())
+
+    async def test_browser_dispatch_waits_for_playout_and_cancels_epoch(self):
+        c = PresentationCall('call', {'thread_id': 'task'}, AsyncMock(), object(), object())
+        c.connected = True; events = []
+        c.browser_audio = True; c.on_browser_event = events.append
+        await c.speak('Hola', 'browser-a', 'call', 0, 'es')
+        await c.speak('Hello', 'browser-b', 'call', 0, 'en')
+        c.worker.queue_frames.assert_not_awaited()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['type'], 'voice-speech')
+        self.assertEqual(events[0]['data']['voice'], 'ef_dora')
+        await c.playback_finished('browser-a', 0)
+        self.assertEqual(events[-1]['data']['language'], 'en')
+        c.transition('browser-b', 'playing')
+        c.user_started()
+        self.assertEqual(events[-1]['type'], 'voice-cancel')
+        c.speaking = False
+        await c.playback_finished('browser-b', 0)
+        self.assertEqual(c.utterances['browser-b']['result']['status'], 'interrupted')
+        self.assertIsNone(c.active)
+
+    async def test_background_reply_survives_focus_switch_without_audio_or_replay(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id': 'a'})
+        revision = self.c.revision
+        await self.hub.activate({'thread_id': 'b'})
+        payload = Speech(thread_id='a', text='Respuesta para A', session_id=self.c.id,
+                         revision=revision, utterance_id='late-a')
+        result = await self.hub.publish(payload)
+        self.assertEqual(result['status'], 'text_only')
+        self.assertTrue(result['text_saved'])
+        self.assertEqual(self.hub.journal.history('a')[0]['text'], 'Respuesta para A')
+        self.c.worker.queue_frames.assert_not_awaited()
+        await self.hub.activate({'thread_id': 'a'})
+        result = await self.hub.publish(payload)
+        self.assertEqual(result['status'], 'text_only')
+        self.assertEqual(len(self.hub.journal.history('a')), 1)
+        self.c.worker.queue_frames.assert_not_awaited()
+
+    async def test_pending_inputs_persist_with_original_destination_after_disconnect(self):
+        import json
+        from sidevoice.room_history import RoomHistory
+        await self.hub.activate({'thread_id': 'a'})
+        self.c.user_started()
+        original_revision = self.c.revision
+        await self.hub.activate({'thread_id': 'b'})
+        self.c.enqueue_input('Todavía para A')
+        self.c.disconnect()
+        recovered = RoomHistory(self.hub.journal.path)
+        recovered.recover()
+        row = recovered.pending()[0]
+        payload = json.loads(row['payload'])
+        self.assertEqual((payload['thread_id'], payload['revision']), ('a', original_revision))
+        recovered.update(row['id'], 'sending')
+        recovered.recover()
+        # At-least-once: a delivery in flight when the room died is retried, never abandoned.
+        self.assertEqual(len(recovered.pending()), 1)
+        self.assertEqual(recovered.history()[0]['status'], 'pending')
+
+    async def test_identical_words_in_distinct_turns_are_not_deduplicated(self):
+        await self.hub.activate({'thread_id': 'a'})
+        for _ in range(2):
+            self.c.user_started(); self.c.speaking = False
+            self.c.enqueue_input('Sí')
+        rows = self.hub.journal.pending()
+        self.assertEqual(len(rows), 2)
+        self.assertNotEqual(rows[0]['id'], rows[1]['id'])
+
+    async def test_outbox_delivers_original_target_without_a_connected_call(self):
+        import json
+        from sidevoice.connector_control import ConnectorControl
+        control = ConnectorControl(self.hub.journal, self.hub)
+        sent = []
+        class FakeSocket:
+            async def send_json(self, frame): sent.append(frame)
+        binding = self.hub.journal.register_binding('conn-1', harness='test', thread='a')
+        control.sockets['conn-1'] = FakeSocket(); control.live[binding['id']] = 'conn-1'
+        await self.hub.activate({'thread_id':'a'})
+        self.c.user_started(); self.c.enqueue_input('Para A')
+        await self.hub.activate({'thread_id':'b'})
+        self.c.disconnect()
+        await control.tick()
+        self.assertEqual(len(sent), 1)
+        self.assertEqual((sent[0]['type'], sent[0]['thread'], sent[0]['text']), ('input.deliver', 'a', 'Para A'))
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'sending')
+        await control.tick()
+        self.assertEqual(len(sent), 1)  # one delivery in flight per binding
+        await control.acknowledge('conn-2', {'event_id': sent[0]['event_id'], 'status': 'accepted'})
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'sending')  # a stranger cannot settle it
+        await control.acknowledge('conn-1', {'event_id': sent[0]['event_id'], 'status': 'accepted'})
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'delivered')
+
+    async def test_app_lifespan_starts_and_stops_durable_delivery(self):
+        from contextlib import asynccontextmanager
+        from fastapi import FastAPI
+        from sidevoice.presentation import mount_presentation
+        from sidevoice.connector_control import mount_connector_control
+        events = []
+        @asynccontextmanager
+        async def existing_lifespan(app):
+            events.append('start'); yield {'existing': True}; events.append('stop')
+        app = FastAPI(lifespan=existing_lifespan)
+        with patch('sidevoice.presentation.hub', self.hub):
+            mount_presentation(app)
+            control = mount_connector_control(app, self.hub)
+            async with app.router.lifespan_context(app):
+                self.assertIs(self.hub.control, control)
+                self.assertIsNotNone(control.pump_task)
+                self.assertFalse(control.pump_task.done())
+            self.assertTrue(control.pump_task.cancelled() or control.pump_task.done())
+        self.assertEqual(events, ['start', 'stop'])
+
+    async def test_reply_waits_until_user_finishes_and_uses_application_playback_epoch(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        self.c.user_started(); self.c.speaking = False
+        original = self.c.revision
+        self.c.user_started()
+        payload = Speech(thread_id='a',text='Respuesta anterior',session_id=self.c.id,
+                         revision=original,utterance_id='waiting')
+        result = await self.hub.publish(payload)
+        self.assertEqual(result['status'], 'waiting_for_turn')
+        row = self.hub.journal.history('a')[0]
+        self.assertEqual(row['revision'], original)
+        self.assertEqual(row['audio_reason'], 'user_speaking')
+        self.c.worker.queue_frames.assert_not_awaited()
+        self.c.user_started()  # Another speech start still cannot lose the waiting reply.
+        self.c.speaking = False
+        await self.c._dispatch()
+        self.c.worker.queue_frames.assert_awaited_once()
+        self.assertEqual(self.c.utterances['waiting']['result']['revision'], self.c.revision)
+
+    async def test_waiting_reply_does_not_survive_focus_change_or_replay(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        self.c.user_started()
+        payload = Speech(thread_id='a',text='Pendiente',session_id=self.c.id,
+                         revision=self.c.revision,utterance_id='waiting')
+        await self.hub.publish(payload)
+        await self.hub.activate({'thread_id':'b'})
+        self.assertEqual(self.hub.journal.history('a')[0]['audio_reason'], 'focus_changed')
+        await self.hub.activate({'thread_id':'a'})
+        self.c.speaking = False
+        await self.c._dispatch()
+        result = await self.hub.publish(payload)
+        self.assertEqual(result['status'], 'interrupted')
+        self.c.worker.queue_frames.assert_not_awaited()
+
+    async def test_already_playing_interrupted_reply_is_never_replayed(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        payload = Speech(thread_id='a',text='Sonando',session_id=self.c.id,
+                         revision=self.c.revision,utterance_id='playing')
+        await self.hub.publish(payload)
+        self.c.transition('playing', 'playing')
+        self.c.user_started(); self.c.speaking = False
+        await self.c._dispatch()
+        result = await self.hub.publish(payload)
+        self.assertEqual(result['status'], 'interrupted')
+        self.c.worker.queue_frames.assert_awaited_once()
+
+    async def test_browser_waiting_reply_dispatches_only_after_turn_end(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        events=[];self.c.browser_audio=True;self.c.on_browser_event=events.append
+        self.c.user_started();events.clear()
+        payload=Speech(thread_id='a',text='Espera',session_id=self.c.id,
+                       revision=self.c.revision,utterance_id='browser-wait',language='es')
+        await self.hub.publish(payload)
+        self.assertEqual(events, [])
+        self.c.speaking=False
+        await self.c._dispatch()
+        self.assertEqual(events[0]['type'], 'voice-speech')
+        self.assertEqual(events[0]['data']['revision'], self.c.revision)
+        self.assertEqual(self.hub.journal.history('a')[0]['status'], 'synthesizing')
+
+    async def test_browser_preparing_audio_survives_another_user_turn(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        self.c.browser_audio=True;events=[];self.c.on_browser_event=events.append
+        payload=Speech(thread_id='a',text='Todavía preparándose',session_id=self.c.id,
+                       revision=self.c.revision,utterance_id='preparing')
+        await self.hub.publish(payload)
+        self.assertEqual(self.c.utterances['preparing']['result']['status'],'synthesizing')
+        old_revision=self.c.revision
+        self.c.user_started()
+        self.assertEqual(self.c.utterances['preparing']['result']['status'],'waiting_for_turn')
+        self.c.browser_cancelled('preparing',old_revision,False)
+        self.c.speaking=False
+        await self.c._dispatch()
+        self.assertEqual(sum(e['type']=='voice-speech' for e in events),2)
+        self.assertEqual(events[-1]['data']['revision'],self.c.revision)
+
+    async def test_late_browser_cancellation_of_started_audio_prevents_replay(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        self.c.browser_audio=True;self.c.on_browser_event=lambda event:None
+        payload=Speech(thread_id='a',text='Ya había sonado',session_id=self.c.id,
+                       revision=self.c.revision,utterance_id='racing')
+        await self.hub.publish(payload)
+        old_revision=self.c.revision
+        self.c.user_started()
+        self.c.browser_cancelled('racing',old_revision,True)
+        self.c.speaking=False
+        await self.c._dispatch()
+        self.assertEqual(self.c.utterances['racing']['result']['status'],'interrupted')
+        self.assertIsNone(self.c.active)
+
+    async def test_typed_message_is_literal_idempotent_and_does_not_replace_mic_turn(self):
+        import json
+        await self.hub.activate({'thread_id':'a'})
+        self.c.user_started()
+        mic_revision=self.c.turn_revision
+        args=('Texto escrito\ncon dos líneas',self.c.id,'a',self.c.target['binding_id'],'client-one')
+        first=await self.hub.send_text(*args)
+        second=await self.hub.send_text(*args)
+        self.assertEqual(first,second)
+        self.assertEqual(self.c.turn_revision,mic_revision)
+        self.assertTrue(self.c.speaking)
+        self.c.enqueue_input('Lo que estaba diciendo')
+        rows=self.hub.journal.pending()
+        self.assertEqual(len(rows),2)
+        self.assertEqual(rows[0]['text'],'Texto escrito\ncon dos líneas')
+        self.assertNotEqual(rows[0]['revision'],rows[1]['revision'])
+        self.assertEqual(json.loads(rows[0]['payload'])['thread_id'],'a')
+
+    async def test_text_rejects_changed_destination_and_conflicting_retry(self):
+        await self.hub.activate({'thread_id':'a'})
+        original=self.c.target['binding_id']
+        args=('Para A',self.c.id,'a',original,'one')
+        await self.hub.send_text(*args)
+        with self.assertRaises(HTTPException):
+            await self.hub.send_text('Otro texto',self.c.id,'a',original,'one')
+        await self.hub.activate({'thread_id':'b'})
+        with self.assertRaises(HTTPException):
+            await self.hub.send_text('A antiguo',self.c.id,'a',original,'two')
+        self.assertEqual(len(self.hub.journal.pending()),1)
+
+    async def test_quiet_grace_waits_and_restarts_after_another_intervention(self):
+        from sidevoice.presentation import Speech
+        await self.hub.activate({'thread_id':'a'})
+        self.c.browser_audio=True;events=[];self.c.on_browser_event=events.append
+        self.c.audio_grace_seconds=.08
+        self.c.user_started();events.clear()
+        payload=Speech(thread_id='a',text='Pendiente',session_id=self.c.id,
+                       revision=self.c.revision,utterance_id='grace')
+        await self.hub.publish(payload)
+        await self.c.finish_user_turn()
+        self.assertEqual(self.c.utterances['grace']['result']['status'],'waiting_for_pause')
+        await asyncio.sleep(.025)
+        self.assertFalse(any(e['type']=='voice-speech' for e in events))
+        self.c.user_started()
+        await asyncio.sleep(.09)
+        self.assertFalse(any(e['type']=='voice-speech' for e in events))
+        await self.c.finish_user_turn()
+        await asyncio.sleep(.025)
+        self.assertFalse(any(e['type']=='voice-speech' for e in events))
+        await asyncio.sleep(.075)
+        self.assertEqual(sum(e['type']=='voice-speech' for e in events),1)
+        self.c.disconnect()
+
+    async def test_close_channel_persists_notifies_once_and_blocks_late_voice(self):
+        from sidevoice.presentation import Speech
+        from sidevoice.room_history import RoomHistory
+        await self.hub.activate({'thread_id':'a'})
+        rev = self.c.revision
+        first = await self.hub.close_channel('a')
+        second = await self.hub.close_channel('a')
+        self.assertEqual(first, second)
+        self.assertTrue(self.c.connected)
+        self.assertIsNone(self.c.target['thread_id'])
+        self.assertIn('a', RoomHistory(self.hub.journal.path).closed_channels())
+        pending = self.hub.journal.pending()
+        self.assertEqual(len(pending), 1)
+        import json
+        self.assertEqual(json.loads(pending[0]['payload'])['channel'], 'room-control')
+        reply = await self.hub.publish(Speech(thread_id='a',session_id=self.c.id,revision=rev,text='Late',utterance_id='late'))
+        self.assertEqual(reply['reason'], 'channel_closed')
+        await self.hub.activate({'thread_id':'a'})
+        self.assertNotIn('a', self.hub.journal.closed_channels())
+
+    async def test_cancelled_mic_turn_cannot_enter_outbox_but_next_turn_can(self):
+        await self.hub.activate({'thread_id':'a'})
+        self.c.user_started()
+        self.c.cancelled_turn = self.c.turn_revision
+        self.c.enqueue_input('Do not send')
+        self.assertEqual(self.hub.journal.pending(), [])
+        self.c.user_started()
+        self.c.enqueue_input('Send next')
+        self.assertEqual(self.hub.journal.pending()[0]['text'], 'Send next')

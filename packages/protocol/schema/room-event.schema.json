@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sidevoice.dev/schema/room-event.json",
+  "title": "Sidevoice room event",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "type": "string", "minLength": 1 },
+    "data": { "type": "object" }
+  },
+  "additionalProperties": false
+}

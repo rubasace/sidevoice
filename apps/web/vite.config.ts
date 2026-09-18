@@ -1,0 +1,20 @@
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  base: "/voice/",
+  plugins: [react()],
+  build: { outDir: "dist", emptyOutDir: true },
+  server: {
+    proxy: {
+      "/api": { target: "http://127.0.0.1:8767", ws: true },
+      "/voice-browser": { target: "http://127.0.0.1:8767" },
+      "/voice/mic_capture.js": { target: "http://127.0.0.1:8767" }
+    }
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/test/setup.ts",
+    include: ["src/**/*.test.{ts,tsx}"]
+  }
+});

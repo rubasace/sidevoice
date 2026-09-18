@@ -1,0 +1,15 @@
+:root {
+  --sv-bg: #14171b;
+  --sv-surface: #1c2128;
+  --sv-surface-raised: #252b33;
+  --sv-border: #303742;
+  --sv-text: #e8edf1;
+  --sv-muted: #a1acb9;
+  --sv-primary: #a8c7fa;
+  --sv-positive: #75d6ad;
+  --sv-danger: #ea4335;
+  --sv-radius-sm: 10px;
+  --sv-radius-md: 18px;
+  --sv-radius-pill: 999px;
+  --sv-shadow-dialog: 0 24px 80px rgb(0 0 0 / 55%);
+}

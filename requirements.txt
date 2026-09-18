@@ -1,1 +1,1 @@
--r voice_poc/requirements.txt
+-r apps/server/requirements.txt
