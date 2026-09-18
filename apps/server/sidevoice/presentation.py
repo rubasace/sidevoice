@@ -87,7 +87,7 @@ class PresentationPlayback(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-hub = Room(RoomHistory(RUNTIME_ROOT / 'room-history.sqlite3'))
+hub = Room(RoomHistory(RUNTIME_ROOT / 'room-state.json'))
 
 
 class Speech(BaseModel):

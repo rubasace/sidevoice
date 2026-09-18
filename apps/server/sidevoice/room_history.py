@@ -1,15 +1,25 @@
-"""Durable room transcript, outbox and participant registry; audio focus never owns delivery."""
+"""The room's journal, in memory, and the little that must outlive the process, in one small file.
+
+Nothing anyone says is written to disk by the room: transcripts, the outbox and
+the state of every spoken reply live only while the room runs (issue #1). What
+survives a restart or a redeploy is what would otherwise have to be redone by
+hand: connector credentials (a pairing per machine) and the conversations the
+user closed for voice (issue #12). Bindings are not kept: every connector
+re-registers its own on reconnect.
+"""
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
-from contextlib import contextmanager
 
 # Seconds before the next delivery attempt after the n-th failure; the last value repeats.
 RETRY_BACKOFF = (2, 5, 15, 60)
+HISTORY_KEYS = ('seq', 'id', 'thread', 'role', 'text', 'name', 'session', 'revision', 'time', 'status', 'audio_reason')
 
 
 def _hash(token):
@@ -17,182 +27,211 @@ def _hash(token):
 
 
 class RoomHistory:
+    MAX_MESSAGES = 2000
+
     def __init__(self, path):
+        # `path` names where the room keeps its durable state; a legacy database next to it is read once.
         self.path = Path(path)
-        self.ready = False
+        self.state_path = self.path if self.path.suffix == '.json' else self.path.with_name('room-state.json')
+        self.messages = OrderedDict()   # id -> row
+        self.seq = 0
+        self._bindings = {}             # id -> binding
+        self.pairing_codes = {}         # code -> {'expires', 'redeemed'}
+        self.connectors = {}            # id -> {'token_hash', 'host', 'created', 'last_seen', 'revoked'}
+        self.closed = {}                # thread -> notification row id
+        self._load_state()
 
-    @contextmanager
-    def connect(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path)
-        db.row_factory = sqlite3.Row
-        if not self.ready:
-            db.execute('''CREATE TABLE IF NOT EXISTS messages (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, thread TEXT,
-                role TEXT, text TEXT, name TEXT, session TEXT, revision INTEGER,
-                time INTEGER, status TEXT, language TEXT, payload TEXT)''')
-            columns = {r['name'] for r in db.execute('PRAGMA table_info(messages)')}
-            for column, ddl in (('audio_reason', 'TEXT'), ('attempts', 'INTEGER DEFAULT 0'), ('next_attempt', 'INTEGER DEFAULT 0')):
-                if column not in columns:
-                    db.execute(f'ALTER TABLE messages ADD COLUMN {column} {ddl}')
-            db.execute('CREATE TABLE IF NOT EXISTS closed_channels (thread TEXT PRIMARY KEY, notification TEXT)')
-            db.execute('''CREATE TABLE IF NOT EXISTS connectors (
-                id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, host TEXT, created INTEGER,
-                last_seen INTEGER, revoked INTEGER DEFAULT 0)''')
-            db.execute('CREATE TABLE IF NOT EXISTS pairing_codes (code TEXT PRIMARY KEY, expires INTEGER, redeemed INTEGER DEFAULT 0)')
-            db.execute('''CREATE TABLE IF NOT EXISTS bindings (
-                id TEXT PRIMARY KEY, connector TEXT NOT NULL, harness TEXT, thread TEXT NOT NULL,
-                title TEXT, created INTEGER, active INTEGER DEFAULT 1)''')
-            if 'inbound' not in {r['name'] for r in db.execute('PRAGMA table_info(bindings)')}:
-                # What the harness will do with what we post: delivered, or held for its user.
-                db.execute('ALTER TABLE bindings ADD COLUMN inbound TEXT')
-            db.commit(); self.ready = True
+    # ----- the durable file -----
+
+    def _load_state(self):
         try:
-            with db:
-                yield db
-        finally:
-            db.close()
+            data = json.loads(self.state_path.read_text())
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            self.connectors = {k: v for k, v in (data.get('connectors') or {}).items() if isinstance(v, dict)}
+            self.closed = {k: v for k, v in (data.get('closed_channels') or {}).items() if isinstance(k, str)}
+            return
+        self._import_legacy()
 
-    # ----- transcript and outbox -----
+    def _import_legacy(self):
+        """A room that kept a database gets its pairings and closed channels back, once; the database is not read again."""
+        legacy = self.state_path.with_name('room-history.sqlite3')
+        if not legacy.exists():
+            return
+        try:
+            db = sqlite3.connect(f'file:{legacy}?mode=ro', uri=True)
+            db.row_factory = sqlite3.Row
+            try:
+                for row in db.execute('SELECT id, token_hash, host, created, last_seen, revoked FROM connectors'):
+                    self.connectors[row['id']] = {'token_hash': row['token_hash'], 'host': row['host'], 'created': row['created'],
+                                                  'last_seen': row['last_seen'], 'revoked': int(row['revoked'] or 0)}
+                for row in db.execute('SELECT thread, notification FROM closed_channels'):
+                    self.closed[row['thread']] = row['notification']
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return
+        self._save_state()
 
-    def put(self, *, id, thread, role, text, name, session, revision, status,
-            language=None, payload=None):
-        with self.connect() as db:
-            previous = db.execute('SELECT * FROM messages WHERE id=?', (id,)).fetchone()
-            if previous:
-                if (previous['thread'], previous['text'], previous['revision'], previous['language']) != (thread, text, revision, language):
-                    raise ValueError('Identificador de mensaje ya usado con otro contenido')
-                return {**dict(previous), '_existing': True}
-            db.execute('INSERT INTO messages(id,thread,role,text,name,session,revision,time,status,language,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                       (id,thread,role,text,name,session,revision,int(time.time()*1000),status,language,json.dumps(payload) if payload else None))
-            return dict(db.execute('SELECT * FROM messages WHERE id=?',(id,)).fetchone())
+    def _save_state(self):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.state_path.with_suffix('.tmp')
+        temporary.write_text(json.dumps({'connectors': self.connectors, 'closed_channels': self.closed}, indent=1))
+        temporary.chmod(0o600)
+        os.replace(temporary, self.state_path)
+
+    # ----- transcript and outbox (memory only) -----
+
+    def put(self, *, id, thread, role, text, name, session, revision, status, language=None, payload=None):
+        previous = self.messages.get(id)
+        if previous:
+            if (previous['thread'], previous['text'], previous['revision'], previous['language']) != (thread, text, revision, language):
+                raise ValueError('Identificador de mensaje ya usado con otro contenido')
+            return {**previous, '_existing': True}
+        self.seq += 1
+        row = {'seq': self.seq, 'id': id, 'thread': thread, 'role': role, 'text': text, 'name': name, 'session': session,
+               'revision': revision, 'time': int(time.time() * 1000), 'status': status, 'language': language,
+               'payload': json.dumps(payload) if payload else None, 'audio_reason': None, 'attempts': 0, 'next_attempt': 0}
+        self.messages[id] = row
+        while len(self.messages) > self.MAX_MESSAGES:
+            oldest = next(iter(self.messages))
+            if self.messages[oldest]['status'] in {'pending', 'sending'}:
+                break   # never drop input that has not reached its harness
+            del self.messages[oldest]
+        return dict(row)
 
     def get(self, id):
-        with self.connect() as db:
-            row = db.execute('SELECT * FROM messages WHERE id=?', (id,)).fetchone()
-            return dict(row) if row else None
+        row = self.messages.get(id)
+        return dict(row) if row else None
 
     def update(self, id, status, reason=None):
-        with self.connect() as db:
-            db.execute('UPDATE messages SET status=?,audio_reason=? WHERE id=?',(status,reason,id))
+        row = self.messages.get(id)
+        if row:
+            row['status'], row['audio_reason'] = status, reason
 
     def defer(self, id, *, immediate=False):
-        """A delivery attempt failed or was lost: schedule the next one. At-least-once, never dropped."""
-        with self.connect() as db:
-            row = db.execute('SELECT attempts FROM messages WHERE id=?', (id,)).fetchone()
-            if not row:
-                return
-            attempts = (row['attempts'] or 0) + 1
-            delay = 0 if immediate else RETRY_BACKOFF[min(attempts, len(RETRY_BACKOFF)) - 1]
-            db.execute("UPDATE messages SET status='pending', attempts=?, next_attempt=? WHERE id=?",
-                       (attempts, int(time.time()) + delay, id))
+        """A delivery attempt failed or was lost: schedule the next one. At-least-once while the room runs."""
+        row = self.messages.get(id)
+        if not row:
+            return
+        row['attempts'] = (row['attempts'] or 0) + 1
+        delay = 0 if immediate else RETRY_BACKOFF[min(row['attempts'], len(RETRY_BACKOFF)) - 1]
+        row['status'], row['next_attempt'] = 'pending', int(time.time()) + delay
 
     def recover(self):
-        # A delivery that was in flight when we died is retried: the harness dedups by message_id.
-        with self.connect() as db:
-            db.execute("UPDATE messages SET status='pending' WHERE role='user' AND status='sending'")
-            db.execute("UPDATE messages SET status='interrupted',audio_reason='service_restarted' WHERE role='assistant' AND status IN ('queued','synthesizing','playing','waiting_for_turn','waiting_for_pause')")
+        # The journal starts empty with the process; a delivery in flight when it died is gone with it.
+        for row in self.messages.values():
+            if row['role'] == 'user' and row['status'] == 'sending':
+                row['status'] = 'pending'
+            elif row['role'] == 'assistant' and row['status'] in {'queued', 'synthesizing', 'playing', 'waiting_for_turn', 'waiting_for_pause'}:
+                row['status'], row['audio_reason'] = 'interrupted', 'service_restarted'
 
     def pending(self, now=None):
         now = int(now if now is not None else time.time())
-        with self.connect() as db:
-            rows = db.execute("SELECT * FROM messages WHERE role='user' AND status='pending' AND COALESCE(next_attempt,0)<=? ORDER BY seq LIMIT 32", (now,)).fetchall()
-            return [dict(r) for r in rows]
+        rows = [row for row in self.messages.values()
+                if row['role'] == 'user' and row['status'] == 'pending' and (row['next_attempt'] or 0) <= now]
+        return [dict(row) for row in rows[:32]]
 
     def history(self, thread=None):
-        with self.connect() as db:
-            rows = db.execute('SELECT * FROM messages '+('WHERE thread=? ' if thread else '')+'ORDER BY seq DESC LIMIT 1000', (thread,) if thread else ()).fetchall()
-            return [{k:r[k] for k in ('seq','id','thread','role','text','name','session','revision','time','status','audio_reason')} for r in reversed(rows)]
+        rows = [row for row in self.messages.values() if thread is None or row['thread'] == thread]
+        return [{key: row[key] for key in HISTORY_KEYS} for row in rows[-1000:]]
+
+    # ----- closed channels (durable) -----
 
     def closed_channels(self):
-        with self.connect() as db:
-            return {r['thread']: r['notification'] for r in db.execute('SELECT * FROM closed_channels')}
+        return dict(self.closed)
 
     def close_channel(self, thread, notification):
-        with self.connect() as db:
-            db.execute('INSERT OR IGNORE INTO closed_channels VALUES(?,?)', (thread, notification))
+        if thread not in self.closed:
+            self.closed[thread] = notification
+            self._save_state()
 
     def open_channel(self, thread):
-        with self.connect() as db:
-            db.execute('DELETE FROM closed_channels WHERE thread=?', (thread,))
+        if self.closed.pop(thread, None) is not None:
+            self._save_state()
 
-    # ----- connectors: pairing and credentials -----
+    # ----- connectors: pairing and credentials (durable) -----
 
     def create_pairing_code(self, ttl=600):
+        now = int(time.time())
+        self.pairing_codes = {code: entry for code, entry in self.pairing_codes.items() if entry['expires'] >= now}
         code = secrets.token_hex(4).upper()
-        with self.connect() as db:
-            db.execute('DELETE FROM pairing_codes WHERE expires<?', (int(time.time()),))
-            db.execute('INSERT INTO pairing_codes VALUES(?,?,0)', (code, int(time.time()) + ttl))
+        self.pairing_codes[code] = {'expires': now + ttl, 'redeemed': False}
         return code
 
     def redeem_pairing_code(self, code, host=''):
         """One-time exchange: a valid code becomes a connector credential. Returns (id, token) or None."""
-        with self.connect() as db:
-            row = db.execute('SELECT * FROM pairing_codes WHERE code=?', ((code or '').strip().upper(),)).fetchone()
-            if not row or row['redeemed'] or row['expires'] < int(time.time()):
-                return None
-            db.execute('UPDATE pairing_codes SET redeemed=1 WHERE code=?', (row['code'],))
-            connector_id, token = str(uuid.uuid4()), secrets.token_urlsafe(32)
-            db.execute('INSERT INTO connectors(id,token_hash,host,created,last_seen,revoked) VALUES(?,?,?,?,?,0)',
-                       (connector_id, _hash(token), host[:200], int(time.time()), int(time.time())))
-            return connector_id, token
+        entry = self.pairing_codes.get((code or '').strip().upper())
+        if not entry or entry['redeemed'] or entry['expires'] < int(time.time()):
+            return None
+        entry['redeemed'] = True
+        connector_id, token = str(uuid.uuid4()), secrets.token_urlsafe(32)
+        now = int(time.time())
+        self.connectors[connector_id] = {'token_hash': _hash(token), 'host': (host or '')[:200], 'created': now, 'last_seen': now, 'revoked': 0}
+        self._save_state()
+        return connector_id, token
 
     def authenticate_connector(self, connector_id, token):
         if not isinstance(connector_id, str) or not isinstance(token, str) or not token:
             return False
-        with self.connect() as db:
-            row = db.execute('SELECT token_hash, revoked FROM connectors WHERE id=?', (connector_id,)).fetchone()
-            if not row or row['revoked'] or not secrets.compare_digest(row['token_hash'], _hash(token)):
-                return False
-            db.execute('UPDATE connectors SET last_seen=? WHERE id=?', (int(time.time()), connector_id))
-            return True
+        entry = self.connectors.get(connector_id)
+        if not entry or entry.get('revoked') or not secrets.compare_digest(entry['token_hash'], _hash(token)):
+            return False
+        entry['last_seen'] = int(time.time())
+        self._save_state()
+        return True
 
     def revoke_connector(self, connector_id):
-        with self.connect() as db:
-            db.execute('UPDATE connectors SET revoked=1 WHERE id=?', (connector_id,))
-            db.execute('UPDATE bindings SET active=0 WHERE connector=?', (connector_id,))
+        entry = self.connectors.get(connector_id)
+        if entry:
+            entry['revoked'] = 1
+            self._save_state()
+        for binding in self._bindings.values():
+            if binding['connector'] == connector_id:
+                binding['active'] = 0
 
     def connectors(self):
-        with self.connect() as db:
-            return [dict(r) for r in db.execute('SELECT id, host, created, last_seen, revoked FROM connectors ORDER BY created')]
+        return [{'id': cid, 'host': e.get('host'), 'created': e.get('created'), 'last_seen': e.get('last_seen'), 'revoked': e.get('revoked', 0)}
+                for cid, e in sorted(self.connectors.items(), key=lambda item: item[1].get('created') or 0)]
 
-    # ----- bindings: which connector serves which conversation -----
+    # ----- bindings: which connector serves which conversation (memory only) -----
 
     def register_binding(self, connector, *, harness, thread, title=None, binding_id=None, inbound=None):
-        """Server-minted ids. Re-registering an existing binding requires owning it."""
+        """Server-minted ids. Reusing another connector's binding is refused; an id this room no longer
+        knows (it restarted) is simply a fresh registration, so a façade never stays joined to nothing."""
         if not isinstance(thread, str) or not thread or len(thread) > 200:
             raise ValueError('A conversation identifier is required')
-        with self.connect() as db:
-            if binding_id:
-                row = db.execute('SELECT * FROM bindings WHERE id=?', (binding_id,)).fetchone()
-                if not row or row['connector'] != connector:
-                    raise ValueError('Unknown or foreign binding')
-            else:
-                row = db.execute('SELECT * FROM bindings WHERE connector=? AND thread=? AND active=1 ORDER BY created DESC', (connector, thread)).fetchone()
-            payload = json.dumps(inbound) if inbound is not None else None
-            if row:
-                db.execute('UPDATE bindings SET active=1, harness=?, title=COALESCE(?, title), inbound=COALESCE(?, inbound) WHERE id=?',
-                           (harness, title, payload, row['id']))
-                return self.binding(row['id'])
-            binding_id = str(uuid.uuid4())
-            db.execute('INSERT INTO bindings(id,connector,harness,thread,title,created,active,inbound) VALUES(?,?,?,?,?,?,1,?)',
-                       (binding_id, connector, harness, thread, title, int(time.time()), payload))
-        return self.binding(binding_id)
+        row = self._bindings.get(binding_id) if binding_id else None
+        if row and row['connector'] != connector:
+            raise ValueError('Unknown or foreign binding')
+        if row is None:
+            candidates = [b for b in self._bindings.values() if b['connector'] == connector and b['thread'] == thread and b['active']]
+            row = max(candidates, key=lambda b: b['created']) if candidates else None
+        if row:
+            row['active'], row['harness'] = 1, harness
+            if title:
+                row['title'] = title
+            if inbound is not None:
+                row['inbound'] = json.dumps(inbound)
+            return dict(row)
+        new = {'id': str(uuid.uuid4()), 'connector': connector, 'harness': harness, 'thread': thread, 'title': title,
+               'created': int(time.time()), 'active': 1, 'inbound': json.dumps(inbound) if inbound is not None else None}
+        self._bindings[new['id']] = new
+        return dict(new)
 
     def binding(self, binding_id):
-        with self.connect() as db:
-            row = db.execute('SELECT * FROM bindings WHERE id=?', (binding_id,)).fetchone()
-            return dict(row) if row else None
+        row = self._bindings.get(binding_id)
+        return dict(row) if row else None
 
     def binding_for_thread(self, thread):
-        with self.connect() as db:
-            row = db.execute('SELECT * FROM bindings WHERE thread=? AND active=1 ORDER BY created DESC', (thread,)).fetchone()
-            return dict(row) if row else None
+        candidates = [b for b in self._bindings.values() if b['thread'] == thread and b['active']]
+        return dict(max(candidates, key=lambda b: b['created'])) if candidates else None
 
     def bindings(self):
-        with self.connect() as db:
-            return [dict(r) for r in db.execute('SELECT * FROM bindings WHERE active=1 ORDER BY created')]
+        return [dict(b) for b in sorted(self._bindings.values(), key=lambda b: b['created']) if b['active']]
 
     def deactivate_binding(self, connector, binding_id):
-        with self.connect() as db:
-            db.execute('UPDATE bindings SET active=0 WHERE id=? AND connector=?', (binding_id, connector))
+        row = self._bindings.get(binding_id)
+        if row and row['connector'] == connector:
+            row['active'] = 0

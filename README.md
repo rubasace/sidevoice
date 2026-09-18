@@ -24,12 +24,14 @@ publishes a conversational version to the room. There is no separate voice opera
 - Replies arriving while you speak wait for your turn and a configurable pause.
 - Written messages alongside voice; cancel a microphone draft before it is sent.
 - Switch between registered conversations and close their voice channels.
-- Persistent room history and delivery receipts. Accepted does not mean read.
+- Room history for the session and delivery receipts. Accepted does not mean read.
+  The room writes nothing anyone said to disk; only pairings and closed channels
+  survive a restart.
 - Global and per-language voice/speed settings, samples and reset.
 - Spanish, English, French, Italian, Brazilian Portuguese and Hindi voices.
 
 Closing a channel hides it from the room, suppresses its audio and queues an
-instruction to continue in writing. It preserves the task and room history.
+instruction to continue in writing. It preserves the task and the session's history.
 
 ## Current requirements
 
@@ -164,7 +166,7 @@ support, real multi-device use or every browser.
 - Validate real refinement sessions, reconnection and noisy microphones.
 - Simplify setup and validate Windows/mobile clients.
 - Package remote deployment behind an HTTPS reverse proxy.
-- Add TTS/STT engines and permanent room-history deletion.
+- Add TTS/STT engines.
 
 ## Data and license
 

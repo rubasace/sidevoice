@@ -80,8 +80,12 @@ render records no provider duration, because it never made that request.
 
 ## Persistence and playback
 
-SQLite stores the transcript and durable outbox. Input delivery can outlive a
-call. Acceptance by the harness is not a read acknowledgement. Uncertain attempted
+The journal (transcripts, outbox, spoken-reply states) lives in memory and dies with
+the process: the room writes nothing anyone said to disk. One small file,
+`room-state.json`, keeps what would otherwise be redone by hand after a redeploy:
+connector credentials and the conversations closed for voice. Bindings are not
+kept; every connector re-registers its own on reconnect. Input delivery can outlive a
+call while the room runs. Acceptance by the harness is not a read acknowledgement. Uncertain attempted
 deliveries are not automatically retried.
 
 Playback completion comes from the browser, not synthesis completion or a timer.

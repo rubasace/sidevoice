@@ -215,8 +215,9 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(self.hub.journal.history('a')), 1)
         self.c.worker.queue_frames.assert_not_awaited()
 
-    async def test_pending_inputs_persist_with_original_destination_after_disconnect(self):
+    async def test_pending_inputs_keep_their_original_destination_after_disconnect(self):
         import json
+        from pathlib import Path
         from sidevoice.room_history import RoomHistory
         await self.hub.activate({'thread_id': 'a'})
         self.c.user_started()
@@ -224,16 +225,17 @@ class RoomTests(IsolatedAsyncioTestCase):
         await self.hub.activate({'thread_id': 'b'})
         self.c.enqueue_input('Todavía para A')
         self.c.disconnect()
-        recovered = RoomHistory(self.hub.journal.path)
-        recovered.recover()
-        row = recovered.pending()[0]
+        row = self.hub.journal.pending()[0]
         payload = json.loads(row['payload'])
         self.assertEqual((payload['thread_id'], payload['revision']), ('a', original_revision))
-        recovered.update(row['id'], 'sending')
-        recovered.recover()
-        # At-least-once: a delivery in flight when the room died is retried, never abandoned.
-        self.assertEqual(len(recovered.pending()), 1)
-        self.assertEqual(recovered.history()[0]['status'], 'pending')
+        self.hub.journal.update(row['id'], 'sending')
+        self.hub.journal.recover()
+        # At-least-once while the room runs: a delivery marked in flight is retried, never abandoned.
+        self.assertEqual(len(self.hub.journal.pending()), 1)
+        self.assertEqual(self.hub.journal.history()[0]['status'], 'pending')
+        # Nothing said is on disk: a new room starts with an empty journal.
+        self.assertEqual(RoomHistory(self.hub.journal.path).history(), [])
+        self.assertFalse(any(p.suffix.startswith('.sqlite') for p in Path(self.temp.name).iterdir()))
 
     async def test_identical_words_in_distinct_turns_are_not_deduplicated(self):
         await self.hub.activate({'thread_id': 'a'})

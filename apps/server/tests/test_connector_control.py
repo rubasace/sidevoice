@@ -63,6 +63,43 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.journal.revoke_connector(first[0])
         self.assertFalse(self.journal.authenticate_connector(*first))
 
+    async def test_pairings_and_closed_channels_survive_a_restart_but_the_journal_does_not(self):
+        from sidevoice.room_history import RoomHistory
+        self.journal.close_channel('thread-x', 'notice-1')
+        self.queue_input('thread-x', 'Said before the restart')
+        restarted = RoomHistory(self.journal.path)
+        self.assertTrue(restarted.authenticate_connector(self.connector_id, self.token))
+        self.assertEqual(restarted.closed_channels(), {'thread-x': 'notice-1'})
+        self.assertEqual(restarted.history(), [])
+        self.assertEqual(restarted.bindings(), [])
+        self.assertEqual(oct(restarted.state_path.stat().st_mode)[-3:], '600')
+
+    async def test_a_legacy_database_is_imported_once_for_its_pairings(self):
+        import sqlite3
+        from sidevoice.room_history import RoomHistory
+        root = Path(self.temp.name) / 'legacy'
+        root.mkdir()
+        db = sqlite3.connect(root / 'room-history.sqlite3')
+        db.execute('CREATE TABLE connectors (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, host TEXT, created INTEGER, last_seen INTEGER, revoked INTEGER DEFAULT 0)')
+        db.execute('CREATE TABLE closed_channels (thread TEXT PRIMARY KEY, notification TEXT)')
+        db.execute('CREATE TABLE messages (id TEXT, text TEXT)')
+        db.execute("INSERT INTO connectors VALUES ('old-connector', ?, 'laptop', 1, 2, 0)", (__import__('hashlib').sha256(b'old-token').hexdigest(),))
+        db.execute("INSERT INTO closed_channels VALUES ('thread-old', 'notice-old')")
+        db.execute("INSERT INTO messages VALUES ('m', 'a transcript that must stay where it is')")
+        db.commit(); db.close()
+        journal = RoomHistory(root / 'room-state.json')
+        self.assertTrue(journal.authenticate_connector('old-connector', 'old-token'))
+        self.assertEqual(journal.closed_channels(), {'thread-old': 'notice-old'})
+        self.assertEqual(journal.history(), [])
+        self.assertTrue((root / 'room-state.json').exists())
+        self.assertTrue((root / 'room-history.sqlite3').exists(), 'the old database is left for the operator to delete')
+
+    async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):
+        binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id='gone-after-restart')
+        self.assertNotEqual(binding['id'], 'gone-after-restart')
+        again = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id=binding['id'])
+        self.assertEqual(again['id'], binding['id'])
+
     async def test_hello_must_authenticate_and_match_protocol(self):
         bad, task = await self.run_connection([{'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': 'wrong'}])
         await task
@@ -71,7 +108,7 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(old.closed, 1008); self.assertEqual(old.sent[0]['type'], 'connector.error')
 
-    async def test_register_mints_id_focuses_room_and_rejects_foreign_reuse(self):
+    async def test_register_mints_id_focuses_room_and_an_unknown_id_is_a_fresh_registration(self):
         socket, task = await self.run_connection([
             {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
             {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
@@ -83,8 +120,11 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         registered = socket.sent[1]
         self.assertEqual(registered['client_ref'], 'r1'); self.assertEqual(registered['thread'], 'sess-1')
         self.assertTrue(self.control.is_live(registered['binding_id']))
-        self.assertEqual(self.hub.activated, [{'thread_id': 'sess-1', 'title': 'Trabajo'}])
-        self.assertEqual([f['client_ref'] for f in socket.sent if f['type'] == 'binding.rejected'], ['r2', 'r3'])
+        self.assertEqual(self.hub.activated[0], {'thread_id': 'sess-1', 'title': 'Trabajo'})
+        # An id the room does not know (it restarted) is not foreign: the same connector gets its binding back.
+        reused = [f for f in socket.sent if f['type'] == 'binding.registered' and f['client_ref'] == 'r2']
+        self.assertEqual(reused[0]['binding_id'], registered['binding_id'])
+        self.assertEqual([f['client_ref'] for f in socket.sent if f['type'] == 'binding.rejected'], ['r3'])
         self.assertEqual(self.journal.binding_for_thread('sess-1')['id'], registered['binding_id'])
         task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
