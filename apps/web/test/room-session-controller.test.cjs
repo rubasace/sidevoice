@@ -672,6 +672,10 @@ test('A shared reply keeps one bubble when live delivery and history name differ
  await s.run('refreshHistory()');
  assert.equal(s.run('history.length'),1,'history reconciles with that same bubble');
  assert.equal(s.run('history[0].segment'),'mobile:voice:shared');
+ s.run("history.push({...history[0],segment:'s:voice:shared',session:'s'})");
+ assert.equal(s.run('history.length'),2,'an old tab may already contain both aliases');
+ await s.run('refreshHistory()');
+ assert.equal(s.run('history.length'),1,'refresh removes the pre-fix alias');
 });
 
 test('Stopping playback reports it for this browser and keeps the shared message',()=>{
