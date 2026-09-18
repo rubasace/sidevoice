@@ -13,6 +13,7 @@ export function CallToolbar() {
           <div className="device-notes"><div><p id="audio-device-note" role="status" /><p id="screen-note" role="status" /></div><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos">↻</Button></div>
         </div>
         <div className="call-actions">
+          <span id="screen-lock" className="screen-lock" role="status" hidden><i className="screen-lock-dot" aria-hidden="true" /><span id="screen-lock-text" className="sr-only" /></span>
           <span id="engine-badge" className="engine-badge" role="status" hidden />
           <div id="mic-control" className="mic-control" data-muted="false">
             <span id="mic-level-meter" className="sr-only" role="meter" aria-label="Nivel de micrófono" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0} />

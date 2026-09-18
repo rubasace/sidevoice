@@ -452,6 +452,39 @@ test('Wake lock is released if hangup wins the pending request',async()=>{
  await pending;
  assert.equal(released,1);assert.equal(s.run('screenWakeLock'),null);
 });
+test('The tap that starts the call asks for the lock, before there is a socket',async()=>{
+ const s=setup();let requests=0;
+ s.context.navigator={wakeLock:{request:async()=>{requests++;return {release:async()=>{},addEventListener(){}}}}};
+ s.run('connecting=true');
+ await s.run('keepScreenAwake()');
+ assert.equal(requests,1,'a lock asked for while connecting keeps the gesture Safari needs');
+ assert.equal(s.run("$('screen-lock').hidden"),false);
+ assert.equal(s.run("$('screen-lock').dataset.state"),'on');
+});
+test('A refused lock shows red and says so, instead of failing silently',async()=>{
+ const s=setup();
+ s.context.navigator={wakeLock:{request:async()=>{throw Error('NotAllowedError')}}};
+ s.run('ws={}');
+ await s.run('keepScreenAwake()');
+ assert.equal(s.run("$('screen-lock').dataset.state"),'off');
+ assert.match(s.run("$('screen-lock-text').textContent"),/No se pudo/);
+});
+test('A lock the system takes back is asked for again while the call is up, and not after it ends',async()=>{
+ const s=setup();let requests=0,release=null;const scheduled=[];
+ s.context.setTimeout=fn=>{scheduled.push(fn);return 0};
+ s.context.navigator={wakeLock:{request:async()=>{requests++;return {release:async()=>{},addEventListener:(name,fn)=>{if(name==='release')release=fn}}}}};
+ s.run('ws={}');
+ await s.run('keepScreenAwake()');
+ assert.equal(requests,1);
+ release();
+ assert.equal(s.run("$('screen-lock').dataset.state"),'off');
+ assert.equal(scheduled.length,1,'the retry waits rather than spinning');
+ await scheduled.pop()();
+ assert.equal(requests,2);
+ s.run('ws=null');
+ release();
+ assert.equal(scheduled.length,0,'a call that ended does not keep the screen awake');
+});
 test('Failed and cancelled microphone changes preserve or release the right stream',async()=>{
  const s=setup();let resolve,stopped=0;
  s.run("ws={};captureNode={};stream={getAudioTracks:()=>[{enabled:true}]}");

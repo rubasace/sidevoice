@@ -27,7 +27,7 @@ let ws=null,stream=null,sessionId=null,connecting=false,connectEpoch=0,micEnable
 window.sidevoiceSessionId=()=>sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false,userLive=false,botLive=false,pendingUser=null,pendingUserText='';
 let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0;
-let screenWakeLock=null,wakeRequest=null,wakeEpoch=0;
+let screenWakeLock=null,wakeRequest=null,wakeEpoch=0,wakeRetries=0;
 const waveLevels=Array(3).fill(0);
 function micTrack(){return stream?.getAudioTracks?.()[0]||null}
 function applyMicState(){const track=micTrack();if(track)track.enabled=micEnabled}
@@ -44,25 +44,41 @@ async function acquireMicrophone(id=inputDeviceId){
  return next;
 }
 function audioSession(active){try{if(navigator.audioSession)navigator.audioSession.type=active?'play-and-record':'auto'}catch{}}
+/* The light by the call controls, because the sentence under them lives in the device
+ * panel and a phone in a car never has that panel open. */
+function showScreenLock(state,note){
+ const light=$('screen-lock'),text=$('screen-lock-text');
+ if(light){light.hidden=!state;if(state)light.dataset.state=state}
+ if(text)text.textContent=state?note:'';
+ $('screen-note').textContent=note;
+}
 async function keepScreenAwake(){
- if(!ws||document.hidden||screenWakeLock||wakeRequest)return;
- if(!globalThis.navigator?.wakeLock?.request){$('screen-note').textContent='Este navegador no permite mantener la pantalla encendida.';return}
- const epoch=wakeEpoch,socket=ws;
+ // Asked for while connecting too: Safari grants the lock to the tap that started the
+ // call, and by the end of the preparation chain that gesture has expired.
+ if(!(ws||connecting)||document.hidden||screenWakeLock||wakeRequest)return;
+ if(!globalThis.navigator?.wakeLock?.request){showScreenLock('off','Este navegador no permite mantener la pantalla encendida.');return}
+ const epoch=wakeEpoch;
  const request=(async()=>{
   try{
    const lock=await navigator.wakeLock.request('screen');
-   if(epoch!==wakeEpoch||ws!==socket||document.hidden){await lock.release();return}
-   screenWakeLock=lock;$('screen-note').textContent='Pantalla activa durante la llamada.';
-   lock.addEventListener('release',()=>{if(screenWakeLock===lock){screenWakeLock=null;$('screen-note').textContent='La pantalla puede apagarse; vuelve a la sala para mantenerla activa.'}});
-  }catch{$('screen-note').textContent='No se pudo mantener la pantalla activa. El móvil podría suspender la llamada.'}
+   if(epoch!==wakeEpoch||document.hidden){await lock.release();return}
+   screenWakeLock=lock;wakeRetries=0;showScreenLock('on','Pantalla activa durante la llamada.');
+   // The system takes the lock back on its own — a screen that locked once, a route
+   // change. While the call is up and the room is on screen, ask again.
+   lock.addEventListener('release',()=>{
+    if(screenWakeLock!==lock)return;
+    screenWakeLock=null;showScreenLock('off','La pantalla puede apagarse; vuelve a la sala para mantenerla activa.');
+    if(ws&&!document.hidden&&wakeRetries<3){++wakeRetries;setTimeout(()=>{if(ws&&!document.hidden)keepScreenAwake()},1000)}
+   });
+  }catch{showScreenLock('off','No se pudo mantener la pantalla activa. El móvil podría suspender la llamada.')}
  })();
  wakeRequest=request;
  try{await request}finally{if(wakeRequest===request)wakeRequest=null}
 }
 function releaseScreenWakeLock(){
- ++wakeEpoch;const lock=screenWakeLock;screenWakeLock=null;wakeRequest=null;
+ ++wakeEpoch;const lock=screenWakeLock;screenWakeLock=null;wakeRequest=null;wakeRetries=0;
  if(lock)lock.release().catch(()=>{});
- $('screen-note').textContent='';
+ showScreenLock('','');
 }
 function addAudioOption(select,value,label){const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option)}
 async function refreshAudioDevices(){
@@ -405,7 +421,7 @@ function disconnect(){
  $('connect').title='Entrar en la sala';$('connect').setAttribute('aria-label','Entrar en la sala');
  $('mute').classList.remove('holding');updateMic();
 }
-$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await openSession(socket,{settings:voicePreferences,transcription:sttRuntime});if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await openSession(socket,{settings:voicePreferences,transcription:sttRuntime});if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
 function speedLimits(model){return providerFor(model)==='elevenlabs'?[.7,1.2]:[.5,2]}
 function effectiveSpeed(model,value){const [min,max]=speedLimits(model);return Math.max(min,Math.min(max,Number(value)||1))}
 function updateSpeedRange(){
