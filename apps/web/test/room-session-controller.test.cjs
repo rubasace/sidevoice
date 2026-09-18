@@ -744,3 +744,30 @@ test('The engine badge says what this call uses, in a few words',()=>{
  assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',turn_end_mode:'smart_turn'},{model:'onnx-community/whisper-tiny',device:'wasm',fallback_from:'webgpu'})"),'Whisper tiny · CPU (GPU falló) · smart-turn');
  s.run("showEngineBadge('x')");assert.equal(s.run("$('engine-badge').hidden"),false);s.run("showEngineBadge('')");assert.equal(s.run("$('engine-badge').hidden"),true);
 });
+
+test('One bubble per turn: bars while listening, slower while transcribing, kept through a merge, replaced by the text',()=>{
+ const s=setup();const views=[];
+ s.context.window.sidevoiceUI={setConversation:v=>views.push(v),setParticipants(){},setLanguageModels(){},setBootError(){}};
+ s.run("roomBinding={thread_id:'a',title:'A'};sessionId='s';window.roomVoice={cancel(){}}");
+ const emit=(type,data)=>s.run('message('+JSON.stringify(JSON.stringify({type,data}))+')');
+ emit('voice-user-turn',{phase:'started',revision:1,thread_id:'a'});
+ assert.equal(views.at(-1).pendingPhase,'listening');assert.equal(views.at(-1).pendingText,'');
+ emit('user-stopped-speaking',{});assert.equal(views.at(-1).pendingPhase,'transcribing');
+ emit('voice-user-turn',{phase:'started',revision:2,thread_id:'a'});assert.equal(views.at(-1).pendingPhase,'listening');
+ emit('voice-user-turn',{phase:'cancelled',revision:1,thread_id:'a',text:'Pero bueno,',merged:true});
+ assert.equal(views.at(-1).pendingPhase,'listening','a merged turn keeps the bubble open');
+ emit('voice-user-turn',{phase:'finished',revision:2,thread_id:'a',text:'Pero bueno, sigo.'});
+ assert.equal(views.at(-1).pendingPhase,'');assert.equal(views.at(-1).messages.at(-1).text,'Pero bueno, sigo.');
+ emit('voice-user-turn',{phase:'started',revision:3,thread_id:'a'});emit('voice-user-turn',{phase:'cancelled',revision:3,thread_id:'a',text:''});
+ assert.equal(views.at(-1).pendingPhase,'','a real cancel closes the bubble');
+});
+
+test('The stages view lists the last turn in order with bars scaled to the longest stage',()=>{
+ const s=setup();
+ s.run("renderLatencyStages({reply_revision:4,input_ms:{endpoint_silence_ms:610,recognition_ms:900,transcript_to_delivery_ms:12},server_ms:{input_queued_to_reply_received_ms:9000},browser_ms:{audio_received_to_playback_scheduled_ms:40}})");
+ const items=s.run("$('stats-stages').children.map(li=>[li.children[0].textContent,!!li.children[1].hidden,li.children[1].style.width||'',li.children[2].textContent])");
+ assert.equal(JSON.stringify(items[0]),JSON.stringify(['Silencio hasta cerrar el turno',false,'7%','610 ms']));
+ assert.equal(JSON.stringify(items[2]),JSON.stringify(['Whisper en este navegador',true,'','—']));
+ assert.equal(JSON.stringify(items[4]),JSON.stringify(['Agente: entrega → primera respuesta',false,'100%','9.00 s']));
+ assert.match(s.run("$('stats-stages-note').textContent"),/Turno 4/);
+});

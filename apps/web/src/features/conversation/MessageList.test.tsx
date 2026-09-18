@@ -46,3 +46,9 @@ test("keeps the active transcribed draft cancellable after listening text disapp
   fireEvent.click(screen.getByRole("button", { name: "Cancelar envío" }));
   expect(cancelInput).toHaveBeenCalledOnce();
 });
+
+test("shows listening bars in the live bubble while a turn is open and no text has arrived", () => {
+  const { container } = render(<MessageList conversation={{ messages: [], pendingText: "", pendingCancellable: true, pendingPhase: "transcribing" }} />);
+  expect(container.querySelector(".voice-bars")?.getAttribute("data-phase")).toBe("transcribing");
+  expect(container.querySelector(".empty")).toBeNull();
+});

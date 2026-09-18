@@ -27,6 +27,8 @@ export interface ConversationView {
   messages: ChatMessage[];
   pendingText: string;
   pendingCancellable: boolean;
+  /** While a turn is open the bubble shows bars instead of text: listening, then transcribing. */
+  pendingPhase?: "" | "listening" | "transcribing";
 }
 
 export interface ParticipantView {
