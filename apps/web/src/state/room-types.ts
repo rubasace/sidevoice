@@ -20,6 +20,7 @@ export interface ChatMessage {
   audio?: string;
   audioNote?: string;
   karaoke?: KaraokeRange | null;
+  playback?: "pending" | "playing" | "complete";
 }
 
 export interface ConversationView {

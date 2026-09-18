@@ -18,10 +18,17 @@ test("renders consecutive incoming messages as one WhatsApp-style group with one
 });
 
 test("keeps a live user draft visible beside a newly queued reply and renders karaoke declaratively", () => {
-  const { container } = render(<MessageList conversation={view([message({ segment: "voice", text: "Respuesta activa", karaoke: { from: 10, to: 16, mode: "word" } })], "Sigo hablando…")} />);
+  const { container } = render(<MessageList conversation={view([message({ segment: "voice", text: "Respuesta activa ahora", playback: "playing", karaoke: { from: 10, to: 16, mode: "word" } })], "Sigo hablando…")} />);
   expect(screen.getByText("Sigo hablando…")).toBeInTheDocument();
+  expect(container.querySelector(".karaoke-played")?.textContent).toBe("Respuesta ");
   expect(container.querySelector("mark")?.textContent).toBe("activa");
+  expect(container.querySelector(".karaoke-upcoming")?.textContent).toBe(" ahora");
   expect(screen.getByRole("button", { name: "Cancelar envío" })).toBeInTheDocument();
+});
+
+test("marks an assistant message as visually pending before playback starts", () => {
+  const { container } = render(<MessageList conversation={view([message({ segment: "voice", text: "Todavía sin reproducir", playback: "pending" })])} />);
+  expect(container.querySelector('.karaoke-text')?.getAttribute('data-playback')).toBe('pending');
 });
 
 test("keeps the active transcribed draft cancellable after listening text disappears", () => {

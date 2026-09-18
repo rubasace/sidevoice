@@ -42,7 +42,7 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 .audio-devices-panel p{line-height:1.5}.audio-devices-panel p:empty{display:none}
 #mute{width:48px;height:48px;border:0;border-radius:50%;background:#3c4043;color:#e8eaed}#mute::before{display:none}#mute[aria-pressed=true]{background:#ea4335;color:white}#mute svg{width:24px;height:24px}
 .mic-wave{height:30px;display:flex;align-items:center;gap:3px;margin-left:12px}.mic-wave i{width:3px;height:3px;border-radius:3px;background:#8ab4f8;transition:height 80ms linear}.mic-control[data-signal=clip] .mic-wave i{background:#ff7272}
-.karaoke-current{background:#b8d8ff;color:#10243c;border-radius:4px;padding:1px 0;box-shadow:0 0 0 2px #b8d8ff}.karaoke-text{white-space:pre-wrap}
+.karaoke-current{background:#b8d8ff;color:#10243c;border-radius:4px;padding:1px 0;box-shadow:0 0 0 2px #b8d8ff}.karaoke-text{white-space:pre-wrap;transition:opacity .14s ease,color .14s ease}.karaoke-text[data-playback=pending],.karaoke-text[data-playback=playing]:not([data-progress]){color:#aebac1;opacity:.5}.karaoke-played{opacity:1}.karaoke-upcoming{opacity:.38;transition:opacity .12s ease}
 /* Meet-style split audio control; the device selectors extend the same tray upwards. */
 .call-bar{display:flex;justify-content:center;padding:12px 20px;background:#14171b;border-top:0}
 .call-bar .controls{display:block;position:relative;flex:none;max-width:calc(100vw - 24px);padding:12px;background:#202124;border-radius:36px;transition:width .15s}

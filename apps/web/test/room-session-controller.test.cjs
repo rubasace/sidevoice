@@ -501,6 +501,17 @@ test('Playing receipts carry only measured browser durations without delaying pl
  assert.equal(receipts.find(r=>r.status==='playback_finished').timings_ms,undefined);
 });
 
+test('Assistant text moves from pending to playing to complete with browser playout',async()=>{
+ const s=setup();let playing,finish;
+ s.context.fetch=async()=>({ok:true,json:async()=>({})});
+ s.context.window.roomVoice={cancel(){},speak:(_d,_status,onPlaying)=>{playing=onPlaying;return new Promise(resolve=>finish=resolve)}};
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Hola mundo'})");
+ assert.equal(s.run("karaokeNodes.get('s:voice:u').node.dataset.playback"),'pending');
+ playing();
+ assert.equal(s.run("karaokeNodes.get('s:voice:u').node.dataset.playback"),'playing');
+ finish();await pending;
+ assert.equal(s.run("karaokeNodes.get('s:voice:u').node.dataset.playback"),'complete');
+});
 test('Karaoke preserves full text, survives history redraw and clears when interrupted',()=>{
  const s=setup();
  s.run("var speech={session_id:'s',utterance_id:'u'};activeSpeech=speech;add('assistant','Hola <mundo>','voice:u','a');updateKaraoke(speech,{from:5,to:12,mode:'word'})");
