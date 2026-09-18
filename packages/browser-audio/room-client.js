@@ -38,6 +38,13 @@ class RoomVoice {
   element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;
   try{await element.play()}catch{return}
   this.output={sink,element};
+  // iOS interrupts the page's audio when the user pulls down notifications or switches apps; an element left
+  // playing through that comes back as a stuck buzz. Pause it while the page is hidden or the context is not
+  // running, and resume when both are back.
+  const settle=()=>{const away=(typeof document!=='undefined'&&document.hidden)||this.context.state!=='running';if(away)element.pause();else element.play().catch(()=>{})};
+  if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',settle);
+  if(this.context.addEventListener)this.context.addEventListener('statechange',settle);
+  this.output.settle=settle;
  }
  get destination(){return this.output?.sink||this.context.destination}
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}

@@ -109,3 +109,14 @@ test('Speech leaves through a media element when the context can feed one, so ec
 test('Without media-element output the context destination is used, as before',async()=>{
  const s=setup();await s.voice.unlock();assert.equal(s.voice.output,null);assert.equal(s.voice.destination,s.voice.context.destination);
 });
+
+test('Output pauses while the page is hidden or the context is interrupted, and resumes after',async()=>{
+ const s=setup();const sink={stream:{}};let paused=0,played=0;const listeners={};
+ s.context.Audio=class{async play(){played++}pause(){paused++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};s.voice.context=context;
+ await s.voice.unlock();assert.equal(played,1);
+ s.context.document.hidden=true;listeners.visibilitychange();assert.equal(paused,1);
+ s.context.document.hidden=false;context.state='interrupted';listeners.statechange();assert.equal(paused,2);
+ context.state='running';listeners.statechange();assert.equal(played,2);
+});
