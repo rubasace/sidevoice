@@ -430,7 +430,7 @@ function modelInfoButton(id){
 document.addEventListener('click',()=>document.querySelectorAll('.model-info[aria-expanded=true]').forEach(button=>button.setAttribute('aria-expanded','false')));
 
 function providerFor(model){return modelInfo(model||'kokoro').provider||'kokoro'}
-function entriesFor(select,entries,value){select.replaceChildren();const values=new Set(entries.map(entry=>entry[0]));if(value&& !values.has(value))entries=[[value,value],...entries];for(const [id,label] of entries){const option=document.createElement('option');option.value=id;option.textContent=label;select.append(option)}select.value=value||entries[0]?.[0]||''}
+function entriesFor(select,entries,value){select.replaceChildren();const values=new Set(entries.map(entry=>entry[0]));if(value&& !values.has(value))entries=[[value,value],...entries];for(const [id,label,disabled] of entries){const option=document.createElement('option');option.value=id;option.textContent=label;if(disabled)option.disabled=true;select.append(option)}const usable=entries.filter(entry=>!entry[2]);select.value=usable.some(entry=>entry[0]===value)?value:(usable[0]?.[0]??'')}
 function elevenVoiceItems(){return voiceCatalog?.providers?.elevenlabs?.voices||[]}
 function conciseVoiceLabel(label){return String(label||"").split(" · ")[0].trim()}
 function voicesFor(model,language,showAll=false){
@@ -527,36 +527,37 @@ function renderTranscription(){
  const provider=$('stt-provider').value||voicePreferences?.stt_provider||'browser',entry=sttProvider(provider),modelSelect=$('stt-model');
  $('stt-browser-options').hidden=provider!=='browser';$('stt-credential').hidden=provider!=='openai';
  $('stt-provider-note').textContent=entry?.note||'';
- let models=[];
+ const current=modelSelect.value,saved=voicePreferences?.stt_provider===provider?voicePreferences?.stt_model:null;
  if(provider==='browser'){
-  models=(entry?.models||[]).filter(model=>sttCapabilities.models?.includes(model.id)&&model.devices?.some(device=>sttCapabilities[device]));
+  // Processing comes first: what this browser can run decides which models are offered.
+  const device=$('stt-device'),savedDevice=device.value||voicePreferences?.stt_device||'auto',entries=[['auto','Automático']];
+  if(sttCapabilities.webgpu)entries.push(['webgpu','GPU · WebGPU']);
+  if(sttCapabilities.wasm)entries.push(['wasm','CPU · WebAssembly']);
+  entriesFor(device,entries,entries.some(([id])=>id===savedDevice)?savedDevice:'auto');
+  const effective=device.value==='auto'?(sttCapabilities.webgpu?'webgpu':'wasm'):device.value;
+  $('stt-device-note').textContent=device.value==='auto'?(sttCapabilities.webgpu?'Automático usará la GPU: WebGPU está disponible en este navegador.':'Automático usará la CPU: WebGPU no está disponible en este navegador.'):(effective==='webgpu'?'Aceleración WebGPU.':'Procesamiento en CPU mediante WebAssembly.');
+  const all=entry?.models||[];
+  const runnable=model=>!!model.devices?.includes(effective)&&!!sttCapabilities.models?.includes(model.id);
+  const reason=model=>!model.devices?.includes(effective)?(effective==='wasm'?'requiere GPU':'solo CPU'):'no disponible en este navegador';
+  const enabled=all.filter(runnable),ids=enabled.map(model=>model.id);
+  const preferred=ids.includes(current)?current:ids.includes(saved)?saved:ids.includes(entry?.default_model)?entry.default_model:ids[0];
+  entriesFor(modelSelect,all.map(model=>[model.id,runnable(model)?model.label:model.label+' · '+reason(model),!runnable(model)]),preferred);
+  modelSelect.disabled=!enabled.length;
+  const selected=all.find(model=>model.id===modelSelect.value);
+  setInfoContent($("stt-model-info"),selected?.description||"");
+  $("stt-model-note").textContent=enabled.length?"":"Ningún modelo local puede correr con este procesamiento en este navegador.";
  }else{
-  models=entry?.models||[];const state=sttCredentials.openai,remote=sttRemote.openai;
+  const models=entry?.models||[],state=sttCredentials.openai,remote=sttRemote.openai;
   $('stt-key-state').textContent=state?.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: OpenAI no podrá transcribir hasta que guardes una.';
   $('stt-key-clear').disabled=!state?.configured||state.source==='environment';
   modelSelect.disabled=remote.loading;
- }
- const current=modelSelect.value,saved=voicePreferences?.stt_provider===provider?voicePreferences?.stt_model:null;
- const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(provider==='openai'?(saved||entry?.default_model||models[0]?.id):(models.some(model=>model.id===entry?.default_model)?entry.default_model:models[0]?.id));
- const loadingRemote=provider==='openai'&&sttRemote.openai.loading;
- entriesFor(modelSelect,loadingRemote?[['','Cargando modelos de OpenAI…']]:models.map(model=>[model.id,model.label]),loadingRemote?'':preferred);
- if(provider==='browser'){
-  modelSelect.disabled=false;
-  const selected=models.find(model=>model.id===modelSelect.value),device=$('stt-device'),savedDevice=device.value||voicePreferences?.stt_device||'auto',entries=[];
-  const supported=(selected?.devices||[]).filter(value=>sttCapabilities[value]);
-  if(supported.length)entries.push(['auto','Automático']);
-  if(supported.includes('webgpu'))entries.push(['webgpu','GPU · WebGPU']);
-  if(supported.includes('wasm'))entries.push(['wasm','CPU · WebAssembly']);
-  entriesFor(device,entries,entries.some(([id])=>id===savedDevice)?savedDevice:(entries[0]?.[0]||''));
-  device.disabled=!entries.length;
-  const effective=device.value==='auto'?(supported.includes('webgpu')?'webgpu':'wasm'):device.value;
-  $('stt-device-note').textContent=!entries.length?'Este modelo no es compatible con este navegador.':device.value==='auto'?'Automático usará '+(effective==='webgpu'?'WebGPU.':'CPU mediante WebAssembly.'):(effective==='webgpu'?'Aceleración WebGPU disponible.':'Procesamiento CPU mediante WebAssembly.');
-  const description=selected?.description||"";setInfoContent($("stt-model-info"),description);$("stt-model-note").textContent="";
- }else{
-  const remote=sttRemote.openai,selected=models.find(model=>model.id===modelSelect.value);
+  const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(saved||entry?.default_model||models[0]?.id);
+  entriesFor(modelSelect,remote.loading?[['','Cargando modelos de OpenAI…']]:models.map(model=>[model.id,model.label]),remote.loading?'':preferred);
+  const selected=models.find(model=>model.id===modelSelect.value);
   const description=remote.loading?"Consultando los modelos disponibles en tu cuenta…":remote.error||selected?.description||(models.length?models.length+" modelos compatibles cargados directamente desde OpenAI.":"OpenAI no devolvió modelos compatibles para esta cuenta.");setInfoContent($("stt-model-info"),description);$("stt-model-note").textContent=remote.loading||remote.error?description:"";
  }
 }
+
 async function loadTranscriptionModels(provider,refresh=false){
  if(provider!=='openai'||!sttCatalog)return;
  const remote=sttRemote.openai;if(remote.loading||remote.loaded&&!refresh)return;

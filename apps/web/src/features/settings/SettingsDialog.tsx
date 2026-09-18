@@ -13,8 +13,8 @@ function VoiceSettings() {
   return (
     <section id="pane-voice" aria-labelledby="settings-voice">
       <h3>Voces</h3><p className="muted">Elige una voz por defecto y personalízala por idioma.</p>
-      <label>Procesamiento en el navegador<NativeSelect id="tts-device" defaultValue="auto"><option value="auto">GPU automática · CPU si no está disponible</option><option value="webgpu">GPU</option><option value="wasm">CPU</option></NativeSelect></label>
       <ModelPicker label="Modelo por defecto" id="default-model" infoId="default-model-info"><option value="kokoro">Kokoro · 82M</option></ModelPicker>
+      <label>Procesamiento en el navegador<NativeSelect id="tts-device" defaultValue="auto"><option value="auto">GPU automática · CPU si no está disponible</option><option value="webgpu">GPU</option><option value="wasm">CPU</option></NativeSelect></label>
       <div id="elevenlabs-credential" hidden>
         <label>Clave de API de ElevenLabs<input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Clave de ElevenLabs" /></label>
         <p className="muted" id="elevenlabs-key-state" role="status" />
@@ -36,8 +36,8 @@ function TranscriptionSettings() {
     <section id="pane-transcription" aria-labelledby="settings-transcription" hidden>
       <h3>Transcripción</h3><p className="muted">Configura cómo se reconoce lo que dices.</p>
       <label>Motor de transcripción<NativeSelect id="stt-provider" /></label><p className="muted" id="stt-provider-note" />
+      <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note" /></div>
       <ModelPicker label="Modelo" id="stt-model" infoId="stt-model-info" /><p className="muted" id="stt-model-note" />
-      <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note">Selecciona primero un modelo.</p></div>
       <div id="stt-credential" hidden><label>Clave de API de OpenAI<input id="stt-key" type="password" placeholder="sk-…" autoComplete="off" spellCheck={false} /></label><p className="muted" id="stt-key-state" role="status" /><div className="stt-key-actions"><Button id="stt-key-save" size="compact">Guardar clave</Button><Button id="stt-key-clear" size="compact">Quitar clave</Button></div></div>
       <label>Idioma al transcribir<NativeSelect id="stt-language"><option value="auto">Detectar automáticamente</option><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
       <p className="muted" id="stt-apply-note">Los cambios entre modelos locales se aplican durante la llamada. Cambiar entre navegador y OpenAI requiere volver a entrar. El modelo elegido es de este dispositivo: un móvil puede usar tiny mientras un ordenador usa turbo.</p>

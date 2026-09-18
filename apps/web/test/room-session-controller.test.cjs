@@ -46,19 +46,21 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),true);
 });
 
-test('STT settings expose only models supported by the detected browser runtime',()=>{
+test('Processing comes first and decides which local models are offered',()=>{
  const s=setup({strictDOM:true});
- s.run("voicePreferences={stt_provider:'browser',stt_device:'auto',stt_model:'onnx-community/whisper-small'};sttCatalog={providers:[{id:'browser',label:'Browser',models:[{id:'onnx-community/whisper-tiny',label:'Tiny',description:'light',devices:['webgpu','wasm']},{id:'onnx-community/whisper-small',label:'Small',description:'quality',devices:['webgpu']}]},{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[{id:'gpt-4o-transcribe',label:'GPT'}]}]};sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny']};$('stt-provider').value='browser';renderTranscription()");
- assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny']);
- s.run("sttCapabilities.models.push('onnx-community/whisper-small');renderTranscription()");
- assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
- s.run("$('stt-model').value='onnx-community/whisper-small';$('stt-model').onchange()");
- assert.equal(s.run("$('stt-model-note').textContent"),'');
+ s.run("voicePreferences={stt_provider:'browser',stt_device:'auto',stt_model:'onnx-community/whisper-small'};sttCatalog={providers:[{id:'browser',label:'Browser',models:[{id:'onnx-community/whisper-tiny',label:'Tiny',description:'light',devices:['webgpu','wasm']},{id:'onnx-community/whisper-small',label:'Small',description:'quality',devices:['webgpu']}]},{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[{id:'gpt-4o-transcribe',label:'GPT'}]}]};sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-small']};$('stt-provider').value='browser';renderTranscription()");
+ assert.deepEqual(s.run("$('stt-device').children.map(x=>x.value)"),['auto','webgpu','wasm']);
+ assert.match(s.run("$('stt-device-note').textContent"),/usará la GPU/);
+ assert.equal(JSON.stringify(s.run("$('stt-model').children.map(x=>[x.value,!!x.disabled])")),JSON.stringify([['onnx-community/whisper-tiny',false],['onnx-community/whisper-small',false]]));
+ assert.equal(s.run("$('stt-model').value"),'onnx-community/whisper-small');
  assert.equal(s.run("$('stt-model-info').dataset.tooltip"),'quality');
- assert.deepEqual(s.run("$('stt-device').children.map(x=>x.value)"),['auto','webgpu']);
  s.run("$('stt-device').value='wasm';$('stt-device').onchange()");
- assert.equal(s.run("$('stt-device').value"),'auto');
- assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
+ assert.equal(JSON.stringify(s.run("$('stt-model').children.map(x=>[x.textContent,!!x.disabled])")),JSON.stringify([['Tiny',false],['Small · requiere GPU',true]]));
+ assert.equal(s.run("$('stt-model').value"),'onnx-community/whisper-tiny','a model the processing cannot run is never left selected');
+ s.run("sttCapabilities={webgpu:false,wasm:true,models:['onnx-community/whisper-tiny']};$('stt-device').value='auto';renderTranscription()");
+ assert.deepEqual(s.run("$('stt-device').children.map(x=>x.value)"),['auto','wasm']);
+ assert.match(s.run("$('stt-device-note').textContent"),/no está disponible/);
+ assert.equal(JSON.stringify(s.run("$('stt-model').children.map(x=>[x.textContent,!!x.disabled])")),JSON.stringify([['Tiny',false],['Small · requiere GPU',true]]));
 });
 
 test('OpenAI remains selectable and shows its credential controls',()=>{
