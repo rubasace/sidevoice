@@ -8,7 +8,7 @@ is published from a laptop.
 | --- | --- |
 | Pull request | Nothing. The suites run and the image is built for both platforms, never pushed. |
 | Push to `main` | The image, as `:latest` and `:sha-<commit>`. |
-| Tag `v<version>` | The image as `:<version>`, `:<major>.<minor>` and `:stable`; the client to npm; a GitHub release. |
+| Tag `v<version>` | The image as `:<version>`, `:<major>.<minor>` and `:stable`; the client **staged** on npm, awaiting your approval; a GitHub release. |
 
 `latest` follows `main`, so it runs ahead of the newest release. Pull `stable`
 for the newest release, `X.Y.Z` for one in particular, and a digest for an exact
@@ -37,8 +37,24 @@ git push origin v0.3.0
 ```
 
 `release.yml` checks the tag against the manifests, runs the whole CI on it,
-publishes the image and the client, and opens the GitHub release with generated
-notes plus the pull and pairing commands. A tag with a hyphen — `v0.3.0-rc.1` —
+publishes the image, stages the client, and opens the GitHub release with
+generated notes plus the pull and pairing commands.
+
+The client is the one thing a release does not finish on its own:
+
+```sh
+npm stage list @sidevoice/uplink
+npm stage approve <stage-id>      # asks for your second factor
+```
+
+or npmjs.com → the package → **Staged Packages**, which is where a passkey
+works. Until it is approved the version does not exist for anyone: it is absent
+from `npm view`, and `npm install` keeps resolving to the last approved one. The
+provenance built in CI travels with it to the live version.
+
+A release is irreversible where it touches npm — a version number is spent even
+if it is later unpublished — so that step ends with a person on a trusted
+device, while everything reproducible happens without one. A tag with a hyphen — `v0.3.0-rc.1` —
 is published as a pre-release and moves neither `stable` nor `X.Y`.
 
 Tags are what people pull, so a bad release is corrected by cutting the next
@@ -99,11 +115,14 @@ part npm cannot automate — a trusted publisher can only be configured on a
 package that already exists. What is left is to configure it, once:
 
 > the package page → Settings → **Trusted publisher** → GitHub Actions,
-> repository `rubasace/sidevoice`, workflow `release.yml`
+> repository `rubasace/sidevoice`, workflow `release.yml`, no environment, and
+> **stage-only** — do not allow a direct `npm publish`
 
-From then on the release publishes over OIDC with no token anywhere, and npm
-attaches provenance by itself. There is no switch to turn publishing on: a
-release that cannot publish fails, which is the point.
+From then on the release authenticates over OIDC with no token anywhere, and npm
+attaches provenance by itself. Stage-only means the registry, not this
+repository's YAML, is what refuses a version that no human approved: a workflow
+someone tampered with cannot make one live. There is no switch to turn
+publishing on — a release that cannot stage fails, which is the point.
 
 Worth knowing if a package is ever published by hand again. npm stopped
 accepting new authenticator-app enrolments in September 2026 — new 2FA is
