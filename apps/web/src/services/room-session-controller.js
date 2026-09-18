@@ -530,12 +530,14 @@ function renderTranscription(){
  const current=modelSelect.value,saved=voicePreferences?.stt_provider===provider?voicePreferences?.stt_model:null;
  if(provider==='browser'){
   // Processing comes first: what this browser can run decides which models are offered.
+  // The browser may offer WebGPU and still fail to load Whisper on it (iPhone); that failure is remembered per device.
+  const gpuFailed=!!storedPreferences().stt_gpu_failed;
   const device=$('stt-device'),savedDevice=device.value||voicePreferences?.stt_device||'auto',entries=[['auto','Automático']];
-  if(sttCapabilities.webgpu)entries.push(['webgpu','GPU · WebGPU']);
+  if(sttCapabilities.webgpu)entries.push(['webgpu',gpuFailed?'GPU · WebGPU (falló al cargar Whisper aquí)':'GPU · WebGPU']);
   if(sttCapabilities.wasm)entries.push(['wasm','CPU · WebAssembly']);
   entriesFor(device,entries,entries.some(([id])=>id===savedDevice)?savedDevice:'auto');
-  const effective=device.value==='auto'?(sttCapabilities.webgpu?'webgpu':'wasm'):device.value;
-  $('stt-device-note').textContent=device.value==='auto'?(sttCapabilities.webgpu?'Automático usará la GPU: WebGPU está disponible en este navegador.':'Automático usará la CPU: WebGPU no está disponible en este navegador.'):(effective==='webgpu'?'Aceleración WebGPU.':'Procesamiento en CPU mediante WebAssembly.');
+  const effective=device.value==='auto'?(sttCapabilities.webgpu&&!gpuFailed?'webgpu':'wasm'):device.value;
+  $('stt-device-note').textContent=device.value==='auto'?(!sttCapabilities.webgpu?'Automático usará la CPU: WebGPU no está disponible en este navegador.':gpuFailed?'Automático usará la CPU: este navegador ofrece WebGPU pero no pudo cargar Whisper con ella.':'Automático usará la GPU: WebGPU está disponible en este navegador.'):(effective==='webgpu'?'Aceleración WebGPU. Si falla al cargar, se pasará a CPU.':'Procesamiento en CPU mediante WebAssembly.');
   const all=entry?.models||[];
   const runnable=model=>!!model.devices?.includes(effective)&&!!sttCapabilities.models?.includes(model.id);
   const reason=model=>!model.devices?.includes(effective)?(effective==='wasm'?'requiere GPU':'solo CPU'):'no disponible en este navegador';

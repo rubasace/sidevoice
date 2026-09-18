@@ -61,7 +61,15 @@ test('Processing comes first and decides which local models are offered',()=>{
  assert.deepEqual(s.run("$('stt-device').children.map(x=>x.value)"),['auto','wasm']);
  assert.match(s.run("$('stt-device-note').textContent"),/no está disponible/);
  assert.equal(JSON.stringify(s.run("$('stt-model').children.map(x=>[x.textContent,!!x.disabled])")),JSON.stringify([['Tiny',false],['Small · requiere GPU',true]]));
+
+ // A GPU that already failed to load Whisper here makes automatic mean CPU, and says so.
+ s.context.localStorage={getItem:key=>key==='sidevoice.settings'?JSON.stringify({stt_gpu_failed:true}):null,setItem(){},removeItem(){}};
+ s.run("sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-small']};$('stt-device').value='auto';renderTranscription()");
+ assert.match(s.run("$('stt-device-note').textContent"),/no pudo cargar Whisper/);
+ assert.match(s.run("$('stt-device').children[1].textContent"),/falló/);
+ assert.equal(JSON.stringify(s.run("$('stt-model').children.map(x=>!!x.disabled)")),JSON.stringify([false,true]));
 });
+
 
 test('OpenAI remains selectable and shows its credential controls',()=>{
  const s=setup({strictDOM:true});
