@@ -94,6 +94,27 @@ undone.
 
 ### npm
 
+Done: `@sidevoice/uplink@0.2.0` was published by hand on 2026-09-18, which is the
+part npm cannot automate — a trusted publisher can only be configured on a
+package that already exists. What is left is to configure it, once:
+
+> the package page → Settings → **Trusted publisher** → GitHub Actions,
+> repository `rubasace/sidevoice`, workflow `release.yml`
+
+From then on the release publishes over OIDC with no token anywhere, and npm
+attaches provenance by itself. There is no switch to turn publishing on: a
+release that cannot publish fails, which is the point.
+
+Worth knowing if a package is ever published by hand again. npm stopped
+accepting new authenticator-app enrolments in September 2026 — new 2FA is
+passkeys and security keys only — and a passkey cannot be used from a terminal.
+Neither a web login nor the account's `auth-only` mode exempts a publish: npm
+answers `EOTP` regardless. The only path left for a first publish is a
+**granular access token with the bypass-2FA option enabled**, scoped *read and
+write* to `@sidevoice`, revoked as soon as the publish returns.
+
+<details><summary>The first time, before the package existed</summary>
+
 The scope `@sidevoice` and the unscoped name `sidevoice-uplink` were both
 unregistered when this was written, so either is available.
 
@@ -122,11 +143,7 @@ unregistered when this was written, so either is available.
    release publishes over OIDC with no token at all: delete the `NPM_TOKEN`
    secret if you created one, and the `NODE_AUTH_TOKEN` block in
    `.github/workflows/release.yml` with it.
-5. Set the repository variable **`PUBLISH_NPM`** to `true` (Settings → Secrets
-   and variables → Actions → Variables). That is the switch the release reads.
-
-Publishing over OIDC attaches provenance automatically, which is why the release
-asks for `id-token: write`.
+</details>
 
 ### The server as a Python package
 
