@@ -1,0 +1,17 @@
+.git
+.github
+.venv*
+.voice-poc
+.codex
+.claude
+node_modules
+**/node_modules
+**/dist
+**/__pycache__
+*.log
+*.sqlite*
+.env
+.env.*
+docs
+experiments
+skills

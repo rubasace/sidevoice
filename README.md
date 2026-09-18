@@ -76,6 +76,16 @@ are called by the room, so their keys are stored by the room, never by the
 browser, and the room itself has no access control yet — do not expose it
 publicly with a key installed.
 
+## Run the room from the image
+
+```sh
+docker run -d --name sidevoice -p 127.0.0.1:8767:8767 -v sidevoice-data:/data \
+  ghcr.io/rubasace/sidevoice:latest
+```
+
+Every push to `main` publishes `:latest`; tagged versions publish `:X.Y.Z` with a GitHub
+release. Room data lives in `/data`. See [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Connect a conversation
 
 The agent's harness gets one MCP server (`sidevoice mcp`) and the
