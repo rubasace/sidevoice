@@ -63,13 +63,11 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.journal.revoke_connector(first[0])
         self.assertFalse(self.journal.authenticate_connector(*first))
 
-    async def test_pairings_and_closed_channels_survive_a_restart_but_the_journal_does_not(self):
+    async def test_pairings_survive_a_restart_but_the_journal_does_not(self):
         from sidevoice.room_history import RoomHistory
-        self.journal.close_channel('thread-x', 'notice-1')
         self.queue_input('thread-x', 'Said before the restart')
         restarted = RoomHistory(self.journal.path)
         self.assertTrue(restarted.authenticate_connector(self.connector_id, self.token))
-        self.assertEqual(restarted.closed_channels(), {'thread-x': 'notice-1'})
         self.assertEqual(restarted.history(), [])
         self.assertEqual(restarted.bindings(), [])
         self.assertEqual(oct(restarted.state_path.stat().st_mode)[-3:], '600')
@@ -84,15 +82,31 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         db.execute('CREATE TABLE closed_channels (thread TEXT PRIMARY KEY, notification TEXT)')
         db.execute('CREATE TABLE messages (id TEXT, text TEXT)')
         db.execute("INSERT INTO connectors VALUES ('old-connector', ?, 'laptop', 1, 2, 0)", (__import__('hashlib').sha256(b'old-token').hexdigest(),))
-        db.execute("INSERT INTO closed_channels VALUES ('thread-old', 'notice-old')")
         db.execute("INSERT INTO messages VALUES ('m', 'a transcript that must stay where it is')")
         db.commit(); db.close()
         journal = RoomHistory(root / 'room-state.json')
         self.assertTrue(journal.authenticate_connector('old-connector', 'old-token'))
-        self.assertEqual(journal.closed_channels(), {'thread-old': 'notice-old'})
         self.assertEqual(journal.history(), [])
         self.assertTrue((root / 'room-state.json').exists())
         self.assertTrue((root / 'room-history.sqlite3').exists(), 'the old database is left for the operator to delete')
+
+    async def test_closing_from_the_room_tells_the_connector_and_forgets_the_binding(self):
+        socket, task = await self.run_connection([
+            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
+            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
+        ])
+        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        await self.control.close_binding(self.journal.binding(registered['binding_id']))
+        closing = [f for f in socket.sent if f['type'] == 'binding.close']
+        self.assertEqual((closing[0]['binding_id'], closing[0]['thread'], closing[0]['reason']), (registered['binding_id'], 'sess-1', 'closed_from_room'))
+        self.assertFalse(self.control.is_live(registered['binding_id']))
+        self.assertIsNone(self.journal.binding_for_thread('sess-1'))
+        # Speech from a binding the room closed is refused, so nothing is stored for it.
+        socket.incoming.append({'type': 'speech.publish', 'event_id': 'sp', 'binding_id': registered['binding_id'], 'session_id': 's', 'revision': 1, 'text': 'tarde'})
+        await asyncio.sleep(.1)
+        rejected = [f for f in socket.sent if f['type'] == 'speech.published' and f.get('event_id') == 'sp']
+        self.assertEqual(rejected[0]['status'], 'rejected')
+        task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id='gone-after-restart')

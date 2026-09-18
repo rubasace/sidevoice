@@ -255,7 +255,7 @@ def mount_presentation(app):
 
     @app.get('/api/presentation/participants')
     async def participants():
-                return {'participants': available_participants(), 'closed_threads': list(hub.journal.closed_channels())}
+                return {'participants': available_participants()}
 
     @app.post('/api/presentation/select')
     async def select_participant(payload: dict, request: Request):

@@ -83,8 +83,8 @@ render records no provider duration, because it never made that request.
 The journal (transcripts, outbox, spoken-reply states) lives in memory and dies with
 the process: the room writes nothing anyone said to disk. One small file,
 `room-state.json`, keeps what would otherwise be redone by hand after a redeploy:
-connector credentials and the conversations closed for voice. Bindings are not
-kept; every connector re-registers its own on reconnect. Input delivery can outlive a
+connector credentials. Bindings are not kept; every connector re-registers its own on
+reconnect. Input delivery can outlive a
 call while the room runs. Acceptance by the harness is not a read acknowledgement. Uncertain attempted
 deliveries are not automatically retried.
 
@@ -92,9 +92,10 @@ Playback completion comes from the browser, not synthesis completion or a timer.
 Replies can wait for the user to finish and the configured grace period to pass.
 Audio already interrupted by the user is not automatically replayed.
 
-Closing persists closed membership, suppresses audio and queues an instruction
-to continue in writing. The task keeps working. Closed channels disappear from
-the UI; history remains stored internally. Cancelling microphone input applies
+Closing a conversation's voice from the room removes its binding: the connector is
+told and forgets it, input still waiting for it is marked not sent, and the agent's
+next `voice_say` fails with the reason. The room remembers nothing; joining again is
+the agent's explicit `voice_connect` on the user's request. Cancelling microphone input applies
 only to the still-active turn, before outbox insertion.
 
 ## Adapter boundary

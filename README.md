@@ -23,15 +23,15 @@ publishes a conversational version to the room. There is no separate voice opera
 - Interrupt speech without automatically cancelling the agent's work.
 - Replies arriving while you speak wait for your turn and a configurable pause.
 - Written messages alongside voice; cancel a microphone draft before it is sent.
-- Switch between registered conversations and close their voice channels.
+- Switch between registered conversations and close their voice channels: the
+  agent's next attempt to speak fails with the reason and it continues in writing.
 - Room history for the session and delivery receipts. Accepted does not mean read.
-  The room writes nothing anyone said to disk; only pairings and closed channels
-  survive a restart.
+  The room writes nothing anyone said to disk; only pairings survive a restart.
 - Global and per-language voice/speed settings, samples and reset.
 - Spanish, English, French, Italian, Brazilian Portuguese and Hindi voices.
 
-Closing a channel hides it from the room, suppresses its audio and queues an
-instruction to continue in writing. It preserves the task and the session's history.
+Closing a channel removes that conversation's connection to the room; the task
+keeps working and joins again only when you ask it to.
 
 ## Current requirements
 

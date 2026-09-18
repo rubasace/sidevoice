@@ -105,7 +105,6 @@ class LatencyIntegrationTest(unittest.IsolatedAsyncioTestCase):
         hub = Room(MagicMock())
         hub.target = {'thread_id': 'a'}
         hub.journal.put.return_value = {}
-        hub.journal.closed_channels.return_value = {}
         call = RoomClient('s', hub, worker=AsyncMock())
         call.connected = True
         events = []

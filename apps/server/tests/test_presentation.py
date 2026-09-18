@@ -438,25 +438,29 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(sum(e['type']=='voice-speech' for e in events),1)
         self.c.disconnect()
 
-    async def test_close_channel_persists_notifies_once_and_blocks_late_voice(self):
+    async def test_close_channel_removes_the_binding_and_drops_waiting_input(self):
         from sidevoice.presentation import Speech
-        from sidevoice.room_history import RoomHistory
+        record = self.hub.journal.register_binding('conn-1', harness='test', thread='a')
         await self.hub.activate({'thread_id':'a'})
+        self.c.user_started()
+        self.c.enqueue_input('Todavía en cola')
         rev = self.c.revision
         first = await self.hub.close_channel('a')
         second = await self.hub.close_channel('a')
-        self.assertEqual(first, second)
+        self.assertEqual(first, {'status': 'closed', 'binding_id': record['id']})
+        self.assertEqual(second, {'status': 'closed', 'binding_id': None})
         self.assertTrue(self.c.connected)
         self.assertIsNone(self.c.target['thread_id'])
-        self.assertIn('a', RoomHistory(self.hub.journal.path).closed_channels())
-        pending = self.hub.journal.pending()
-        self.assertEqual(len(pending), 1)
-        import json
-        self.assertEqual(json.loads(pending[0]['payload'])['channel'], 'room-control')
+        self.assertIsNone(self.hub.journal.binding_for_thread('a'))
+        self.assertEqual(self.hub.journal.pending(), [])
+        self.assertEqual(self.hub.journal.history('a')[-1]['status'], 'not_sent')
+        # Nothing durable records the closure: a new room knows nothing about it.
+        from pathlib import Path
+        self.assertFalse(Path(self.hub.journal.state_path).exists())
         reply = await self.hub.publish(Speech(thread_id='a',session_id=self.c.id,revision=rev,text='Late',utterance_id='late'))
-        self.assertEqual(reply['reason'], 'channel_closed')
+        self.assertEqual(reply['status'], 'text_only')
         await self.hub.activate({'thread_id':'a'})
-        self.assertNotIn('a', self.hub.journal.closed_channels())
+        self.assertEqual(self.hub.target['thread_id'], 'a')
 
     async def test_cancelled_mic_turn_cannot_enter_outbox_but_next_turn_can(self):
         await self.hub.activate({'thread_id':'a'})

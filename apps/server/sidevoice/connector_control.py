@@ -149,6 +149,19 @@ class ConnectorControl:
         if message.get('focus', True):
             await self.hub.activate({'thread_id': binding['thread'], 'title': binding['title']})
 
+    async def close_binding(self, record):
+        """The user closed this conversation's voice from the room: its connector forgets the binding."""
+        connector_id = self.live.pop(record['id'], None)
+        self.journal.deactivate_binding(record['connector'], record['id'])
+        self.inflight.pop(record['id'], None)
+        socket = self.sockets.get(connector_id or '')
+        if socket is not None:
+            try:
+                await socket.send_json({'type': 'binding.close', 'binding_id': record['id'], 'thread': record['thread'],
+                                        'reason': 'closed_from_room'})
+            except Exception:
+                pass
+
     async def unregister(self, connector_id, message):
         binding_id = message.get('binding_id')
         if self.live.get(binding_id) == connector_id:

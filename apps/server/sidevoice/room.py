@@ -520,9 +520,7 @@ class Room:
         for client in self.listeners():
             client.latency.reply(payload.utterance_id, payload.thread_id, payload.revision)
         reason = None
-        if payload.thread_id in self.journal.closed_channels():
-            reason = 'channel_closed'
-        elif not self.listeners():
+        if not self.listeners():
             reason = 'call_ended'
         elif payload.session_id not in self.sessions:
             reason = 'session_changed'
@@ -592,37 +590,35 @@ class Room:
     # ----- which conversation the room is pointed at -----
 
     async def close_channel(self, thread_id):
+        """Closing a conversation's voice from the room removes its binding, nothing more.
+
+        The connector that served it is told and forgets it; the agent's next
+        `voice_say` fails with that reason and it continues in writing; the room
+        keeps no record, so re-enabling is just the agent joining again.
+        """
         async with self.activation_lock:
-            previous = self.journal.closed_channels().get(thread_id)
-            if previous:
-                return {'status': 'closed', 'notification_id': previous}
-            message_id = str(uuid.uuid4())
-            row_id = 'channel-close:' + message_id
-            speaker = next(iter(self.clients), 'room-control')
-            text = ('He cerrado el canal de voz de esta tarea desde la sala. '
-                    'Continúa solo por escrito y deja de publicar respuestas por voz hasta que '
-                    'te pida explícitamente activar la voz de nuevo. No detengas el trabajo. '
-                    'No actives la voz para confirmar este mensaje.')
-            payload = {'channel': 'room-control', 'thread_id': thread_id, 'text': text,
-                       'message_id': message_id, 'session_id': speaker, 'revision': self.revision,
-                       'history_id': row_id}
-            self.journal.put(id=row_id, thread=thread_id, role='user', text=text, name='Tú',
-                             session=speaker, revision=self.revision, status='pending', payload=payload)
-            self.journal.close_channel(thread_id, row_id)
+            record = self.journal.binding_for_thread(thread_id)
+            if record:
+                if self.control:
+                    await self.control.close_binding(record)
+                else:
+                    self.journal.deactivate_binding(record['connector'], record['id'])
+            # Input still waiting for that conversation will not be delivered to a voice it no longer has.
+            for row in self.journal.pending():
+                if row['thread'] == thread_id:
+                    self.journal.update(row['id'], 'not_sent', 'channel_closed')
             for client in self.clients.values():
                 if client.turn_target.get('thread_id') == thread_id:
                     client.cancelled_turn = client.turn_revision
             if (binding() or {}).get('thread_id') == thread_id:
                 await self._activate({})
-            return {'status': 'closed', 'notification_id': row_id}
+            return {'status': 'closed', 'binding_id': record['id'] if record else None}
 
     async def activate(self, target):
         async with self.activation_lock:
             return await self._activate(target)
 
     async def _activate(self, target):
-        if target.get('thread_id'):
-            self.journal.open_channel(target['thread_id'])
         current = binding()
         if current and current.get('thread_id') == target.get('thread_id') and (not target.get('title') or current.get('title') == target.get('title')):
             self.target = current
@@ -664,8 +660,7 @@ class Room:
                          'clients': len(self.clients), 'audio': self.assets.stats(),
                          'utterances': [u.snapshot() for u in self.utterances.values()]},
                 'clients': [c.identity() for c in self.clients.values()],
-                'call': client.snapshot() if client else None,
-                'closed_threads': list(self.journal.closed_channels()) if self.journal else []}
+                'call': client.snapshot() if client else None}
 
     def latency_snapshot(self, session_id=None):
         client = self.clients.get(session_id)

@@ -157,8 +157,8 @@ replying normally in writing. A later message's voice metadata alone does not
 override that explicit preference. Do not confuse this with “stop talking” as a
 temporary audio interruption, or an explicit instruction to stop the actual work.
 
-A message whose header says `channel: room-control` is an instruction from the
-room (typically: the user closed this conversation's voice channel; continue in
-writing). It is not a voice turn to acknowledge aloud: stop publishing speech
-until the user explicitly enables voice again. The room enforces the closure on
-its side as well, so a `voice_say` after it is stored as text only.
+The user can also close this conversation's voice channel from the room. That
+removes the connection: the next `voice_say` fails saying so, and `voice_status`
+reports it. Treat it exactly like the explicit request above: continue in
+writing, do not retry speech, and call `voice_connect` again only when the user
+asks for voice.

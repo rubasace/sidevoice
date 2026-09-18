@@ -3,9 +3,9 @@
 Nothing anyone says is written to disk by the room: transcripts, the outbox and
 the state of every spoken reply live only while the room runs (issue #1). What
 survives a restart or a redeploy is what would otherwise have to be redone by
-hand: connector credentials (a pairing per machine) and the conversations the
-user closed for voice (issue #12). Bindings are not kept: every connector
-re-registers its own on reconnect.
+hand: connector credentials, one pairing per machine (issue #12). Bindings are
+not kept: every connector re-registers its own on reconnect, and closing a
+conversation's voice from the room simply removes its binding.
 """
 import hashlib
 import json
@@ -38,7 +38,6 @@ class RoomHistory:
         self._bindings = {}             # id -> binding
         self.pairing_codes = {}         # code -> {'expires', 'redeemed'}
         self.connectors = {}            # id -> {'token_hash', 'host', 'created', 'last_seen', 'revoked'}
-        self.closed = {}                # thread -> notification row id
         self._load_state()
 
     # ----- the durable file -----
@@ -50,12 +49,11 @@ class RoomHistory:
             data = None
         if isinstance(data, dict):
             self.connectors = {k: v for k, v in (data.get('connectors') or {}).items() if isinstance(v, dict)}
-            self.closed = {k: v for k, v in (data.get('closed_channels') or {}).items() if isinstance(k, str)}
             return
         self._import_legacy()
 
     def _import_legacy(self):
-        """A room that kept a database gets its pairings and closed channels back, once; the database is not read again."""
+        """A room that kept a database gets its pairings back, once; the database is not read again."""
         legacy = self.state_path.with_name('room-history.sqlite3')
         if not legacy.exists():
             return
@@ -66,8 +64,6 @@ class RoomHistory:
                 for row in db.execute('SELECT id, token_hash, host, created, last_seen, revoked FROM connectors'):
                     self.connectors[row['id']] = {'token_hash': row['token_hash'], 'host': row['host'], 'created': row['created'],
                                                   'last_seen': row['last_seen'], 'revoked': int(row['revoked'] or 0)}
-                for row in db.execute('SELECT thread, notification FROM closed_channels'):
-                    self.closed[row['thread']] = row['notification']
             finally:
                 db.close()
         except sqlite3.Error:
@@ -77,7 +73,7 @@ class RoomHistory:
     def _save_state(self):
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'connectors': self.connectors, 'closed_channels': self.closed}, indent=1))
+        temporary.write_text(json.dumps({'connectors': self.connectors}, indent=1))
         temporary.chmod(0o600)
         os.replace(temporary, self.state_path)
 
@@ -136,20 +132,6 @@ class RoomHistory:
     def history(self, thread=None):
         rows = [row for row in self.messages.values() if thread is None or row['thread'] == thread]
         return [{key: row[key] for key in HISTORY_KEYS} for row in rows[-1000:]]
-
-    # ----- closed channels (durable) -----
-
-    def closed_channels(self):
-        return dict(self.closed)
-
-    def close_channel(self, thread, notification):
-        if thread not in self.closed:
-            self.closed[thread] = notification
-            self._save_state()
-
-    def open_channel(self, thread):
-        if self.closed.pop(thread, None) is not None:
-            self._save_state()
 
     # ----- connectors: pairing and credentials (durable) -----
 
