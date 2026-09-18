@@ -134,6 +134,7 @@ class PresentationCall:
         self.on_input_receipt = None
         self.browser_audio = False
         self.on_browser_event = None
+        self.on_replaced = None  # Closes this browser transport when another device takes over.
         self.mic = None  # Set to the serializer when a browser call owns this one.
         self.transcription = None  # Which STT engine this call resolved to.
         self.latency = CallLatency(self.id)
@@ -524,8 +525,11 @@ class PresentationHub:
         return {"status": "activated", "binding": new}
 
     def attach(self, call):
-        if self.call and not self.call.closed:
-            raise RuntimeError('Ya hay una llamada de presentación conectada.')
+        previous = self.call
+        if previous and not previous.closed:
+            previous.disconnect()
+            if previous.on_replaced:
+                previous.on_replaced()
         self.call = call
         call.journal = self.journal
 

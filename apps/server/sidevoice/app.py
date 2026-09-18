@@ -27,6 +27,15 @@ from .connector_control import mount_connector_control
 from .paths import REPOSITORY_ROOT
 
 
+def close_on_replacement(call, websocket):
+    async def close():
+        try:
+            await websocket.close(code=4001, reason='La sala se abrió en otro dispositivo.')
+        except RuntimeError:
+            pass
+    call.on_replaced = lambda: asyncio.create_task(close())
+
+
 async def browser_text_call(websocket, settings=None):
     """Local STT call: microphone audio never leaves the page; only turn control and text arrive."""
     if settings is None:
@@ -50,6 +59,7 @@ async def browser_text_call(websocket, settings=None):
     call.on_browser_event = send
     call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
     call.audio_grace_seconds = settings.audio_grace_seconds
+    close_on_replacement(call, websocket)
     hub.attach(call)
     sender = asyncio.create_task(deliver())
     call.connected = True
@@ -207,6 +217,7 @@ async def openai_call(websocket, settings, config):
     call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
     call.audio_grace_seconds = settings.audio_grace_seconds
     gate.call = playback.call = call
+    close_on_replacement(call, websocket)
     hub.attach(call)
     sender = asyncio.create_task(deliver())
 

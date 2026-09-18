@@ -21,6 +21,7 @@ class FakeWebSocket:
 
     async def close(self, code=1000, reason=None):
         self.client_state = self.application_state = WebSocketState.DISCONNECTED
+        self.incoming.put_nowait({'type': 'websocket.disconnect', 'code': code})
 
 
 class BrowserCallTest(IsolatedAsyncioTestCase):
@@ -81,6 +82,25 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         socket.incoming.put_nowait({'type': 'websocket.disconnect'})
         await asyncio.wait_for(task, 2)
         self.assertFalse(self.hub.call.connected)
+
+    async def test_a_second_device_takes_over_the_room(self):
+        from sidevoice.app import browser_call
+        first_socket = FakeWebSocket()
+        first_task = asyncio.create_task(browser_call(first_socket))
+        first_session = (await self.received(first_socket, 'voice-session'))['data']['session_id']
+
+        second_socket = FakeWebSocket()
+        second_task = asyncio.create_task(browser_call(second_socket))
+        second_session = (await self.received(second_socket, 'voice-session'))['data']['session_id']
+
+        self.assertNotEqual(first_session, second_session)
+        self.assertEqual(self.hub.call.id, second_session)
+        await asyncio.wait_for(first_task, 2)
+        self.assertEqual(first_socket.application_state, WebSocketState.DISCONNECTED)
+        self.assertTrue(self.hub.call.connected)
+
+        second_socket.incoming.put_nowait({'type': 'websocket.disconnect'})
+        await asyncio.wait_for(second_task, 2)
 
     async def test_incompatible_runtime_is_rejected(self):
         from sidevoice.app import browser_call
