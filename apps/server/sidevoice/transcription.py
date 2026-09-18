@@ -1,8 +1,11 @@
 """Speech-to-text catalogue for browser-local and OpenAI cloud transcription."""
 import json
 import os
+import re
 from pathlib import Path
 from .paths import RUNTIME_ROOT
+
+import aiohttp
 
 CREDENTIALS = Path(os.getenv('VOICE_STT_CREDENTIALS_FILE', str(RUNTIME_ROOT / 'stt-credentials.json')))
 
@@ -20,12 +23,9 @@ BROWSER_MODELS = [
      'description': 'Máxima calidad local disponible. Aproximadamente 538 MiB cuantizado; requiere WebGPU con fp16.',
      'devices': ['webgpu']},
 ]
-OPENAI_MODELS = [
-    {'id': 'gpt-4o-transcribe', 'label': 'gpt-4o-transcribe · recomendado'},
-    {'id': 'gpt-4o-mini-transcribe', 'label': 'gpt-4o-mini-transcribe · más rápido y barato'},
-    {'id': 'gpt-transcribe', 'label': 'gpt-transcribe'},
-    {'id': 'whisper-1', 'label': 'whisper-1 · clásico'},
-]
+OPENAI_API = 'https://api.openai.com'
+DEFAULT_OPENAI_MODEL = 'gpt-4o-transcribe'
+MODEL_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$')
 CATALOG = {
     'providers': [
         {'id': 'browser', 'label': 'En este navegador', 'needs_key': False,
@@ -33,7 +33,7 @@ CATALOG = {
          'default_model': 'onnx-community/whisper-tiny', 'models': BROWSER_MODELS},
         {'id': 'openai', 'label': 'OpenAI', 'needs_key': True,
          'note': 'El audio de tus intervenciones se envía a OpenAI para transcribirlo.',
-         'default_model': 'gpt-4o-transcribe', 'models': OPENAI_MODELS},
+         'default_model': DEFAULT_OPENAI_MODEL, 'models': [], 'models_source': 'remote'},
     ],
 }
 PROVIDERS = {item['id']: item for item in CATALOG['providers']}
@@ -104,8 +104,13 @@ def resolve(settings, config=None):
     if provider not in PROVIDERS:
         provider = 'browser'
     model = (getattr(settings, 'stt_model', '') or '').strip()
-    known = {item['id'] for item in PROVIDERS[provider]['models']}
-    if not model or model not in known:
+    if provider == 'browser':
+        known = {item['id'] for item in PROVIDERS[provider]['models']}
+        if model not in known:
+            model = PROVIDERS[provider]['default_model']
+    elif not MODEL_ID.fullmatch(model) or model.startswith('onnx-community/'):
+        # Cloud catalogues change independently of Sidevoice releases. Keep a
+        # valid account-provided model instead of pinning it to a baked list.
         model = PROVIDERS[provider]['default_model']
     if provider == 'browser':
         return {'provider': provider, 'model': model, 'reason': 'explicit',
@@ -137,10 +142,9 @@ def build(settings, config=None):
 async def verify(provider, key):
     if provider != 'openai':
         return
-    import aiohttp
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as http:
-            async with http.get('https://api.openai.com/v1/models',
+            async with http.get(OPENAI_API + '/v1/models',
                                 headers={'Authorization': 'Bearer ' + key}) as response:
                 if response.status == 401:
                     raise ValueError('OpenAI rechazó la clave.')
@@ -150,3 +154,44 @@ async def verify(provider, key):
         raise
     except Exception as error:
         raise ValueError('No se pudo comprobar la clave con OpenAI: ' + type(error).__name__) from error
+
+
+def _is_transcription_model(model_id):
+    """Recognise transcription IDs because /v1/models exposes no capabilities."""
+    return model_id == 'whisper-1' or ('transcribe' in model_id and not any(marker in model_id for marker in ('realtime', 'live')))
+
+
+async def _models(http, value):
+    async with http.get(OPENAI_API + '/v1/models',
+                        headers={'Authorization': 'Bearer ' + value}) as response:
+        if response.status in {401, 403}:
+            raise ValueError('OpenAI rechazó la clave.')
+        if response.status >= 400:
+            raise ValueError(f'OpenAI respondió {response.status} al cargar los modelos.')
+        payload = await response.json()
+    models = []
+    for item in payload.get('data', []) if isinstance(payload, dict) else []:
+        model_id = item.get('id') if isinstance(item, dict) else None
+        if isinstance(model_id, str) and MODEL_ID.fullmatch(model_id) and _is_transcription_model(model_id):
+            models.append({'id': model_id, 'label': model_id})
+    return sorted(models, key=lambda item: (item['id'] != DEFAULT_OPENAI_MODEL, item['id']))
+
+
+async def catalog(provider, config=None):
+    """Load a provider model catalogue only when its picker is selected."""
+    if provider != 'openai':
+        raise ValueError('Proveedor desconocido.')
+    value = stored_key(provider) or environment_key(config)
+    result = {'provider': provider, 'configured': bool(value), 'models': [], 'error': None}
+    if not value:
+        return result
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=12)) as http:
+            result['models'] = await _models(http, value)
+        if not result['models']:
+            result['error'] = 'OpenAI no devolvió modelos de transcripción para esta cuenta.'
+    except ValueError as error:
+        result['error'] = str(error)
+    except Exception as error:
+        result['error'] = 'No se pudo cargar el catálogo de OpenAI: ' + type(error).__name__
+    return result

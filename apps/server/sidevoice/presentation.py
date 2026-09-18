@@ -170,12 +170,16 @@ class PresentationCall:
         target = self.turn_target if target is None else target
         revision = self.turn_revision if revision is None else revision
         history_id = history_id or self.id+':user-turn:'+str(revision)
-        if not target.get('thread_id') or not text or not text.strip():
+        if not text or not text.strip():
             return
-        payload = {'thread_id': target['thread_id'], 'text': text,
+        payload = {'thread_id': target.get('thread_id'), 'text': text,
                    'message_id': message_id or str(uuid.uuid4()), 'session_id': self.id,
                    'history_id': history_id, 'revision': revision, 'binding_id': target.get('binding_id'),
                    'title': target.get('title')}
+        if not payload['thread_id']:
+            self.error = 'Selecciona una conversación antes de hablar.'
+            self.input_receipt(payload, 'not_sent')
+            return
         if self.journal:
             self.journal.put(id=history_id,
                 thread=payload['thread_id'], role='user', text=text, name='Tú',
@@ -633,6 +637,15 @@ def mount_presentation(app):
         return {'catalog': transcription.CATALOG,
                 'credentials': transcription.credential_state(),
                 'effective': transcription.resolve(settings)}
+
+    @app.get('/api/presentation/transcription/models')
+    async def transcription_models(provider: str, request: Request):
+        require_same_origin(request)
+        from . import transcription
+        try:
+            return await transcription.catalog(provider)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
 
     @app.post('/api/presentation/transcription/credential')
     async def transcription_credential(payload: dict, request: Request):

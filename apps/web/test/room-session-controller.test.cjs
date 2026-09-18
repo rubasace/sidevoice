@@ -54,9 +54,10 @@ test('STT settings expose only models supported by the detected browser runtime'
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
  s.run("$('stt-model').value='onnx-community/whisper-small';$('stt-model').onchange()");
  assert.equal(s.run("$('stt-model-note').textContent"),'quality');
+ assert.deepEqual(s.run("$('stt-device').children.map(x=>x.value)"),['auto','webgpu']);
  s.run("$('stt-device').value='wasm';$('stt-device').onchange()");
- assert.equal(s.run("$('stt-device').value"),'wasm');
- assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny']);
+ assert.equal(s.run("$('stt-device').value"),'auto');
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
 });
 
 test('OpenAI remains selectable and shows its credential controls',()=>{
@@ -66,6 +67,17 @@ test('OpenAI remains selectable and shows its credential controls',()=>{
  assert.equal(s.run("$('stt-browser-options').hidden"),true);
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe']);
  assert.match(s.run("$('stt-key-state').textContent"),/Clave guardada/);
+});
+test('OpenAI models are fetched only when its provider is selected',async()=>{
+ const s=setup({strictDOM:true});let requests=[];
+ s.context.fetch=async path=>{requests.push(path);return {ok:true,json:async()=>({models:[{id:'gpt-4o-transcribe',label:'gpt-4o-transcribe'},{id:'gpt-4o-mini-transcribe',label:'gpt-4o-mini-transcribe'}],error:null})}};
+ s.run("voicePreferences={stt_provider:'openai',stt_model:'gpt-4o-mini-transcribe'};sttCatalog={providers:[{id:'browser',label:'Browser',models:[]},{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[],models_source:'remote'}]};sttCapabilities={webgpu:false,wasm:true,models:[]};sttCredentials={openai:{configured:true}};$('stt-provider').value='openai';renderTranscription()");
+ assert.equal(requests.length,0);
+ await s.run("loadTranscriptionModels('openai',true)");
+ assert.equal(requests.length,1);
+ assert.match(requests[0],/transcription\/models\?provider=openai/);
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe','gpt-4o-mini-transcribe']);
+ assert.equal(s.run("$('stt-model').value"),'gpt-4o-mini-transcribe');
 });
 test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
  const s=setup({strictDOM:true});
@@ -134,16 +146,38 @@ test('Pauses keep transcription fragments in one actual turn; the next turn stay
  assert.equal(s.run('history[2].thread'),'other');
  assert.equal(s.run("history.filter(x=>x.thread===historyThreadId()).length"),2);
 });
-test('Delivery tick follows the matching receipt and does not imply read',()=>{
+test('Delivery tick is immediate, follows the matching receipt and does not imply read',()=>{
  const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
  emit('voice-user-turn',{phase:'finished',revision:1,thread_id:'a',text:'Hola'});
- assert.equal(s.run('history[0].delivery'),undefined);
+ assert.equal(s.run('history[0].delivery'),'pending');
  emit('voice-input-receipt',{revision:1,thread_id:'other',status:'delivered'});
- assert.equal(s.run('history[0].delivery'),undefined);
+ assert.equal(s.run('history[0].delivery'),'pending');
  emit('voice-input-receipt',{revision:1,thread_id:'a',status:'pending'});
  assert.equal(s.run('history[0].delivery'),'pending');
  emit('voice-input-receipt',{revision:1,thread_id:'a',status:'delivered'});
  assert.equal(s.run('history[0].delivery'),'delivered');
+});
+
+test('A joined empty room selects its only listening conversation automatically',async()=>{
+ const s=setup();s.run("roomBinding=null;ws={};people=[{thread_id:'only',available:true,reach:{state:'listening'}}];closedThreads=[];var chosen=null;select=async id=>{chosen=id}");
+ assert.equal(await s.run('selectOnlyListeningConversation()'),true);
+ assert.equal(s.run('chosen'),'only');
+ s.run("people.push({thread_id:'second',available:true,reach:{state:'listening'}});chosen=null");
+ assert.equal(await s.run('selectOnlyListeningConversation()'),false);
+ assert.equal(s.run('chosen'),null);
+});
+
+test('A receipt arriving before the final bubble is retained instead of disappearing',()=>{
+ const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
+ emit('voice-input-receipt',{revision:2,thread_id:'a',session_id:'s',status:'delivered'});
+ emit('voice-user-turn',{phase:'finished',revision:2,thread_id:'a',session_id:'s',text:'Ya llegó'});
+ assert.equal(s.run('history[0].delivery'),'delivered');
+ assert.equal(s.run('inputReceipts.size'),0);
+});
+test('A finished turn without a selected conversation is visibly not sent',()=>{
+ const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
+ emit('voice-user-turn',{phase:'finished',revision:3,thread_id:null,text:'Sin destino'});
+ assert.equal(s.run('history[0].delivery'),'not_sent');
 });
 
 test('Space repeats and release suppress native button activation without toggling the mic',()=>{

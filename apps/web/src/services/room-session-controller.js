@@ -113,7 +113,7 @@ function setupAudioControls(){
  globalThis.navigator?.mediaDevices?.addEventListener?.('devicechange',refreshAudioDevices);
 }
 let voiceCatalog=null;let voiceDraft={};let editingLanguage=null;let voicePreferences=null;let activeSpeech=null;let callExecution='browser';let roomRevision=0;let previewJob=null;let elevenCredentials={};let sttCredentials={};let rosterSignature='';let pendingBotText=[];let userTurn=null;
-let cancelledInput=false;let textSending=false;let textAttempt=null;
+let cancelledInput=false;let textSending=false;let textAttempt=null;const inputReceipts=new Map();
 let closedThreads=[];let viewedThread=null;let roomSeen={};try{roomSeen=JSON.parse(sessionStorage.getItem('voice-room-seen')||'{}')}catch{}
 let history=[];try{history=JSON.parse(sessionStorage.getItem('voice-room-transcript')||'[]');if(!Array.isArray(history))history=[]}catch{}
 function save(){try{sessionStorage.setItem('voice-room-transcript',JSON.stringify(history.slice(-1000)))}catch{}}
@@ -200,7 +200,13 @@ async function refresh(){try{
 }catch{$('live').textContent='Servidor no disponible'}}
 async function refreshHistory(){try{const data=await api('/api/presentation/history');let changed=false;for(const r of data.messages){let row=history.find(h=>h.segment===r.id);const patch={segment:r.id,thread:r.thread,role:r.role,text:r.text,name:r.role==='user'?'Tú':people.find(p=>p.thread_id===r.thread)?.title||r.name,time:r.time,seq:r.seq,session:r.session,revision:r.revision,audio_reason:r.audio_reason,interrupted:['interrupted','disconnected'].includes(r.status),draft:false,delivery:r.role==='user'?r.status:undefined,audio:r.role==='assistant'?r.status:undefined};if(!row){history.push(patch);changed=true}else if(JSON.stringify({...row,...patch})!==JSON.stringify(row)){Object.assign(row,patch);changed=true}}if(changed){history=history.slice(-1000);save();renderHistory();renderPeople()}}catch{}}
 $('pair-connector').onclick=async()=>{try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;$('pair-code').hidden=false;$('pair-help').hidden=false}catch(e){setRoomError(e.message||'No se pudo generar el código')}}
-async function refreshPeople(){try{const data=await api('/api/presentation/participants');people=data.participants;closedThreads=data.closed_threads||[];renderPeople()}catch{}}
+async function selectOnlyListeningConversation(){
+ if(targetId()||switching||!ws)return false;
+ const listening=people.filter(person=>person.available&&person.reach?.state==='listening'&&!closedThreads.includes(person.thread_id));
+ if(listening.length!==1)return false;
+ await select(listening[0].thread_id);return true;
+}
+async function refreshPeople(){try{const data=await api('/api/presentation/participants');people=data.participants;closedThreads=data.closed_threads||[];renderPeople();await selectOnlyListeningConversation()}catch{}}
 // Stats poll only while the modal is open; each opening owns its requests.
 let statsEpoch=0,statsTimer=null,statsRequest=null;
 const statsNumber=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0;
@@ -347,7 +353,7 @@ function browserLatency(d,received){
  }
  return Object.fromEntries(Object.entries(durations).filter(([,v])=>Number.isFinite(v)&&v>=0&&v<=3600000));
 }
-function message(raw){let m;try{m=JSON.parse(raw)}catch{return}const t=m.type,d=m.data||{};observeLatencyEvent(t,d);if(t==='voice-speech'){receiveBrowserSpeech(d);return}if(t==='voice-speech-audio'){receiveServerSpeech(d);return}if(t==='voice-cancel'&&d.session_id===sessionId){roomRevision=Math.max(roomRevision,d.revision);cancelBrowserSpeech();return}if(t==='voice-user-turn'&&d.phase==='started'){roomRevision=Math.max(roomRevision,d.revision);cancelBrowserSpeech()}if(t==='voice-input-receipt'){const row=history.find(r=>r.thread===d.thread_id&&r.segment===(d.history_id||(d.session_id||sessionId)+':user-turn:'+d.revision));if(row){row.delivery=d.status;save();renderHistory()}}if(t==='voice-user-turn'){const key='user-turn:'+d.revision;if(d.phase==='started'){cancelledInput=false;userTurn={key,text:'',thread:d.thread_id};partial('Escuchando…')}else if(d.phase==='cancelled'){cancelDraft(d.revision)}else if(d.phase==='finished'){partial('');add('user',d.text,key,d.thread_id,{draft:false,time:Date.now()});userTurn=null}}if(t==='user-transcription'&&!cancelledInput){if(d.final){partial('');if(userTurn){userTurn.text=[userTurn.text,d.text].filter(Boolean).join(' ');add('user',userTurn.text,userTurn.key,userTurn.thread,{draft:true})}else add('user',d.text)}else if(!userTurn||userTurn.thread===historyThreadId())partial(d.text)}if(t==='bot-output'&&!['word','token'].includes(d.aggregated_by)){const completed=d.spoken===true||d.spoken_status==='completed';const index=completed?pendingBotText.indexOf(d.text):-1;if(index>=0){pendingBotText.splice(index,1)}else{add('assistant',d.text,d.segment_id);if(d.spoken===false||d.spoken_status==='new')pendingBotText.push(d.text)}}if(t==='bot-started-speaking'){stopPreview();botLive=true;live()}if(t==='bot-stopped-speaking'){botLive=false;live()}if(t==='user-started-speaking'){cancelBrowserSpeech();userLive=true;if(botLive){const last=[...history].reverse().find(r=>r.thread===targetId()&&r.role==='assistant');if(last){last.interrupted=true;save();renderHistory()}}botLive=false;live()}if(t==='user-stopped-speaking'){userLive=false;$('live').textContent='Procesando tu intervención…'}if(t==='error')setRoomError(d.message||d.error||'Error de conexión')}
+function message(raw){let m;try{m=JSON.parse(raw)}catch{return}const t=m.type,d=m.data||{};observeLatencyEvent(t,d);if(t==='voice-speech'){receiveBrowserSpeech(d);return}if(t==='voice-speech-audio'){receiveServerSpeech(d);return}if(t==='voice-cancel'&&d.session_id===sessionId){roomRevision=Math.max(roomRevision,d.revision);cancelBrowserSpeech();return}if(t==='voice-user-turn'&&d.phase==='started'){roomRevision=Math.max(roomRevision,d.revision);cancelBrowserSpeech()}if(t==='voice-input-receipt'){const receiptId=d.history_id||(d.session_id||sessionId)+':user-turn:'+d.revision;const row=history.find(r=>r.thread===d.thread_id&&r.segment===receiptId);if(row){row.delivery=d.status;save();renderHistory()}else inputReceipts.set(receiptId,d.status)}if(t==='voice-user-turn'){const key='user-turn:'+d.revision,receiptId=(d.session_id||sessionId)+':'+key;if(d.phase==='started'){cancelledInput=false;userTurn={key,text:'',thread:d.thread_id};partial('Escuchando…')}else if(d.phase==='cancelled'){inputReceipts.delete(receiptId);cancelDraft(d.revision)}else if(d.phase==='finished'){partial('');add('user',d.text,key,d.thread_id,{draft:false,time:Date.now(),delivery:d.thread_id?(inputReceipts.get(receiptId)||'pending'):'not_sent'});inputReceipts.delete(receiptId);userTurn=null}}if(t==='user-transcription'&&!cancelledInput){if(d.final){partial('');if(userTurn){userTurn.text=[userTurn.text,d.text].filter(Boolean).join(' ');add('user',userTurn.text,userTurn.key,userTurn.thread,{draft:true})}else add('user',d.text)}else if(!userTurn||userTurn.thread===historyThreadId())partial(d.text)}if(t==='bot-output'&&!['word','token'].includes(d.aggregated_by)){const completed=d.spoken===true||d.spoken_status==='completed';const index=completed?pendingBotText.indexOf(d.text):-1;if(index>=0){pendingBotText.splice(index,1)}else{add('assistant',d.text,d.segment_id);if(d.spoken===false||d.spoken_status==='new')pendingBotText.push(d.text)}}if(t==='bot-started-speaking'){stopPreview();botLive=true;live()}if(t==='bot-stopped-speaking'){botLive=false;live()}if(t==='user-started-speaking'){cancelBrowserSpeech();userLive=true;if(botLive){const last=[...history].reverse().find(r=>r.thread===targetId()&&r.role==='assistant');if(last){last.interrupted=true;save();renderHistory()}}botLive=false;live()}if(t==='user-stopped-speaking'){userLive=false;$('live').textContent='Procesando tu intervención…'}if(t==='error')setRoomError(d.message||d.error||'Error de conexión')}
 function stopMeter(){cancelAnimationFrame(meterFrame);meterFrame=null;captureNode?.disconnect();captureNode=null;micSource?.disconnect();analyser?.disconnect();if(audioContext&&audioContext!==window.roomVoice?.context)audioContext.close().catch(()=>{});audioContext=null;analyser=null;micSource=null;$('mute').style.setProperty('--mic-fill','0%');$('mic-control').dataset.signal='quiet';$('mic-level-meter').setAttribute('aria-valuenow','0');waveLevels.fill(0);updateWave(0)}
 function measureMic(samples,enabled){
  if(!enabled)return {value:0,state:'quiet',peak:0};
@@ -383,7 +389,7 @@ function disconnect(){
  $('connect').title='Entrar en la sala';$('connect').setAttribute('aria-label','Entrar en la sala');
  $('mute').classList.remove('holding');updateMic();
 }
-$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await api('/api/presentation/languages');if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';const sttRuntime=browserStt?await window.roomTranscription.prepare({model:voicePreferences.stt_model,device:voicePreferences.stt_device}):null;if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';const session=await openSession(socket);if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt){socket.send(JSON.stringify({type:'voice-stt-ready',data:{session_id:sessionId,...sttRuntime}}));window.roomTranscription.start({socket,silenceSeconds:voicePreferences.user_speech_timeout,language:voicePreferences.stt_language})}startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await api('/api/presentation/languages');if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';const sttRuntime=browserStt?await window.roomTranscription.prepare({model:voicePreferences.stt_model,device:voicePreferences.stt_device}):null;if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';const session=await openSession(socket);if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt){socket.send(JSON.stringify({type:'voice-stt-ready',data:{session_id:sessionId,...sttRuntime}}));window.roomTranscription.start({socket,silenceSeconds:voicePreferences.user_speech_timeout,language:voicePreferences.stt_language})}startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
 function speedLimits(model){return providerFor(model)==='elevenlabs'?[.7,1.2]:[.5,2]}
 function effectiveSpeed(model,value){const [min,max]=speedLimits(model);return Math.max(min,Math.min(max,Number(value)||1))}
 function updateSpeedRange(){
@@ -423,7 +429,18 @@ function cancelBrowserSpeech(){if(!activeSpeech)return;const speech=activeSpeech
 async function receiveBrowserSpeech(d,cloud=false){const receivedAt=latencyNow();if(d.session_id!==sessionId)return;if(d.thread_id!==targetId())await refresh();if(d.session_id!==sessionId||d.thread_id!==targetId()||d.revision<roomRevision)return;roomRevision=d.revision;stopPreview();cancelBrowserSpeech();activeSpeech=d;add('assistant',d.text,'voice:'+d.utterance_id,d.thread_id,{session:d.session_id,revision:d.revision});const receipt=status=>post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status,...(status==='playing'?{timings_ms:browserLatency(d,receivedAt)}:{})});try{await window.roomVoice[cloud?'playEncoded':'speak'](d,text=>$('live').textContent=text,()=>{d.started=true;botLive=true;live();receipt('playing').catch(()=>{})},range=>updateKaraoke(d,range));if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;botLive=false;live();await receipt('playback_finished')}catch(e){if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;botLive=false;live();if(e.name!=='AbortError'){setRoomError((cloud?'Audio de ElevenLabs: ':'Voz del navegador: ')+e.message);receipt('failed').catch(()=>{})}}}
 function receiveServerSpeech(d){return receiveBrowserSpeech(d,true)}
 
-$('settings-open').onclick=async()=>{try{const p=await api('/api/presentation/languages');window.roomI18n?.setLanguage(p.ui_language||'es');voicePreferences=p;voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=voiceCatalog.providers?.elevenlabs?.configured?{configured:true}:{};populateVoiceSettings(p);for(const key of ['stt_language','default_tts_language','tts_speed','ui_language','tts_device','audio_grace_seconds','user_speech_timeout'])$(key.replaceAll('_','-')).value=p[key];$('speed-value').textContent=Number(p.tts_speed).toFixed(2)+'×';renderDefaultVoices(p.default_voice);renderLanguageRows();await loadElevenLabs();await loadTranscription();$('settings-error').textContent='';$('language-settings').showModal()}catch(e){setRoomError(e.message)}};
+$('settings-open').onclick=async()=>{try{
+ const p=await api('/api/presentation/languages');window.roomI18n?.setLanguage(p.ui_language||'es');voicePreferences=p;
+ for(const key of ['stt_language','default_tts_language','tts_speed','ui_language','tts_device','audio_grace_seconds','user_speech_timeout'])$(key.replaceAll('_','-')).value=p[key];
+ $('speed-value').textContent=Number(p.tts_speed).toFixed(2)+'×';$('settings-error').textContent='Cargando catálogos…';
+ if(!$('language-settings').open)$('language-settings').showModal();
+ const [catalog]=await Promise.all([api('/api/presentation/voice-catalog'),loadTranscription()]);
+ voiceCatalog=catalog;const eleven=voiceCatalog.providers?.elevenlabs||{};elevenCredentials={configured:!!eleven.configured};
+ populateVoiceSettings(p);renderDefaultVoices(p.default_voice);renderLanguageRows();
+ $('elevenlabs-key-state').textContent=eleven.configured?'Clave guardada':'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.';
+ $('elevenlabs-key-clear').disabled=!eleven.configured;
+ $('settings-error').textContent=eleven.error||'';
+}catch(e){$('settings-error').textContent=e.message;setRoomError(e.message)}};
 $('tts-speed').oninput=()=>{$('speed-value').textContent=Number($('tts-speed').value).toFixed(2)+'×';if(voiceCatalog){storeLanguage();renderLanguageRows()}};
 $('default-model').onchange=()=>{storeLanguage();renderDefaultVoices();renderLanguageRows()};$('default-voice').onchange=()=>{storeLanguage();renderLanguageRows()};
 function settingsSection(name){for(const section of ['general','voice','transcription','advanced']){$('pane-'+section).hidden=section!==name;$('settings-'+section).setAttribute('aria-pressed',String(section===name))}}
@@ -433,41 +450,64 @@ $('ui-language').onchange=()=>window.roomI18n?.setLanguage($('ui-language').valu
 $('settings-voice').onclick=()=>settingsSection('voice');
 $('settings-transcription').onclick=()=>settingsSection('transcription');
 let sttCatalog=null,sttCapabilities=null;
+const sttRemote={openai:{loaded:false,loading:false,error:null}};
 function sttProvider(id){return (sttCatalog?.providers||[]).find(provider=>provider.id===id)}
 function renderTranscription(){
  if(!sttCatalog||!sttCapabilities)return;
- const provider=$('stt-provider').value||voicePreferences?.stt_provider||'browser',entry=sttProvider(provider);
+ const provider=$('stt-provider').value||voicePreferences?.stt_provider||'browser',entry=sttProvider(provider),modelSelect=$('stt-model');
  $('stt-browser-options').hidden=provider!=='browser';$('stt-credential').hidden=provider!=='openai';
  $('stt-provider-note').textContent=entry?.note||'';
  let models=[];
  if(provider==='browser'){
-  const device=$('stt-device'),saved=device.value||voicePreferences?.stt_device||'auto',entries=[];
-  if(sttCapabilities.webgpu||sttCapabilities.wasm)entries.push(['auto','Automático']);
-  if(sttCapabilities.webgpu)entries.push(['webgpu','GPU · WebGPU']);
-  if(sttCapabilities.wasm)entries.push(['wasm','CPU · WebAssembly']);
-  entriesFor(device,entries,entries.some(([id])=>id===saved)?saved:(entries[0]?.[0]||''));
-  const effective=device.value==='auto'?(sttCapabilities.webgpu?'webgpu':'wasm'):device.value;
-  $('stt-device-note').textContent=device.value==='auto'?'Automático usará '+(effective==='webgpu'?'WebGPU.':'CPU mediante WebAssembly.'):(effective==='webgpu'?'Aceleración WebGPU disponible.':'Procesamiento CPU mediante WebAssembly.');
-  models=(entry?.models||[]).filter(model=>model.devices?.includes(effective)&&sttCapabilities.models?.includes(model.id));
+  models=(entry?.models||[]).filter(model=>sttCapabilities.models?.includes(model.id)&&model.devices?.some(device=>sttCapabilities[device]));
  }else{
-  models=entry?.models||[];const state=sttCredentials.openai;
+  models=entry?.models||[];const state=sttCredentials.openai,remote=sttRemote.openai;
   $('stt-key-state').textContent=state?.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: OpenAI no podrá transcribir hasta que guardes una.';
   $('stt-key-clear').disabled=!state?.configured||state.source==='environment';
+  modelSelect.disabled=remote.loading;
  }
- const current=$('stt-model').value,saved=voicePreferences?.stt_provider===provider?voicePreferences?.stt_model:null;
- const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(entry?.default_model||models[0]?.id);
- entriesFor($('stt-model'),models.map(model=>[model.id,model.label]),preferred);
- $('stt-model-note').textContent=models.find(model=>model.id===$('stt-model').value)?.description||'';
+ const current=modelSelect.value,saved=voicePreferences?.stt_provider===provider?voicePreferences?.stt_model:null;
+ const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(provider==='openai'?(saved||entry?.default_model||models[0]?.id):(models.some(model=>model.id===entry?.default_model)?entry.default_model:models[0]?.id));
+ entriesFor(modelSelect,models.map(model=>[model.id,model.label]),preferred);
+ if(provider==='browser'){
+  modelSelect.disabled=false;
+  const selected=models.find(model=>model.id===modelSelect.value),device=$('stt-device'),savedDevice=device.value||voicePreferences?.stt_device||'auto',entries=[];
+  const supported=(selected?.devices||[]).filter(value=>sttCapabilities[value]);
+  if(supported.length)entries.push(['auto','Automático']);
+  if(supported.includes('webgpu'))entries.push(['webgpu','GPU · WebGPU']);
+  if(supported.includes('wasm'))entries.push(['wasm','CPU · WebAssembly']);
+  entriesFor(device,entries,entries.some(([id])=>id===savedDevice)?savedDevice:(entries[0]?.[0]||''));
+  device.disabled=!entries.length;
+  const effective=device.value==='auto'?(supported.includes('webgpu')?'webgpu':'wasm'):device.value;
+  $('stt-device-note').textContent=!entries.length?'Este modelo no es compatible con este navegador.':device.value==='auto'?'Automático usará '+(effective==='webgpu'?'WebGPU.':'CPU mediante WebAssembly.'):(effective==='webgpu'?'Aceleración WebGPU disponible.':'Procesamiento CPU mediante WebAssembly.');
+  $('stt-model-note').textContent=selected?.description||'';
+ }else{
+  const remote=sttRemote.openai,selected=models.find(model=>model.id===modelSelect.value);
+  $('stt-model-note').textContent=remote.loading?'Consultando los modelos disponibles en tu cuenta…':remote.error||selected?.description||'Catálogo cargado directamente desde OpenAI.';
+ }
+}
+async function loadTranscriptionModels(provider,refresh=false){
+ if(provider!=='openai'||!sttCatalog)return;
+ const remote=sttRemote.openai;if(remote.loading||remote.loaded&&!refresh)return;
+ remote.loading=true;remote.error=null;renderTranscription();
+ try{
+  const data=await api('/api/presentation/transcription/models?provider='+encodeURIComponent(provider));
+  const entry=sttProvider(provider);if(entry)entry.models=Array.isArray(data.models)?data.models:[];
+  remote.loaded=true;remote.error=data.error||null;
+ }catch(error){remote.error=error.message||'No se pudo cargar el catálogo.'}
+ finally{remote.loading=false;if($('stt-provider').value===provider)renderTranscription()}
 }
 async function loadTranscription(){
  const data=await api('/api/presentation/transcription');sttCatalog=data.catalog;sttCredentials=data.credentials||{};
  sttCapabilities=await window.roomTranscription.capabilities();
  entriesFor($('stt-provider'),(sttCatalog.providers||[]).filter(provider=>provider.id!=='browser'||sttCapabilities.webgpu||sttCapabilities.wasm).map(provider=>[provider.id,provider.label]),voicePreferences?.stt_provider||'browser');
  $('stt-device').disabled=false;renderTranscription();
+ if($('stt-provider').value==='openai')void loadTranscriptionModels('openai');
 }
-$('stt-provider').onchange=()=>{$('stt-model').replaceChildren();renderTranscription()};$('stt-device').onchange=renderTranscription;$('stt-model').onchange=renderTranscription;
-$('stt-key-save').onclick=async()=>{const key=$('stt-key').value.trim();if(!key)return;$('stt-key-save').disabled=true;$('settings-error').textContent='';$('stt-key-state').textContent='Comprobando la clave con OpenAI…';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key});sttCredentials=result.credentials||{};$('stt-key').value=''}catch(e){$('settings-error').textContent=e.message}finally{$('stt-key-save').disabled=false;renderTranscription()}};
-$('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{}}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
+$('stt-provider').onchange=()=>{$('stt-model').replaceChildren();renderTranscription();if($('stt-provider').value==='openai')void loadTranscriptionModels('openai',true)};
+$('stt-device').onchange=renderTranscription;$('stt-model').onchange=renderTranscription;
+$('stt-key-save').onclick=async()=>{const key=$('stt-key').value.trim();if(!key)return;$('stt-key-save').disabled=true;$('settings-error').textContent='';$('stt-key-state').textContent='Comprobando la clave con OpenAI…';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key});sttCredentials=result.credentials||{};$('stt-key').value='';sttRemote.openai.loaded=false;await loadTranscriptionModels('openai',true)}catch(e){$('settings-error').textContent=e.message}finally{$('stt-key-save').disabled=false;renderTranscription()}};
+$('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{};const entry=sttProvider('openai');if(entry)entry.models=[];Object.assign(sttRemote.openai,{loaded:false,loading:false,error:null})}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
 async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;$('elevenlabs-key-state').textContent=state.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.';$('elevenlabs-key-clear').disabled=!state.configured||state.source==='environment'}
 $('elevenlabs-key-save').onclick=async()=>{const key=$('elevenlabs-key').value.trim();if(!key)return;$('elevenlabs-key-save').disabled=true;$('settings-error').textContent='';$('elevenlabs-key-state').textContent='Comprobando la clave con ElevenLabs…';try{const result=await post('/api/presentation/synthesis/credential',{key});$('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=result.credentials||{};renderDefaultVoices($('default-voice').value);renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{$('elevenlabs-key-save').disabled=false;await loadElevenLabs()}};
 $('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};

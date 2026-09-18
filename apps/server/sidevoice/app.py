@@ -68,14 +68,15 @@ async def browser_text_call(websocket, settings=None):
         current = turn['revision'] == call.turn_revision
         text = turn.get('text', '').strip()
         cancelled = bool(failed or getattr(call, 'cancelled_turn', None) == turn['revision'] or not text)
-        if not cancelled:
-            call.enqueue_input(text, target=turn['target'], revision=turn['revision'])
         send({'type': 'user-stopped-speaking', 'data': {}})
         send({'type': 'voice-user-turn', 'data': {
             'phase': 'cancelled' if cancelled else 'finished',
             'revision': turn['revision'], 'turn_id': turn_id,
             'thread_id': turn['target'].get('thread_id'), 'text': text,
         }})
+        # The browser must create the final bubble before its receipt arrives.
+        if not cancelled:
+            call.enqueue_input(text, target=turn['target'], revision=turn['revision'])
         if failed:
             call.error = failed
             send({'type': 'error', 'data': {'message': failed}})

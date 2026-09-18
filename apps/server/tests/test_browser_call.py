@@ -32,7 +32,11 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.hub.journal = RoomHistory(Path(self.temp.name) / 'history.sqlite3')
         self.binding = Path(self.temp.name) / 'binding.json'
         self.binding.write_text(json.dumps({'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}))
-        self.patches = [patch('sidevoice.presentation.BINDING', self.binding), patch('sidevoice.app.hub', self.hub)]
+        self.patches = [
+            patch('sidevoice.presentation.BINDING', self.binding),
+            patch('sidevoice.language_settings.PATH', Path(self.temp.name) / 'settings.json'),
+            patch('sidevoice.app.hub', self.hub),
+        ]
         for active in self.patches: active.start()
 
     async def asyncTearDown(self):

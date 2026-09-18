@@ -5,6 +5,7 @@ the room server: its key never reaches the browser, while the generated audio
 does. The account catalogue is fetched on demand so newly created, cloned, or
 workspace voices appear without a Sidevoice release.
 """
+import asyncio
 import base64
 import json
 import os
@@ -174,7 +175,7 @@ async def catalog(config=None):
         return result
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=12)) as http:
-            models, voices = await _models(http, value), await _voices(http, value)
+            models, voices = await asyncio.gather(_models(http, value), _voices(http, value))
         if models:
             result['models'] = models
         result['voices'] = [entry for item in voices if (entry := _voice_entry(item))]

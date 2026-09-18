@@ -124,9 +124,13 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.temp.cleanup()
 
     async def test_empty_room_does_not_buffer_for_later_agent(self):
+        receipts = []
+        self.c.on_input_receipt = receipts.append
         self.c.user_started()
         self.c.enqueue_input('No hay nadie')
         self.assertTrue(self.c.input_queue.empty())
+        self.assertEqual(receipts[-1]['status'], 'not_sent')
+        self.assertIn('Selecciona una conversación', self.c.error)
         await self.hub.activate({'thread_id': 'a'})
         self.c.enqueue_input('Final de la frase anterior')
         self.assertTrue(self.c.input_queue.empty())
