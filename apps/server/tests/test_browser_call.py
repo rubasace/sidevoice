@@ -143,6 +143,10 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(strategy, TurnAnalyzerUserTurnStopStrategy)
         self.assertFalse(strategy.wait_for_transcript)
         self.assertEqual(strategy._turn_analyzer.params.stop_secs, 3.0)
+        from sidevoice.app import vad_analyzer
+        self.assertEqual(vad_analyzer(mic, {}).params.stop_secs, 0.6)
+        floor, _ = mic_settings(LanguageSettings(), {'smart_turn_min_silence': 1.2})
+        self.assertEqual(vad_analyzer(floor, {}).params.stop_secs, 1.2)
         timer, _ = mic_settings(LanguageSettings(), {'turn_end_mode': 'timer', 'user_speech_timeout': 4})
         self.assertIsInstance(turn_stop_strategy(timer, {}), SpeechTimeoutUserTurnStopStrategy)
 
@@ -248,18 +252,40 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(errors, [])
         self.assertIn('worker died', client.error)
 
-    async def test_turns_are_delivered_in_the_order_they_were_spoken(self):
+    async def test_a_turn_cut_while_the_user_kept_going_joins_the_next_one(self):
         from sidevoice.transcribers import Transcript
         async def slow():
             await asyncio.sleep(0.05)
-            return Transcript('Primera')
-        voice, client, sent = self.voice([slow, Transcript('Segunda')])
+            return Transcript('Pero bueno,')
+        voice, client, sent = self.voice([slow, Transcript('lo que te iba a proponer es otra cosa.'), Transcript('Y esto va aparte.')])
         voice.turn_started(); first = voice.turn_stopped()
-        voice.turn_started(); second = voice.turn_stopped()
+        voice.turn_started(); second = voice.turn_stopped()   # resumed before the first text was delivered
         await asyncio.gather(first, second)
-        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Primera', 'Segunda'])
-        self.assertEqual([r['revision'] for r in self.hub.journal.history('thread-a')], [1, 2])
+        rows = self.hub.journal.history('thread-a')
+        self.assertEqual([(r['text'], r['revision']) for r in rows], [('Pero bueno, lo que te iba a proponer es otra cosa.', 2)])
+        turns = [m['data'] for m in sent if m['type'] == 'voice-user-turn']
+        self.assertEqual([(t['phase'], t['revision'], t.get('merged', False)) for t in turns],
+                         [('started', 1, False), ('started', 2, False), ('cancelled', 1, True), ('finished', 2, False)])
         self.assertFalse(client.speaking)
+        # A turn that starts after delivery is its own message.
+        voice.turn_started(); await voice.turn_stopped()
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')][-1], 'Y esto va aparte.')
+
+    async def test_held_text_survives_a_noise_turn_but_not_an_explicit_cancel(self):
+        from sidevoice.transcribers import Transcript
+        async def slow():
+            await asyncio.sleep(0.05)
+            return Transcript('Sigo aquí')
+        voice, client, sent = self.voice([slow, Transcript(''), slow, Transcript('nada')])
+        voice.turn_started(); first = voice.turn_stopped()
+        voice.turn_started(); second = voice.turn_stopped()   # noise: empty transcript, held text still delivered
+        await asyncio.gather(first, second)
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Sigo aquí'])
+        voice.turn_started(); third = voice.turn_stopped()
+        voice.turn_started(); client.cancelled_turn = client.turn_revision; fourth = voice.turn_stopped()
+        await asyncio.gather(third, fourth)
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Sigo aquí'])
+        self.assertIsNone(voice.held)
 
     # ----- several browsers -----
 

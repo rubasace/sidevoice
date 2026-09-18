@@ -87,10 +87,12 @@ def turn_stop_strategy(mic, config):
 
 
 def vad_analyzer(mic, config):
-    # Both strategies want the pause reported early; they decide how long it may last.
+    # The VAD reports the pause once it has lasted this long; smart-turn is only asked then,
+    # so a breath between words does not end the turn. A fixed timer needs no floor.
+    default_stop = mic.smart_turn_min_silence if mic.turn_end_mode == 'smart_turn' else 0.2
     return SileroVADAnalyzer(params=VADParams(
         start_secs=float(config.get('VOICE_VAD_START_SECS', '0.08')),
-        stop_secs=float(config.get('VOICE_VAD_STOP_SECS', '0.2')),
+        stop_secs=float(config.get('VOICE_VAD_STOP_SECS', default_stop)),
         confidence=mic.vad_confidence,
         min_volume=mic.vad_min_volume,
     ))
@@ -107,6 +109,7 @@ class VoiceCall:
         self.call, self.transcriber, self.send = call, transcriber, send
         self.finishing = set()
         self.lock = asyncio.Lock()
+        self.held = None   # text of a turn the user resumed before it was delivered; the next turn carries it
         call.stt = transcriber
         call.voice = self
         call.transcription = {**choice, **(runtime or {})}
@@ -167,7 +170,21 @@ class VoiceCall:
                 call.latency.input(target.get('thread_id'), revision, metrics)
             call.input_stats['turns'] += 1
             current = revision == call.turn_revision
+            if call.cancelled_turn == revision:
+                # Cancelling the draft cancels what was being held for it too.
+                self.held = None
+            elif self.held and not failed:
+                # The previous turn was cut while the user was still going: it belongs to this message.
+                text, self.held = (self.held + ' ' + text).strip(), None
             cancelled = bool(failed or call.cancelled_turn == revision or not text)
+            if not cancelled and not current:
+                # The user started speaking again before this text was delivered: a breath, not a
+                # new message. Hold it for the turn now open instead of sending half a sentence.
+                self.held = text
+                self.send({'type': 'voice-user-turn', 'data': {
+                    'phase': 'cancelled', 'revision': revision, 'thread_id': target.get('thread_id'),
+                    'text': text, 'merged': True}})
+                return
             self.send({'type': 'voice-user-turn', 'data': {
                 'phase': 'cancelled' if cancelled else 'finished', 'revision': revision,
                 'thread_id': target.get('thread_id'), 'text': text,

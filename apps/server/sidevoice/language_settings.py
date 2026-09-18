@@ -43,6 +43,7 @@ class LanguageSettings(BaseModel):
     # Microphone defaults for a device that sends none of its own (see MicSettings).
     turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
     user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
+    smart_turn_min_silence: float = Field(default=0.6, ge=0.1, le=3)
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
@@ -126,11 +127,13 @@ class MicSettings(BaseModel):
     model_config = ConfigDict(extra='ignore')
     turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
     user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
+    # Smart-turn is only asked after this much silence: too early and a breath ends the turn.
+    smart_turn_min_silence: float = Field(default=0.6, ge=0.1, le=3)
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
 
-    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume')
+    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence', 'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume')
 
 
 def mic_settings(settings, overrides=None):
