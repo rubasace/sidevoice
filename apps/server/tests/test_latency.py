@@ -100,16 +100,16 @@ class LatencyTest(unittest.TestCase):
 class LatencyIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_original_revision_survives_playback_epoch_remapping(self):
         from unittest.mock import AsyncMock, MagicMock, patch
-        from sidevoice.presentation import PresentationCall, PresentationHub, Speech
-        call = PresentationCall('s', {'thread_id': 'a'}, AsyncMock(), None, None)
-        call.connected = call.browser_audio = True
-        events = []
-        call.on_browser_event = events.append
-        hub = PresentationHub()
-        hub.journal = MagicMock()
+        from sidevoice.presentation import Speech
+        from sidevoice.room import Room, RoomClient
+        hub = Room(MagicMock())
+        hub.target = {'thread_id': 'a'}
         hub.journal.put.return_value = {}
         hub.journal.closed_channels.return_value = {}
-        hub.attach(call)
+        call = RoomClient('s', hub, worker=AsyncMock())
+        call.connected = True
+        events = []
+        call.on_browser_event = events.append
         call.user_started()
         payload = call.enqueue_input('test input')
         call.input_receipt(payload, 'delivered')
@@ -130,21 +130,26 @@ class LatencyIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['provider_ms']['request_to_complete_ms'], 20)
 
     async def test_api_rejects_stale_receipts_and_exposes_only_valid_timings(self):
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
         from fastapi import FastAPI, HTTPException
         from starlette.requests import Request
-        from types import SimpleNamespace
-        from sidevoice.presentation import PresentationCall, mount_presentation
-        call = PresentationCall('s', {'thread_id': 'a'}, AsyncMock(), None, None)
-        call.connected = call.browser_audio = True
-        call.revision = 2
+        from sidevoice.presentation import mount_presentation
+        from sidevoice.room import Room, RoomClient, Utterance
+        hub = Room(MagicMock())
+        hub.target = {'thread_id': 'a'}
+        hub.revision = 2
+        call = RoomClient('s', hub, worker=AsyncMock())
+        call.connected = True
+        call.on_browser_event = lambda event: None
         call.active = 'u'
-        call.utterances['u'] = {'result': {'status': 'synthesizing'}}
+        utterance = Utterance('u', 'texto', thread_id='a', revision=2, row_id='s:voice:u')
+        utterance.clients['s'] = {'status': 'synthesizing', 'reason': None}
+        hub.utterances['u'] = utterance
         call.latency.reply('u', 'a', 1)
         app = FastAPI()
         request = Request({'type': 'http', 'method': 'POST', 'path': '/', 'headers': [],
                            'server': ('localhost', 80), 'scheme': 'http'})
-        with patch('sidevoice.presentation.hub', SimpleNamespace(call=call)):
+        with patch('sidevoice.presentation.hub', hub):
             mount_presentation(app)
             routes = {route.path: route.endpoint for route in app.routes if hasattr(route, 'endpoint')}
             receipt = {'session_id': 'old', 'revision': 2, 'utterance_id': 'u',
@@ -154,6 +159,9 @@ class LatencyIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call.latency.snapshot()['replies'][0]['browser_ms'], {})
             receipt['session_id'] = 's'
             await routes['/api/presentation/browser-receipt'](receipt, request)
-            report = await routes['/api/presentation/latency']()
+            report = await routes['/api/presentation/latency']('s')
+            # A browser that is not in the room is handed nobody else's measurements.
+            self.assertEqual(await routes['/api/presentation/latency']('old'),
+                             {'session_id': None, 'replies': []})
         self.assertEqual(report['replies'][0]['browser_ms'], {'audio_received_to_playback_scheduled_ms': 25})
         self.assertEqual(report['replies'][0]['status'], 'playing')

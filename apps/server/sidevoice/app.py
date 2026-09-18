@@ -21,19 +21,20 @@ from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import Speec
 from pipecat.workers.runner import WorkerRunner
 
 from .browser_socket import BrowserFrameSerializer, session_message
-from .presentation import (binding, hub, PresentationCall, NoInference, mount_presentation,
+from .presentation import (hub, RoomClient, NoInference, mount_presentation,
                           PresentationGate, PresentationPlayback, require_same_origin)
 from .connector_control import mount_connector_control
 from .paths import REPOSITORY_ROOT
 
 
-def close_on_replacement(call, websocket):
-    async def close():
-        try:
-            await websocket.close(code=4001, reason='La sala se abrió en otro dispositivo.')
-        except RuntimeError:
-            pass
-    call.on_replaced = lambda: asyncio.create_task(close())
+async def room_is_full(websocket):
+    """Refusing one browser is not tearing the room down for the ones already in it."""
+    if len(hub.clients) < hub.MAX_CLIENTS:
+        return False
+    await websocket.send_text(json.dumps({'type': 'error', 'data': {
+        'message': 'La sala ya tiene el máximo de navegadores conectados.'}}))
+    await websocket.close(code=1013)  # Try again later.
+    return True
 
 
 async def browser_text_call(websocket, settings=None):
@@ -51,16 +52,15 @@ async def browser_text_call(websocket, settings=None):
             await websocket.send_text(json.dumps(await outbox.get()))
 
     send = outbox.put_nowait
-    call = PresentationCall(str(uuid.uuid4()), binding() or {}, None, None, None)
-    call.browser_audio = True
+    # Joining the room is independent of whether an agent has joined it, and of
+    # whether other browsers are already in it.
+    call = RoomClient(str(uuid.uuid4()), hub)
     call.transcription = transcription_choice
     call.input_stats = {'transport': 'browser-text', 'turns': 0, 'audio_ms': 0,
                         'recognition_ms': 0, 'pending': 0}
     call.on_browser_event = send
     call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
     call.audio_grace_seconds = settings.audio_grace_seconds
-    close_on_replacement(call, websocket)
-    hub.attach(call)
     sender = asyncio.create_task(deliver())
     call.connected = True
     await websocket.send_text(json.dumps(session_message(call.id, serializer)))
@@ -165,6 +165,7 @@ async def browser_text_call(websocket, settings=None):
     finally:
         for turn_id in list(turns):
             await finish(turn_id, failed='La llamada terminó durante la transcripción.')
+        # Only this client leaves; the room and everyone else in it carry on.
         call.disconnect()
         sender.cancel()
 
@@ -209,16 +210,13 @@ async def openai_call(websocket, settings, config):
             message = await outbox.get()
             await transport.output().send_message(OutputTransportMessageUrgentFrame(message=message))
 
-    call = PresentationCall(str(uuid.uuid4()), binding() or {}, worker, None, stt)
-    call.browser_audio = True
+    call = RoomClient(str(uuid.uuid4()), hub, worker=worker, stt=stt)
     call.mic = serializer
     call.transcription = transcription_choice
     call.on_browser_event = send
     call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
     call.audio_grace_seconds = settings.audio_grace_seconds
-    gate.call = playback.call = call
-    close_on_replacement(call, websocket)
-    hub.attach(call)
+    gate.client = playback.client = call
     sender = asyncio.create_task(deliver())
 
     @user.event_handler('on_user_turn_started')
@@ -266,6 +264,8 @@ async def browser_call(websocket):
     from .language_settings import load_settings
     settings = load_settings()
     config = {**dotenv_values(REPOSITORY_ROOT / '.env.voice'), **os.environ}
+    if await room_is_full(websocket):
+        return
     choice = transcription.resolve(settings, config)
     if choice['provider'] == 'openai':
         if not choice.get('available'):

@@ -32,6 +32,17 @@ messaging socket (inherited by the façade), or `codex queue` on Codex. Both are
 private interfaces of those products, versioned by them, and are treated as
 replaceable adapters.
 
+## Room and clients
+
+The room is shared and the browsers in it are not. The selected conversation, the
+journal, the assistant's utterances and any audio a paid engine rendered belong to
+the room; a WebSocket identity, a microphone turn, a transcription runtime, a
+playback queue, karaoke, an output device and a latency trace belong to one
+browser. Starting to speak advances the room's epoch, because it makes the
+previous answer stale for everyone; stopping the audio does not leave the browser
+that stopped it, and no browser's arrival ends another's call. The split, its
+invariants and its lifecycle are in [the multi-client room](MULTI_CLIENT_ROOM.md).
+
 ## Transcription
 
 The engine that turns the microphone into text is chosen in the room: a local
@@ -41,7 +52,17 @@ never written to the transcript; only its last four characters are shown so a
 person can tell which key is installed. `VOICE_STT_API_KEY` still works as a
 source. Choosing a provider whose key is missing falls back to the local engine
 with a stated reason rather than failing mid-sentence, and each call reports the
-engine it resolved to.
+engine it resolved to. The transport is chosen per connection, so two browsers in
+the same room may be running different engines at the same time.
+
+## Synthesis
+
+Kokoro runs inside each browser and costs nothing per listener. ElevenLabs is
+billed per character, so the room renders one utterance once — keyed by provider,
+model, voice, speed and text — keeps the result in a bounded LRU and hands every
+client the same MP3 and the same character alignment, so karaoke matches without
+a second request. The measurement is not shared: a listener handed an existing
+render records no provider duration, because it never made that request.
 
 ## Persistence and playback
 
@@ -72,9 +93,14 @@ unnecessary and it is kept only as the fallback reference.
 
 ## Known limitations
 
-- One local call. Claude Code delivery is verified end to end; Codex delivery
-  through `codex queue` is verified for the CLI path only until checked against
-  Codex Desktop.
+- One room, bounded to `Room.MAX_CLIENTS` browsers at a time; a browser over the
+  limit is refused with a stated reason and disturbs nothing already connected.
+  Claude Code delivery is verified end to end; Codex delivery through
+  `codex queue` is verified for the CLI path only until checked against Codex
+  Desktop.
+- Several browsers at once are covered by tests, not by field use: real
+  multi-device behaviour, and a shared render against a live ElevenLabs account,
+  remain unproven.
 - The last-mile interfaces are private to each harness and may change across
   versions; the connector pins the ranges it was verified against.
 - Connector credentials are per machine. The browser side of the room still

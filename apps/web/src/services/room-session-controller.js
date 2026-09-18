@@ -20,6 +20,9 @@ window.addEventListener('voice-preparation',({detail:d})=>showPreparation(d));
 function cancelPreparation(){if(activeSpeech){const d=activeSpeech;post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status:'failed'}).catch(()=>{});cancelBrowserSpeech()}else if(previewJob)stopPreview();else if(connecting||switchingTranscription)disconnect();else window.roomVoice?.cancel();$('voice-loading').close()}
 $('loading-cancel').onclick=cancelPreparation;$('voice-loading').addEventListener('cancel',e=>{e.preventDefault();cancelPreparation()});
 
+// The room holds several browsers at once, so every question this page asks the
+// room carries its own session: the answer is about this browser and no other.
+function roomQuery(path){return sessionId?path+(path.includes('?')?'&':'?')+'session_id='+encodeURIComponent(sessionId):path}
 let ws=null,stream=null,sessionId=null,connecting=false,connectEpoch=0,micEnabled=true,roomBinding=null,people=[],switching=false,switchingTranscription=false;
 window.sidevoiceSessionId=()=>sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false,userLive=false,botLive=false,pendingUser=null,pendingUserText='';
@@ -202,7 +205,7 @@ document.addEventListener('click',event=>{if(!$('call-controls').contains(event.
 document.addEventListener('keydown',event=>{if(event.key==='Escape')setDevicesOpen(false);if(event.key==='Escape')for(const menu of document.querySelectorAll('.participant-menu[open],.call-menu[open]'))menu.open=false});
 async function select(id){if(switching||id===targetId())return;switching=true;renderPeople();$('live').textContent='Cambiando de conversación…';try{await post('/api/presentation/select',{thread_id:id});await refresh()}catch(e){setRoomError(e.message)}finally{switching=false;renderPeople()}}
 async function refresh(){try{
- const d=await api('/api/presentation');
+ const d=await api(roomQuery('/api/presentation'));
  const changed=roomBinding?.binding_id!==d.binding?.binding_id;roomBinding=d.binding;closedThreads=d.closed_threads||[];
  if(changed){viewedThread=null;cancelBrowserSpeech();pendingBotText=[];pendingUser=null;pendingUserText='';userLive=botLive=false;renderHistory();live()}
  renderPeople();updateComposer();
@@ -293,8 +296,8 @@ async function refreshConnectionStats(){
  const started=latencyNow();
  try{
   const [connection,latency]=await Promise.allSettled([
-   api('/api/presentation',{signal:controller.signal}).then(data=>({data,elapsed:latencyNow()-started})),
-   fetch('/api/presentation/latency',{signal:controller.signal}).then(async response=>{
+   api(roomQuery('/api/presentation'),{signal:controller.signal}).then(data=>({data,elapsed:latencyNow()-started})),
+   fetch(roomQuery('/api/presentation/latency'),{signal:controller.signal}).then(async response=>{
     if(response.status===404)return {unavailable:true};
     if(!response.ok)throw Error('No se pudieron consultar las mediciones.');
     return response.json();

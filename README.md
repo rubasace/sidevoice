@@ -15,6 +15,8 @@ publishes a conversational version to the room. There is no separate voice opera
 ## What works
 
 - Browser microphone over a plain WebSocket with OpenAI speech-to-text.
+- Several browsers and devices in the same room at once, sharing one conversation
+  and one history, each with its own microphone, playback and interruptions.
 - Kokoro TTS in the browser: WebGPU with WASM fallback during initialization.
 - Interrupt speech without automatically cancelling the agent's work.
 - Replies arriving while you speak wait for your turn and a configurable pause.
@@ -85,8 +87,11 @@ looks sent and never arrives. `voice_connect` detects it and says so; the fix is
 `crossSessionInbound` and the trade-off it carries is spelled out in
 `docs/INSTALL.md`.
 
-The room service uses port 8767 by default. Only one active room call is
-supported by this prototype.
+The room service uses port 8767 by default. Several browsers may be in the room
+at the same time, on the same conversation and the same history; muting, stopping
+the audio or closing one of them affects only that browser, and a reply ElevenLabs
+renders is paid for once and shared with everyone listening. See
+[the multi-client room](docs/MULTI_CLIENT_ROOM.md).
 
 ## Architecture
 
@@ -116,8 +121,9 @@ PYTHONPATH=apps/server .venv/bin/python -m unittest discover -s apps/server/test
 npm test
 ```
 
-Tests cover routing, stale replies, playback, interruptions, persistence, closure
-and draft cancellation. They do not prove live Claude support or every browser.
+Tests cover routing, stale replies, playback, interruptions, persistence, closure,
+draft cancellation and several browsers in one room. They do not prove live Claude
+support, real multi-device use or every browser.
 
 - `apps/server/`: Python room API, persistence, delivery and orchestration.
 - `apps/web/`: React/TypeScript room UI and its session controller.

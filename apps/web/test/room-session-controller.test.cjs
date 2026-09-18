@@ -590,7 +590,7 @@ test('Stats handle old servers, network failures and other call sessions without
   const s=setup({strictDOM:true});s.context.setTimeout=()=>1;s.context.clearTimeout=()=>{};
   s.context.fetch=async path=>{
    if(mode==='offline')throw Error('Offline');
-   if(path.endsWith('/latency'))return {ok:mode!=='old',status:mode==='old'?404:200,json:async()=>({session_id:'other',replies:[{thread_id:'a',reply_revision:1,server_ms:{input_queued_to_reply_received_ms:10}}]})};
+   if(path.includes('/latency'))return {ok:mode!=='old',status:mode==='old'?404:200,json:async()=>({session_id:'other',replies:[{thread_id:'a',reply_revision:1,server_ms:{input_queued_to_reply_received_ms:10}}]})};
    return {ok:true,json:async()=>({call:{id:'other'}})};
   };
   await s.run('openConnectionStats()');
@@ -631,4 +631,43 @@ test('Changed STT settings hot-swap the active browser runtime',async()=>{
  assert.equal(s.run('ws.sent[0].data.session_id'),'call-1');
  assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(next)+','+JSON.stringify(next)+')'),false);
  assert.equal(s.run('actions.length'),3);
+});
+
+test('Every room query names the browser asking, so the answer is never another device\'s',async()=>{
+ const s=setup(),asked=[];
+ s.context.fetch=async path=>{asked.push(path);return {ok:true,json:async()=>({binding:{thread_id:'a',title:'A',binding_id:'b'},room:{clients:2},call:{id:'s'}})}};
+ await s.run('refresh()');
+ assert.equal(asked[0],'/api/presentation?session_id=s');
+ assert.equal(s.run("roomQuery('/api/presentation/latency')"),'/api/presentation/latency?session_id=s');
+ // Before joining there is no browser to ask about, and the page asks about the room alone.
+ s.run("sessionId=null");
+ assert.equal(s.run("roomQuery('/api/presentation')"),'/api/presentation');
+});
+
+test('A reply the room addressed to another browser is not played by this one',async()=>{
+ const s=setup(),posts=[];
+ s.context.fetch=async(path,options)=>{if(options)posts.push(JSON.parse(options.body));return {ok:true,json:async()=>({messages:[]})}};
+ s.run("played=[];window.roomVoice={speak(d){played.push('kokoro:'+d.session_id);return Promise.resolve()},playEncoded(d){played.push('shared:'+d.audio_base64);return Promise.resolve()},cancel(){}}");
+ const speech=(type,extra)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data:{session_id:'s',revision:1,utterance_id:'u',thread_id:'a',text:'Hola',...extra}}))})`);
+ speech('voice-speech',{session_id:'otro-navegador'});
+ await s.run('Promise.resolve()');
+ assert.equal(s.run("played.join('|')"),'');
+ // Its own copy of the same shared reply is played, and the paid audio needs no second request.
+ speech('voice-speech',{});
+ await s.run('Promise.resolve()');
+ speech('voice-speech-audio',{utterance_id:'v',revision:2,audio_base64:'YQ=='});
+ await s.run('Promise.resolve()');
+ assert.equal(s.run("played.join('|')"),'kokoro:s|shared:YQ==');
+});
+
+test('Stopping playback reports it for this browser and keeps the shared message',()=>{
+ const s=setup(),posts=[];
+ s.context.fetch=async(path,options)=>{posts.push(JSON.parse(options.body));return {ok:true,json:async()=>({})}};
+ s.run("window.roomVoice={cancel(){}};history=[{segment:'s:voice:u',thread:'a',role:'assistant',time:1,text:'Respuesta compartida'}];activeSpeech={session_id:'s',revision:1,utterance_id:'u',started:true};cancelBrowserSpeech()");
+ assert.equal(posts[0].status,'cancelled_playing');
+ assert.equal(posts[0].session_id,'s');
+ // The text belongs to the room: this browser marks it interrupted for itself, never removes it.
+ assert.equal(s.run('history.length'),1);
+ assert.equal(s.run('history[0].text'),'Respuesta compartida');
+ assert.equal(s.run('history[0].interrupted'),true);
 });

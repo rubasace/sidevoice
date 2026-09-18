@@ -26,19 +26,19 @@ class FakeWebSocket:
 
 class BrowserCallTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        from sidevoice.presentation import PresentationHub
+        from sidevoice.room import Room
         from sidevoice.room_history import RoomHistory
         self.temp = tempfile.TemporaryDirectory()
-        self.hub = PresentationHub()
-        self.hub.journal = RoomHistory(Path(self.temp.name) / 'history.sqlite3')
         self.binding = Path(self.temp.name) / 'binding.json'
         self.binding.write_text(json.dumps({'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}))
         self.patches = [
-            patch('sidevoice.presentation.BINDING', self.binding),
+            patch('sidevoice.room.BINDING', self.binding),
             patch('sidevoice.language_settings.PATH', Path(self.temp.name) / 'settings.json'),
-            patch('sidevoice.app.hub', self.hub),
         ]
         for active in self.patches: active.start()
+        self.hub = Room(RoomHistory(Path(self.temp.name) / 'history.sqlite3'))
+        self.patches.append(patch('sidevoice.app.hub', self.hub))
+        self.patches[-1].start()
 
     async def asyncTearDown(self):
         for active in self.patches: active.stop()
@@ -48,6 +48,18 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         while True:
             message = json.loads(await asyncio.wait_for(socket.sent.get(), 2))
             if message['type'] == kind: return message
+
+    async def settled(self):
+        # Let the socket's receive loop drain what the test already queued.
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+    async def join(self, socket):
+        from sidevoice.app import browser_call
+        task = asyncio.create_task(browser_call(socket))
+        self.addCleanup(task.cancel)
+        session_id = (await self.received(socket, 'voice-session'))['data']['session_id']
+        return task, self.hub.clients[session_id]
 
     async def test_only_browser_text_reaches_the_server(self):
         from sidevoice.app import browser_call
@@ -72,35 +84,67 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(finished['data']['text'], 'Hola desde el navegador')
         rows = self.hub.journal.history('thread-a')
         self.assertEqual(rows[-1]['text'], 'Hola desde el navegador')
-        snapshot = self.hub.snapshot()['call']
+        snapshot = self.hub.snapshot(session_id)['call']
         self.assertEqual(snapshot['mic']['transport'], 'browser-text')
         self.assertEqual(snapshot['mic']['recognition_ms'], 120)
-        input_metrics = self.hub.call.latency.turns[('thread-a', 1)]['input_ms']
+        input_metrics = self.hub.clients[session_id].latency.turns[('thread-a', 1)]['input_ms']
         self.assertEqual(input_metrics['endpoint_silence_ms'], 2500)
         self.assertEqual(input_metrics['speech_end_to_transcript_ms'], 2640)
         self.assertEqual(snapshot['transcription']['device'], 'wasm')
+        client = self.hub.clients[session_id]
         socket.incoming.put_nowait({'type': 'websocket.disconnect'})
         await asyncio.wait_for(task, 2)
-        self.assertFalse(self.hub.call.connected)
+        self.assertFalse(client.connected)
+        self.assertEqual(self.hub.clients, {})
 
-    async def test_a_second_device_takes_over_the_room(self):
-        from sidevoice.app import browser_call
-        first_socket = FakeWebSocket()
-        first_task = asyncio.create_task(browser_call(first_socket))
-        first_session = (await self.received(first_socket, 'voice-session'))['data']['session_id']
+    async def test_two_devices_stay_in_the_room_and_neither_ends_the_other(self):
+        first_socket, second_socket = FakeWebSocket(), FakeWebSocket()
+        first_task, first = await self.join(first_socket)
+        second_task, second = await self.join(second_socket)
 
-        second_socket = FakeWebSocket()
-        second_task = asyncio.create_task(browser_call(second_socket))
-        second_session = (await self.received(second_socket, 'voice-session'))['data']['session_id']
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(len(self.hub.clients), 2)
+        self.assertTrue(first.connected and second.connected)
+        self.assertEqual(first_socket.application_state, WebSocketState.CONNECTED)
 
-        self.assertNotEqual(first_session, second_session)
-        self.assertEqual(self.hub.call.id, second_session)
+        # A microphone turn on one device moves the room's epoch on both.
+        second_socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(
+            {'type': 'voice-input-start', 'data': {'session_id': second.id, 'turn_id': 'turn-1'}})})
+        self.assertEqual((await self.received(second_socket, 'voice-cancel'))['data'],
+                         {'session_id': second.id, 'revision': 1})
+        self.assertEqual((await self.received(first_socket, 'voice-cancel'))['data'],
+                         {'session_id': first.id, 'revision': 1})
+        self.assertEqual(second.turn_revision, 1)
+        self.assertEqual(first.turn_revision, 0)
+
+        # One device leaving takes nothing else with it.
+        first_socket.incoming.put_nowait({'type': 'websocket.disconnect'})
         await asyncio.wait_for(first_task, 2)
-        self.assertEqual(first_socket.application_state, WebSocketState.DISCONNECTED)
-        self.assertTrue(self.hub.call.connected)
+        self.assertFalse(first.connected)
+        self.assertTrue(second.connected)
+        self.assertEqual(list(self.hub.clients), [second.id])
+        self.assertEqual(self.hub.revision, 1)
 
         second_socket.incoming.put_nowait({'type': 'websocket.disconnect'})
         await asyncio.wait_for(second_task, 2)
+        self.assertEqual(self.hub.clients, {})
+
+    async def test_a_browser_over_the_limit_is_refused_without_disturbing_the_room(self):
+        from sidevoice.app import browser_call
+        joined = []
+        for _ in range(self.hub.MAX_CLIENTS):
+            socket = FakeWebSocket()
+            joined.append((socket, *await self.join(socket)))
+        refused = FakeWebSocket()
+        await browser_call(refused)
+        error = await self.received(refused, 'error')
+        self.assertIn('máximo de navegadores', error['data']['message'])
+        self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
+        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertTrue(all(client.connected for _, _, client in joined))
+        for socket, task, _ in joined:
+            socket.incoming.put_nowait({'type': 'websocket.disconnect'})
+            await asyncio.wait_for(task, 2)
 
     async def test_incompatible_runtime_is_rejected(self):
         from sidevoice.app import browser_call
@@ -126,7 +170,8 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
             phases.append((await self.received(socket, 'voice-user-turn'))['data']['phase'])
         self.assertEqual(phases, ['started', 'cancelled'])
         self.assertEqual(self.hub.journal.history('thread-a'), [])
-        self.assertEqual(self.hub.snapshot()['call']['transcription']['model'], 'onnx-community/whisper-small')
+        await self.settled()
+        self.assertEqual(self.hub.snapshot(session_id)['call']['transcription']['model'], 'onnx-community/whisper-small')
         socket.incoming.put_nowait({'type': 'websocket.disconnect'}); await asyncio.wait_for(task, 2)
 
     async def test_openai_provider_routes_to_cloud_pipeline(self):
