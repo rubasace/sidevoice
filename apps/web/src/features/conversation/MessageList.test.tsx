@@ -1,11 +1,13 @@
-import { render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
 import type { ChatMessage, ConversationView } from "../../state/room-types";
 import { MessageList } from "./MessageList";
 
 const base = 1_700_000_000_000;
 const message = (overrides: Partial<ChatMessage>): ChatMessage => ({ segment: crypto.randomUUID(), thread: "one", session: "call", role: "assistant", text: "Hola", name: "Agente", time: base, ...overrides });
 const view = (messages: ChatMessage[], pendingText = ""): ConversationView => ({ messages, pendingText, pendingCancellable: !!pendingText });
+
+afterEach(() => { delete window.sidevoiceActions; });
 
 test("renders consecutive incoming messages as one WhatsApp-style group with one leading avatar", () => {
   const { container } = render(<MessageList conversation={view([message({ segment: "a" }), message({ segment: "b", text: "Sigo", time: base + 1_000 }), message({ segment: "c", role: "user", name: "Tú", text: "Vale", time: base + 2_000 })])} />);
@@ -20,4 +22,20 @@ test("keeps a live user draft visible beside a newly queued reply and renders ka
   expect(screen.getByText("Sigo hablando…")).toBeInTheDocument();
   expect(container.querySelector("mark")?.textContent).toBe("activa");
   expect(screen.getByRole("button", { name: "Cancelar envío" })).toBeInTheDocument();
+});
+
+test("keeps the active transcribed draft cancellable after listening text disappears", () => {
+  const cancelInput = vi.fn().mockResolvedValue(undefined);
+  window.sidevoiceActions = {
+    cancelInput,
+    selectParticipant: vi.fn(),
+    closeParticipant: vi.fn(),
+    updateLanguageModel: vi.fn(),
+    updateLanguageVoice: vi.fn(),
+    updateLanguageSpeed: vi.fn(),
+    previewVoice: vi.fn(),
+  };
+  render(<MessageList conversation={view([message({ segment: "call:user-turn:4", role: "user", name: "Tú", text: "Una frase todavía abierta", draft: true, cancellable: true })])} />);
+  fireEvent.click(screen.getByRole("button", { name: "Cancelar envío" }));
+  expect(cancelInput).toHaveBeenCalledOnce();
 });

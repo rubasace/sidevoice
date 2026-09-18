@@ -134,8 +134,12 @@ def build(settings, config=None):
         raise ValueError('OpenAI necesita una clave de API antes de conectar.')
     from .speech_filter import FilteredOpenAISTTService
     language = None if settings.stt_language == 'auto' else Language(settings.stt_language)
-    service = FilteredOpenAISTTService(api_key=key, settings=FilteredOpenAISTTService.Settings(
-        model=choice['model'], language=language, prompt=settings.stt_context or None))
+    service = FilteredOpenAISTTService(
+        api_key=key,
+        turn_silence_seconds=settings.user_speech_timeout,
+        settings=FilteredOpenAISTTService.Settings(
+            model=choice['model'], language=language, prompt=settings.stt_context or None),
+    )
     return service, choice
 
 

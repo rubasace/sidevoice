@@ -162,6 +162,17 @@ test('Pauses keep transcription fragments in one actual turn; the next turn stay
  assert.equal(s.run('history[2].thread'),'other');
  assert.equal(s.run("history.filter(x=>x.thread===historyThreadId()).length"),2);
 });
+test('The transcribed draft remains cancellable until the user turn finishes',()=>{
+ const s=setup(),snapshots={};
+ s.context.window.sidevoiceUI={setConversation:value=>snapshots.conversation=value};
+ const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
+ emit('voice-user-turn',{phase:'started',revision:4,thread_id:'a'});
+ emit('user-transcription',{final:true,text:'Una frase todavía abierta'});
+ assert.equal(snapshots.conversation.pendingText,'');
+ assert.equal(snapshots.conversation.messages[0].cancellable,true);
+ emit('voice-user-turn',{phase:'finished',revision:4,thread_id:'a',text:'Una frase todavía abierta'});
+ assert.equal(snapshots.conversation.messages[0].cancellable,false);
+});
 test('A late final transcription cannot duplicate an already finished user turn',()=>{
  const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
  emit('voice-user-turn',{phase:'started',revision:1,thread_id:'a'});

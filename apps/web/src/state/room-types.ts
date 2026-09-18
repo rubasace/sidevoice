@@ -14,6 +14,7 @@ export interface ChatMessage {
   time: number;
   seq?: number;
   draft?: boolean;
+  cancellable?: boolean;
   interrupted?: boolean;
   delivery?: string;
   audio?: string;

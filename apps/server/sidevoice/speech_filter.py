@@ -14,6 +14,7 @@ import unicodedata
 import numpy as np
 from scipy.signal import resample_poly
 from loguru import logger
+from pipecat.audio.utils import pcm_to_wav
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.services.openai.stt import OpenAISTTService
 
@@ -118,11 +119,78 @@ class FilteredOpenAISTTService(OpenAISTTService):
             kwargs['prompt'] = self._settings.prompt
         return await self._client.audio.transcriptions.create(**kwargs)
 
-    def __init__(self, *, speech_gate=None, **kwargs):
+    def __init__(self, *, speech_gate=None, turn_silence_seconds=2.5, **kwargs):
         kwargs.setdefault('include_prob_metrics', True)
         super().__init__(**kwargs)
         self.speech_gate = speech_gate or SegmentSpeechGate()
         self.filter_stats = {'audio_rejected': 0, 'confidence_rejected': 0, 'submitted': 0, 'script_rejected': 0}
+        # Pipecat's segmented STT normally uploads every VAD fragment. A short
+        # hesitation therefore deprived OpenAI of the rest of the sentence and
+        # made automatic language detection unstable. Preserve those fragments
+        # and upload once, at the same silence boundary used by the user turn.
+        self._turn_silence_seconds = max(0, float(turn_silence_seconds))
+        self._turn_audio = bytearray()
+        self._turn_flush_task = None
+
+    async def _cancel_turn_flush(self):
+        task, self._turn_flush_task = self._turn_flush_task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _handle_user_started_speaking(self, frame):
+        await super()._handle_user_started_speaking(frame)
+        await self._cancel_turn_flush()
+
+    async def _handle_user_stopped_speaking(self, frame):
+        # Deliberately do not call SegmentedSTTService's stop handler: that
+        # would queue this VAD fragment as a separate OpenAI request.
+        self._user_speaking = False
+        if not self.is_usable:
+            self._audio_buffer.clear()
+            self._turn_audio.clear()
+            await self._cancel_turn_flush()
+            return
+        self._turn_audio.extend(self._audio_buffer)
+        self._audio_buffer.clear()
+        await self._cancel_turn_flush()
+        self._turn_flush_task = asyncio.create_task(self._flush_after_turn_silence())
+
+    async def _flush_after_turn_silence(self):
+        try:
+            await asyncio.sleep(self._turn_silence_seconds)
+            if not self._user_speaking:
+                await self._flush_complete_turn()
+        finally:
+            if self._turn_flush_task is asyncio.current_task():
+                self._turn_flush_task = None
+
+    async def _flush_complete_turn(self):
+        if not self._turn_audio:
+            return
+        pcm = bytes(self._turn_audio) + self._trailing_silence()
+        self._turn_audio.clear()
+        self._record_stt_audio_usage(pcm)
+        await self.emit_stt_usage_metrics()
+        audio = pcm_to_wav(pcm, self.sample_rate) if self.wants_wav_segments else pcm
+        await self._segment_queue.put(audio)
+
+    async def stop(self, frame):
+        await self._cancel_turn_flush()
+        if self._audio_buffer:
+            self._turn_audio.extend(self._audio_buffer)
+            self._audio_buffer.clear()
+        await self._flush_complete_turn()
+        await super().stop(frame)
+
+    async def cancel(self, frame):
+        await self._cancel_turn_flush()
+        self._turn_audio.clear()
+        self._audio_buffer.clear()
+        await super().cancel(frame)
 
     async def _transcribe(self, audio):
         evidence = await asyncio.to_thread(self.speech_gate.assess, audio)

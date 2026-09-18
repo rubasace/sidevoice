@@ -106,6 +106,37 @@ class SpeechFilterTests(unittest.TestCase):
                 cloud.assert_not_awaited()
         asyncio.run(run())
 
+    def test_short_vad_pauses_are_batched_into_one_complete_turn(self):
+        async def run():
+            service = FilteredOpenAISTTService(
+                api_key='test-not-used', speech_gate=self.gate,
+                turn_silence_seconds=0.01,
+            )
+            service._sample_rate = 16000
+            service._audio_buffer_size_1s = 32000
+            service._record_stt_audio_usage = lambda pcm: None
+            service.emit_stt_usage_metrics = AsyncMock()
+            first = np.full(1600, 1000, dtype='<i2').tobytes()
+            second = np.full(1600, 2000, dtype='<i2').tobytes()
+
+            service._audio_buffer.extend(first)
+            await service._handle_user_stopped_speaking(None)
+            await service._handle_user_started_speaking(None)
+            await asyncio.sleep(0.02)
+            self.assertTrue(service._segment_queue.empty())
+
+            service._audio_buffer.extend(second)
+            await service._handle_user_stopped_speaking(None)
+            audio = await asyncio.wait_for(service._segment_queue.get(), 0.1)
+            with wave.open(BytesIO(audio), 'rb') as stream:
+                content = stream.readframes(stream.getnframes())
+            self.assertEqual(content[:len(first)], first)
+            self.assertEqual(content[len(first):len(first) + len(second)], second)
+            self.assertEqual(len(content), len(first) + len(second) + 16000)
+            service.emit_stt_usage_metrics.assert_awaited_once()
+            await service._cancel_turn_flush()
+        asyncio.run(run())
+
 
 if __name__ == '__main__':
     unittest.main()
