@@ -162,6 +162,15 @@ test('Pauses keep transcription fragments in one actual turn; the next turn stay
  assert.equal(s.run('history[2].thread'),'other');
  assert.equal(s.run("history.filter(x=>x.thread===historyThreadId()).length"),2);
 });
+test('A late final transcription cannot duplicate an already finished user turn',()=>{
+ const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
+ emit('voice-user-turn',{phase:'started',revision:1,thread_id:'a'});
+ emit('voice-user-turn',{phase:'finished',revision:1,thread_id:'a',text:'Una sola burbuja'});
+ emit('user-transcription',{final:true,text:'Una sola burbuja'});
+ assert.equal(s.run('history.length'),1);
+ assert.equal(s.run("history[0].segment"),'s:user-turn:1');
+ assert.equal(s.run("history[0].text"),'Una sola burbuja');
+});
 test('Delivery tick is immediate, follows the matching receipt and does not imply read',()=>{
  const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
  emit('voice-user-turn',{phase:'finished',revision:1,thread_id:'a',text:'Hola'});
