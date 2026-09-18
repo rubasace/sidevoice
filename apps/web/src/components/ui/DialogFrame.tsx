@@ -1,4 +1,5 @@
 import type { PropsWithChildren, ReactNode } from "react";
+import { Button } from "./Button";
 
 interface DialogFrameProps extends PropsWithChildren {
   id: string;
@@ -15,7 +16,7 @@ export function DialogFrame({ id, labelledBy, eyebrow, title, closeId, footer, c
     <dialog id={id} className={className} aria-labelledby={labelledBy}>
       <div className="settings-heading stats-heading">
         <div>{eyebrow && <span className="stats-eyebrow">{eyebrow}</span>}<h2 id={labelledBy}>{title}</h2></div>
-        <button id={closeId} type="button" aria-label={`Cerrar ${title.toLowerCase()}`} title="Cerrar">×</button>
+        <Button id={closeId} variant="ghost" size="icon" aria-label={`Cerrar ${title.toLowerCase()}`} title="Cerrar">×</Button>
       </div>
       {children}
       {footer}

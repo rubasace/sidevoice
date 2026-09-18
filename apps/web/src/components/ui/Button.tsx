@@ -1,9 +1,26 @@
-import type { ButtonHTMLAttributes, PropsWithChildren } from "react";
+import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "../../lib/cn";
 
-type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>> & {
-  variant?: "default" | "primary" | "danger" | "ghost";
-};
+const buttonVariants = cva("ui-button", {
+  variants: {
+    variant: {
+      default: "ui-button--default",
+      primary: "ui-button--primary",
+      danger: "ui-button--danger",
+      ghost: "ui-button--ghost",
+    },
+    size: {
+      default: "ui-button--size-default",
+      compact: "ui-button--size-compact",
+      icon: "ui-button--size-icon",
+    },
+  },
+  defaultVariants: { variant: "default", size: "default" },
+});
 
-export function Button({ variant = "default", className = "", ...props }: ButtonProps) {
-  return <button className={`ui-button ui-button--${variant} ${className}`.trim()} {...props} />;
-}
+export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>;
+
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ variant, size, className, type = "button", ...props }, ref) {
+  return <button ref={ref} type={type} className={cn(buttonVariants({ variant, size }), className)} {...props} />;
+});

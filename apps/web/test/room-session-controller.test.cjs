@@ -1,14 +1,31 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
 function setup({strictDOM=false}={}){
- const sourceRoot=__dirname+'/../src'; const uiSource=['app/App.tsx','features/room/RoomHeader.tsx','features/room/ParticipantSidebar.tsx','features/conversation/TranscriptPanel.tsx','features/call/CallToolbar.tsx','features/call/PreparationDialog.tsx','features/diagnostics/ConnectionStatsDialog.tsx','features/settings/SettingsDialog.tsx'].map(file=>fs.readFileSync(sourceRoot+'/'+file,'utf8')).join('\n');
+ const sourceRoot=__dirname+'/../src'; const uiSource=fs.readdirSync(sourceRoot,{recursive:true}).filter(file=>String(file).endsWith('.tsx')).map(file=>fs.readFileSync(sourceRoot+'/'+file,'utf8')).join('\n');
  class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
  const elements=new Map(),handlers={};
- if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout'])elements.set(id,new Element())}
+ if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout','default-model-info'])elements.set(id,new Element())}
  const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(sourceRoot+'/services/room-session-controller.js','utf8');vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
 }
+test('The controller publishes serializable snapshots through the React store bridge',()=>{
+ const s=setup({strictDOM:true}),snapshots={};
+ s.context.window.sidevoiceUI={
+  setConversation:value=>snapshots.conversation=value,
+  setParticipants:value=>snapshots.participants=value,
+  setLanguageModels:value=>snapshots.languageModels=value,
+  setBootError:value=>snapshots.bootError=value
+ };
+ s.run("add('assistant','Hola','voice:1','a');renderHistory();people=[{thread_id:'a',title:'Agente',available:true}];rosterSignature='';renderPeople()");
+ assert.equal(snapshots.conversation.messages[0].text,'Hola');
+ assert.equal(snapshots.conversation.messages[0].thread,'a');
+ assert.equal(snapshots.participants[0].threadId,'a');
+ assert.equal(snapshots.participants[0].selected,true);
+ assert.equal(s.run("setRoomError('fallo')"),undefined);
+ assert.equal(snapshots.bootError,'fallo');
+ assert.equal(s.run("$('messages').children.length"),0,'React owns rendering when the bridge is installed');
+});
 test('The React component tree initializes without inventing missing DOM elements',()=>{
  const s=setup({strictDOM:true});
  assert.equal(s.run("$('missing-element')"),null);

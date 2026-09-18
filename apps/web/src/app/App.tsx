@@ -6,20 +6,23 @@ import { CallToolbar } from "../features/call/CallToolbar";
 import { ConnectionStatsDialog } from "../features/diagnostics/ConnectionStatsDialog";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { PreparationDialog } from "../features/call/PreparationDialog";
+import { TooltipProvider } from "../components/ui/Tooltip";
 
 export function App() {
   return (
     <RoomProvider>
-      <RoomHeader />
-      <main>
-        <ParticipantSidebar />
-        <TranscriptPanel />
-      </main>
-      <CallToolbar />
-      <ConnectionStatsDialog />
-      <SettingsDialog />
-      <PreparationDialog />
-      <audio id="preview-audio" />
+      <TooltipProvider>
+        <RoomHeader />
+        <main>
+          <ParticipantSidebar />
+          <TranscriptPanel />
+        </main>
+        <CallToolbar />
+        <ConnectionStatsDialog />
+        <SettingsDialog />
+        <PreparationDialog />
+        <audio id="preview-audio" />
+      </TooltipProvider>
     </RoomProvider>
   );
 }

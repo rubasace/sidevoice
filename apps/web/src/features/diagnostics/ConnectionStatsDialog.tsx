@@ -1,4 +1,5 @@
 import { DialogFrame } from "../../components/ui/DialogFrame";
+import { Button } from "../../components/ui/Button";
 
 const cards = [
   ["Última voz → texto enviado", "stats-endpoint", "Mediana · silencio + Whisper"],
@@ -9,7 +10,7 @@ const cards = [
 
 export function ConnectionStatsDialog() {
   return (
-    <DialogFrame id="connection-stats" labelledBy="stats-title" eyebrow="Diagnóstico de la llamada" title="Conexión y latencia" closeId="stats-close" footer={<div className="stats-footer"><span id="stats-updated" className="muted" /><button id="stats-refresh" type="button">Actualizar</button></div>}>
+    <DialogFrame id="connection-stats" labelledBy="stats-title" eyebrow="Diagnóstico de la llamada" title="Conexión y latencia" closeId="stats-close" footer={<div className="stats-footer"><span id="stats-updated" className="muted" /><Button id="stats-refresh">Actualizar</Button></div>}>
       <div className="stats-body">
         <p id="stats-status" role="status">Recogiendo mediciones…</p>
         <div className="stats-cards">{cards.map(([label, id, note]) => <div key={id}><span>{label}</span><strong id={id}>—</strong><small>{note}</small></div>)}</div>

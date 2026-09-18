@@ -7,7 +7,7 @@ task.
 
 Sidevoice is one repository with independently bounded packages, not one deployment artifact. `apps/server` is the Python room service; `apps/web` is the React/TypeScript browser application; `packages/browser-audio` owns the browser-only STT/TTS runtime; `packages/connector` is the separately published Node client; and `packages/protocol` contains shared wire contracts. The root npm workspace builds and tests the JavaScript/TypeScript packages together, while Python keeps its own package and dependency boundary.
 
-The web app is componentized by product concern (room, conversation, call, settings and diagnostics). Long-lived microphone, playback, WebSocket and AudioContext state is deliberately owned by one session controller outside the React render lifecycle, so React Strict Mode cannot duplicate browser resources.
+The web app is componentized by product concern (room, conversation, call, settings and diagnostics). A per-application Zustand store owns serializable view state, while one runtime instance owns long-lived microphone, playback, WebSocket and AudioContext resources so React Strict Mode cannot duplicate them. The transitional bridge and remaining migration seams are documented in [FRONTEND.md](FRONTEND.md).
 
 
 ## Transport and identity

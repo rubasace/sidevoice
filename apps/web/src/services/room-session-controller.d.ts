@@ -1,5 +1,7 @@
 export {};
 
+import type { ConversationView, LanguageModelView, ParticipantView, SidevoiceActions } from "../state/room-types";
+
 declare global {
   interface Window {
     roomVoice?: {
@@ -15,5 +17,12 @@ declare global {
     roomTranscription?: Record<string, unknown>;
     roomI18n?: { setLanguage(language: string): void };
     sidevoiceSessionId?: () => string | null;
+    sidevoiceUI?: {
+      setConversation(value: ConversationView): void;
+      setParticipants(value: ParticipantView[]): void;
+      setLanguageModels(value: LanguageModelView[]): void;
+      setBootError(value: string | null): void;
+    };
+    sidevoiceActions?: SidevoiceActions;
   }
 }

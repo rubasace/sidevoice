@@ -1,0 +1,23 @@
+import { render, screen } from "@testing-library/react";
+import { expect, test } from "vitest";
+import type { ChatMessage, ConversationView } from "../../state/room-types";
+import { MessageList } from "./MessageList";
+
+const base = 1_700_000_000_000;
+const message = (overrides: Partial<ChatMessage>): ChatMessage => ({ segment: crypto.randomUUID(), thread: "one", session: "call", role: "assistant", text: "Hola", name: "Agente", time: base, ...overrides });
+const view = (messages: ChatMessage[], pendingText = ""): ConversationView => ({ messages, pendingText, pendingCancellable: !!pendingText });
+
+test("renders consecutive incoming messages as one WhatsApp-style group with one leading avatar", () => {
+  const { container } = render(<MessageList conversation={view([message({ segment: "a" }), message({ segment: "b", text: "Sigo", time: base + 1_000 }), message({ segment: "c", role: "user", name: "Tú", text: "Vale", time: base + 2_000 })])} />);
+  expect(container.querySelectorAll(".message-group")).toHaveLength(2);
+  expect(container.querySelectorAll('.message-group[data-role="assistant"] .ui-avatar')).toHaveLength(1);
+  expect(container.querySelectorAll('.message-group[data-role="assistant"] .chat-avatar-spacer')).toHaveLength(1);
+  expect(screen.getAllByText("Agente")).toHaveLength(1);
+});
+
+test("keeps a live user draft visible beside a newly queued reply and renders karaoke declaratively", () => {
+  const { container } = render(<MessageList conversation={view([message({ segment: "voice", text: "Respuesta activa", karaoke: { from: 10, to: 16, mode: "word" } })], "Sigo hablando…")} />);
+  expect(screen.getByText("Sigo hablando…")).toBeInTheDocument();
+  expect(container.querySelector("mark")?.textContent).toBe("activa");
+  expect(screen.getByRole("button", { name: "Cancelar envío" })).toBeInTheDocument();
+});
