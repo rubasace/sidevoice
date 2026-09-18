@@ -45,15 +45,26 @@ invariants and its lifecycle are in [the multi-client room](MULTI_CLIENT_ROOM.md
 
 ## Transcription
 
-The engine that turns the microphone into text is chosen in the room: a local
-Whisper on CPU, or a cloud provider. A provider's key is stored by the room in
-`.voice-poc/stt-credentials.json` (mode 0600), never returned to the browser and
-never written to the transcript; only its last four characters are shown so a
-person can tell which key is installed. `VOICE_STT_API_KEY` still works as a
-source. Choosing a provider whose key is missing falls back to the local engine
-with a stated reason rather than failing mid-sentence, and each call reports the
-engine it resolved to. The transport is chosen per connection, so two browsers in
-the same room may be running different engines at the same time.
+Every browser streams its microphone as 16 kHz PCM over the room's WebSocket, and
+the room runs one Pipecat pipeline per browser: Silero as the voice detector and
+a user-turn strategy that says when the turn is over. The strategy is a setting of
+the device, sent when it connects and kept in the browser: smart-turn v3 (bundled
+with Pipecat, decides from the audio whether the sentence is finished, with a
+maximum silence as a safety net) or a fixed silence timer. Two browsers in the
+same room may use different settings.
+
+Transcribing the finished turn is a provider behind that pipeline, and the
+pipeline does not know which one it has: OpenAI is called from the room with the
+stored key; the browser provider sends the turn's WAV back to the browser that
+spoke it, which recognises it locally with Whisper and answers with the text. The
+fragments of one turn are transcribed once, together, and the speech gate and the
+text filters apply to both providers.
+
+A provider's key is stored by the room in `.voice-poc/stt-credentials.json` (mode
+0600), never returned to the browser and never written to the transcript; only its
+last four characters are shown so a person can tell which key is installed.
+`VOICE_STT_API_KEY` still works as a source. Choosing a provider whose key is
+missing is refused before any audio is accepted.
 
 ## Synthesis
 

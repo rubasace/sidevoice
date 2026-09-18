@@ -14,7 +14,9 @@ publishes a conversational version to the room. There is no separate voice opera
 
 ## What works
 
-- Browser microphone over a plain WebSocket with OpenAI speech-to-text.
+- Browser microphone over a plain WebSocket. The room detects where your turn ends,
+  with smart-turn or a fixed silence, and transcribes it with Whisper in your browser
+  or with OpenAI; nothing needs installing and the local mode needs no API.
 - Several browsers and devices in the same room at once, sharing one conversation
   and one history, each with its own microphone, playback and interruptions.
 - Kokoro TTS in the browser: WebGPU with WASM fallback during initialization.
@@ -62,11 +64,15 @@ Open **http://127.0.0.1:8767/voice/**. The room can stay open without an agent
 selected. The browser downloads model assets on first use, prepares them and
 caches them locally. Initial preparation is slower than subsequent use.
 
-Transcription is configurable from the room: pick the engine (local Whisper on
-CPU, or OpenAI) and its model, and store the OpenAI key there. With no key the
-room transcribes locally. The key is kept by the room, never by the browser,
-and the room itself has no access control yet — do not expose it publicly with
-a key installed.
+Transcription is configurable from the room: pick the engine (Whisper in the
+browser, on GPU or CPU, or OpenAI) and its model, and store the OpenAI key there.
+With no key the room transcribes in the browser. In every mode the microphone
+audio reaches the room, which runs voice detection and decides when your turn is
+over; with the browser engine the text is recognised on your device and no API
+is called. How the end of a turn is detected, smart-turn or a fixed silence, and
+the detector's sensitivity are settings of each device. The key is kept by the
+room, never by the browser, and the room itself has no access control yet — do
+not expose it publicly with a key installed.
 
 ## Connect a conversation
 
