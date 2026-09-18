@@ -81,13 +81,16 @@ published, and the npm step reports that it was skipped.
 
 ### The image package
 
-The first push creates the package **private**, even from a public repository,
-and no API changes that. Open the package (Profile → Packages → `sidevoice`) →
-Package settings → Change visibility → Public. It cannot be made private again.
-While it is private, `docker pull` asks for credentials.
+Nothing, as it turns out. The workflow authenticates with the repository's own
+token, and `ghcr.io/rubasace/sidevoice` came out public and pulls anonymously —
+verified against the registry, both architectures, with the SBOM and provenance
+attached.
 
-Nothing else is needed: the workflow authenticates with the repository's own
-token.
+Worth knowing anyway: GitHub creates a container package **private** by default
+in several accounts, and no API changes that. If a package ever lands private,
+`docker pull` asks for credentials until someone opens it (Profile → Packages →
+the package → Package settings → Change visibility → Public) and that cannot be
+undone.
 
 ### npm
 
