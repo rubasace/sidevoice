@@ -68,6 +68,13 @@ test('OpenAI remains selectable and shows its credential controls',()=>{
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe']);
  assert.match(s.run("$('stt-key-state').textContent"),/Clave guardada/);
 });
+test('OpenAI model loading never masquerades as a one-option catalogue',()=>{
+ const s=setup({strictDOM:true});
+ s.run("voicePreferences={stt_provider:'openai',stt_model:'gpt-4o-transcribe'};sttCatalog={providers:[{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[],models_source:'remote'}]};sttCapabilities={webgpu:false,wasm:true,models:[]};sttCredentials={openai:{configured:true}};sttRemote.openai.loading=true;$('stt-provider').value='openai';renderTranscription()");
+ assert.equal(s.run("$('stt-model').disabled"),true);
+ assert.deepEqual(s.run("$('stt-model').children.map(x=>x.textContent)"),['Cargando modelos de OpenAI…']);
+ assert.match(s.run("$('stt-model-note').textContent"),/Consultando/);
+});
 test('OpenAI models are fetched only when its provider is selected',async()=>{
  const s=setup({strictDOM:true});let requests=[];
  s.context.fetch=async path=>{requests.push(path);return {ok:true,json:async()=>({models:[{id:'gpt-4o-transcribe',label:'gpt-4o-transcribe'},{id:'gpt-4o-mini-transcribe',label:'gpt-4o-mini-transcribe'}],error:null})}};
@@ -78,6 +85,7 @@ test('OpenAI models are fetched only when its provider is selected',async()=>{
  assert.match(requests[0],/transcription\/models\?provider=openai/);
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe','gpt-4o-mini-transcribe']);
  assert.equal(s.run("$('stt-model').value"),'gpt-4o-mini-transcribe');
+ assert.match(s.run("$('stt-model-note').textContent"),/2 modelos compatibles/);
 });
 test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
  const s=setup({strictDOM:true});

@@ -531,7 +531,8 @@ function renderTranscription(){
  }
  const current=modelSelect.value,saved=voicePreferences?.stt_provider===provider?voicePreferences?.stt_model:null;
  const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(provider==='openai'?(saved||entry?.default_model||models[0]?.id):(models.some(model=>model.id===entry?.default_model)?entry.default_model:models[0]?.id));
- entriesFor(modelSelect,models.map(model=>[model.id,model.label]),preferred);
+ const loadingRemote=provider==='openai'&&sttRemote.openai.loading;
+ entriesFor(modelSelect,loadingRemote?[['','Cargando modelos de OpenAI…']]:models.map(model=>[model.id,model.label]),loadingRemote?'':preferred);
  if(provider==='browser'){
   modelSelect.disabled=false;
   const selected=models.find(model=>model.id===modelSelect.value),device=$('stt-device'),savedDevice=device.value||voicePreferences?.stt_device||'auto',entries=[];
@@ -546,7 +547,7 @@ function renderTranscription(){
   $('stt-model-note').textContent=selected?.description||'';
  }else{
   const remote=sttRemote.openai,selected=models.find(model=>model.id===modelSelect.value);
-  $('stt-model-note').textContent=remote.loading?'Consultando los modelos disponibles en tu cuenta…':remote.error||selected?.description||'Catálogo cargado directamente desde OpenAI.';
+  $('stt-model-note').textContent=remote.loading?'Consultando los modelos disponibles en tu cuenta…':remote.error||selected?.description||(models.length?models.length+' modelos compatibles cargados directamente desde OpenAI.':'OpenAI no devolvió modelos compatibles para esta cuenta.');
  }
 }
 async function loadTranscriptionModels(provider,refresh=false){
