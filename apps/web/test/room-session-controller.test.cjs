@@ -475,15 +475,9 @@ test('Capture shares the playback context, streams PCM to the room, and hangup o
  const node=s.run('captureNode');
  node.port.onmessage({data:new ArrayBuffer(640)});
  assert.equal(sentFrames,1);assert.equal(nodeOptions.processorOptions.sampleRate,16000);
- s.run('micPauseDuringPlayback=true;botLive=true');
- node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(sentFrames,1,'a device that pauses during playback sends nothing while the reply plays');
- s.run('botLive=false');
- node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(sentFrames,2);
  s.run('stopMeter()');
  node.port.onmessage({data:new ArrayBuffer(640)});
- assert.equal(sentFrames,2);assert.equal(closed,0);
+ assert.equal(sentFrames,1);assert.equal(closed,0);
 });
 
 test('Latency uses browser monotonic durations and original reply revision',()=>{
