@@ -108,7 +108,7 @@ class TextMessage(BaseModel):
 
 
 def mount_presentation(app):
-    from .language_settings import LanguageSettings, load_settings, save_settings
+    from .language_settings import load_settings
     from contextlib import asynccontextmanager
     previous_lifespan = app.router.lifespan_context
     @asynccontextmanager
@@ -187,11 +187,8 @@ def mount_presentation(app):
     async def transcription_settings(request: Request):
         require_same_origin(request)
         from . import transcription
-        from .language_settings import load_settings
-        settings = load_settings()
         return {'catalog': transcription.CATALOG,
-                'credentials': transcription.credential_state(),
-                'effective': transcription.resolve(settings)}
+                'credentials': transcription.credential_state()}
 
     @app.get('/api/presentation/transcription/models')
     async def transcription_models(provider: str, request: Request):
@@ -220,20 +217,12 @@ def mount_presentation(app):
                 transcription.save_key(provider, str(key))
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        return {'credentials': transcription.credential_state(),
-                'effective': transcription.resolve(load_settings())}
+        return {'credentials': transcription.credential_state()}
 
     @app.get('/api/presentation/languages')
     async def languages():
+        # Defaults only: each device keeps its own settings and brings them when it connects.
         return load_settings().model_dump()
-
-    @app.post('/api/presentation/languages')
-    async def languages_update(payload: LanguageSettings, request: Request):
-        require_same_origin(request)
-        save_settings(payload)
-        for client in hub.clients.values():
-            client.audio_grace_seconds = payload.audio_grace_seconds
-        return {'saved': True, 'reconnect_for_stt': True}
 
     @app.get('/voice/', include_in_schema=False)
     async def view():

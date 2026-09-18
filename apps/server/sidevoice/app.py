@@ -105,27 +105,42 @@ class VoiceCall:
     so the same flow serves any turn-end strategy and any transcription provider.
     """
 
-    def __init__(self, call, transcriber, send, *, mic, choice, runtime=None, audio_grace_seconds=2.0):
+    def __init__(self, call, transcriber, send, *, settings, mic, choice, runtime=None):
         self.call, self.transcriber, self.send = call, transcriber, send
         self.finishing = set()
         self.lock = asyncio.Lock()
         self.held = None   # text of a turn the user resumed before it was delivered; the next turn carries it
         call.stt = transcriber
         call.voice = self
+        call.settings = settings
         call.transcription = {**choice, **(runtime or {})}
         call.mic_settings = mic.model_dump()
         call.input_stats = {'transport': 'pcm', 'turns': 0, 'audio_ms': 0, 'recognition_ms': 0, 'pending': 0}
         call.on_browser_event = send
         call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
-        call.audio_grace_seconds = audio_grace_seconds
+        call.audio_grace_seconds = settings.audio_grace_seconds
         transcriber.on_message = self.browser_message
 
     def browser_message(self, message):
-        """A browser that switched its local Whisper says so; the room only records what it can run."""
-        if not isinstance(message, dict) or message.get('type') != 'voice-stt-ready':
+        """What a connected browser tells the room about itself, beyond audio.
+
+        A switched local Whisper is recorded if the room can run it; new settings
+        apply to this call at once for what needs no pipeline (voice, speed, grace),
+        while transcription and microphone changes wait for the next connection.
+        """
+        if not isinstance(message, dict) or message.get('type') not in {'voice-stt-ready', 'voice-settings'}:
             return
         data = message.get('data') if isinstance(message.get('data'), dict) else {}
         if data.get('session_id') != self.call.id:
+            return
+        if message['type'] == 'voice-settings':
+            from .language_settings import settings_from
+            settings, problem = settings_from(data.get('settings'))
+            if problem:
+                self.send({'type': 'error', 'data': {'message': problem}})
+                return
+            self.call.settings = settings
+            self.call.audio_grace_seconds = settings.audio_grace_seconds
             return
         try:
             runtime = browser_runtime(data)
@@ -204,13 +219,14 @@ class VoiceCall:
             task.cancel()
 
 
-async def voice_call(websocket, settings, config, choice, hello):
-    """One pipeline for every call: PCM in, the room's turn detection, and a transcription provider.
+async def voice_call(websocket, settings, config, choice, hello, settings_problem=None):
+    """One pipeline for every call: PCM in, the device's turn detection, and a transcription provider.
 
     The provider is OpenAI or the browser itself; the pipeline never knows which.
     """
     from .language_settings import mic_settings
     mic, problem = mic_settings(settings, hello.get('mic'))
+    problem = settings_problem or problem
     serializer = BrowserFrameSerializer()
     transport = FastAPIWebsocketTransport(websocket, FastAPIWebsocketParams(
         audio_in_enabled=True, serializer=serializer, allowed_origins=[]))
@@ -235,8 +251,7 @@ async def voice_call(websocket, settings, config, choice, hello):
         runtime = browser_runtime(hello.get('transcription'))
     except ValueError as error:
         runtime_problem = str(error)
-    voice = VoiceCall(call, transcriber, send, mic=mic, choice=choice, runtime=runtime,
-                      audio_grace_seconds=settings.audio_grace_seconds)
+    voice = VoiceCall(call, transcriber, send, settings=settings, mic=mic, choice=choice, runtime=runtime)
     call.mic = serializer
     problems = [message for message in (problem, runtime_problem) if message]
     logger.info('Call {}: transcription {} · {} ({}), turn end {}', call.id[:8], choice['provider'],
@@ -283,22 +298,22 @@ async def voice_call(websocket, settings, config, choice, hello):
 
 
 async def browser_call(websocket):
-    """Every browser gets the same call; only the transcription provider comes from the saved settings."""
-    from .language_settings import load_settings
-    settings = load_settings()
+    """Every browser gets the same call, configured by what that browser brings in its first message."""
+    from .language_settings import settings_from
     config = {**dotenv_values(REPOSITORY_ROOT / '.env.voice'), **os.environ}
     if await room_is_full(websocket):
         return
+    hello = await client_hello(websocket)
+    if hello is None:
+        return
+    settings, problem = settings_from(hello.get('settings'))
     choice = transcription.resolve(settings, config)
     if choice['provider'] == 'openai' and not choice.get('available'):
         await websocket.send_text(json.dumps({'type': 'error', 'data': {
             'message': 'OpenAI necesita una clave de API antes de conectar.'}}))
         await websocket.close(code=1008)
         return
-    hello = await client_hello(websocket)
-    if hello is None:
-        return
-    await voice_call(websocket, settings, config, choice, hello)
+    await voice_call(websocket, settings, config, choice, hello, problem)
 
 
 def mount_browser_call(app):

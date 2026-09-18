@@ -25,7 +25,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         for target in [patch('sidevoice.room.BINDING', self.path('binding.json')),
-                       patch('sidevoice.language_settings.PATH', self.path('settings.json'))]:
+                       ]:
             target.start()
             self.addCleanup(target.stop)
         self.renders = []

@@ -113,6 +113,7 @@ class RoomClient:
         self.transcription = None  # which STT engine this client resolved to
         self.mic_settings = None   # how this device's turns are detected
         self.voice = None          # the call flow driving this client's turns, when a pipeline owns it
+        self.settings = None       # what this device configured; the room keeps no copy of its own
         self.latency = CallLatency(self.id)
         if room is not None:
             room.join(self)
@@ -336,7 +337,7 @@ class RoomClient:
         """Hand this browser the reply to play. Kokoro it renders; a paid engine the room did."""
         from .language_settings import load_settings, resolve_voice
         uid = utterance.id
-        choice = resolve_voice(load_settings(), utterance.language)
+        choice = resolve_voice(self.settings or load_settings(), utterance.language)
         self.transition(uid, 'synthesizing')
         self.latency.start_synthesis(uid)
         trace = self.latency.replies.get(uid)

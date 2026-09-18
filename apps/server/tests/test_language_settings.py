@@ -1,35 +1,29 @@
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 from sidevoice import language_settings
 
 class PreferencesTest(unittest.TestCase):
-    def test_preferences_persist_and_select_native_voice(self):
-        with tempfile.TemporaryDirectory() as root, patch.object(language_settings,'PATH',Path(root)/'settings.json'):
-            self.assertEqual(language_settings.load_settings().stt_language,'auto')
-            language_settings.save_settings(language_settings.LanguageSettings(english_voice='bf_emma',spanish_voice='em_alex',tts_speed=1.2))
-            saved=language_settings.load_settings()
-            en=language_settings.resolve_voice(saved,'en')
-            self.assertEqual(en['speed'],1.2)
-            self.assertEqual((en['voice'],en['voice'][0]),('bf_emma','b'))
-            es=language_settings.resolve_voice(saved,'es')
-            self.assertEqual((es['voice'],es['voice'][0]),('em_alex','e'))
+    def test_the_room_keeps_no_settings_and_a_device_brings_its_own(self):
+        self.assertEqual(language_settings.load_settings(), language_settings.LanguageSettings())
+        self.assertFalse(hasattr(language_settings, 'save_settings'))
+        settings, problem = language_settings.settings_from(
+            {'english_voice': 'bf_emma', 'spanish_voice': 'em_alex', 'tts_speed': 1.2, 'unknown_future_key': 1})
+        self.assertIsNone(problem)
+        en = language_settings.resolve_voice(settings, 'en')
+        self.assertEqual((en['voice'], en['speed']), ('bf_emma', 1.2))
+        self.assertEqual(language_settings.resolve_voice(settings, 'es')['voice'], 'em_alex')
+
+    def test_invalid_device_settings_fall_back_to_defaults_and_say_why(self):
+        settings, problem = language_settings.settings_from({'tts_speed': 9, 'stt_provider': 'browser'})
+        self.assertEqual(settings, language_settings.LanguageSettings())
+        self.assertIn('tts_speed', problem)
+        self.assertEqual(language_settings.settings_from(None), (language_settings.LanguageSettings(), None))
+        self.assertEqual(language_settings.settings_from({}), (language_settings.LanguageSettings(), None))
 
     def test_default_turn_silence_is_two_and_a_half_seconds(self):
         settings = language_settings.LanguageSettings()
         self.assertEqual(settings.user_speech_timeout, 2.5)
-
-    def test_openai_settings_are_preserved_and_server_local_whisper_migrates(self):
-        with tempfile.TemporaryDirectory() as root, patch.object(language_settings, 'PATH', Path(root) / 'settings.json'):
-            language_settings.PATH.write_text('{"stt_provider":"openai","stt_model":"gpt-4o-transcribe"}')
-            settings = language_settings.load_settings()
-            self.assertEqual((settings.stt_provider, settings.stt_model), ('openai', 'gpt-4o-transcribe'))
-            language_settings.PATH.write_text('{"stt_provider":"local","stt_model":"base"}')
-            settings = language_settings.load_settings()
-            self.assertEqual((settings.stt_provider, settings.stt_model),
-                             ('browser', 'onnx-community/whisper-base'))
-            self.assertEqual(settings.stt_device, 'auto')
+        self.assertEqual((settings.turn_end_mode, settings.smart_turn_min_silence, settings.smart_turn_max_silence), ('smart_turn', 0.6, 3.0))
 
 class VoiceResolutionTest(unittest.TestCase):
     def test_default_and_language_override(self):

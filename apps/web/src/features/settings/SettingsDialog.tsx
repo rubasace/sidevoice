@@ -6,7 +6,7 @@ import { Button } from "../../components/ui/Button";
 import { NativeSelect } from "../../components/ui/NativeSelect";
 
 function GeneralSettings() {
-  return <section id="pane-general" aria-labelledby="settings-general" hidden><h3>Idioma de la interfaz</h3><label>Idioma<NativeSelect id="ui-language" defaultValue="es"><option value="es">Español</option><option value="en">English</option></NativeSelect></label><p className="muted">Cambia los textos de la web. La voz y la transcripción se configuran por separado.</p></section>;
+  return <section id="pane-general" aria-labelledby="settings-general" hidden><h3>Idioma de la interfaz</h3><label>Idioma<NativeSelect id="ui-language" defaultValue="es"><option value="es">Español</option><option value="en">English</option></NativeSelect></label><p className="muted">Cambia los textos de la web. La voz y la transcripción se configuran por separado.</p><p className="muted">Toda la configuración se guarda en este navegador y se envía a la sala al entrar; la sala no conserva ninguna copia. Cada dispositivo tiene la suya.</p></section>;
 }
 
 function VoiceSettings() {
@@ -40,7 +40,7 @@ function TranscriptionSettings() {
       <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note">Selecciona primero un modelo.</p></div>
       <div id="stt-credential" hidden><label>Clave de API de OpenAI<input id="stt-key" type="password" placeholder="sk-…" autoComplete="off" spellCheck={false} /></label><p className="muted" id="stt-key-state" role="status" /><div className="stt-key-actions"><Button id="stt-key-save" size="compact">Guardar clave</Button><Button id="stt-key-clear" size="compact">Quitar clave</Button></div></div>
       <label>Idioma al transcribir<NativeSelect id="stt-language"><option value="auto">Detectar automáticamente</option><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
-      <p className="muted" id="stt-apply-note">Los cambios entre modelos locales se aplican durante la llamada. Cambiar entre navegador y OpenAI requiere volver a entrar.</p>
+      <p className="muted" id="stt-apply-note">Los cambios entre modelos locales se aplican durante la llamada. Cambiar entre navegador y OpenAI requiere volver a entrar. El modelo elegido es de este dispositivo: un móvil puede usar tiny mientras un ordenador usa turbo.</p>
     </section>
   );
 }
@@ -50,7 +50,7 @@ function AdvancedSettings() {
     <section id="pane-advanced" aria-labelledby="settings-advanced" hidden>
       <h3>Tiempos de conversación</h3>
       <label>Pausa antes del audio pendiente (segundos)<input id="audio-grace-seconds" type="number" min="0" max="10" step="0.5" defaultValue="2" /></label><p className="muted">Tras enviar tu intervención, espera este margen. Si vuelves a hablar, la espera se reinicia. Por defecto: 2 segundos.</p>
-      <h3>Fin de tu intervención</h3><p className="muted">Estos ajustes son de este dispositivo: se guardan en este navegador y se aplican al entrar en la sala.</p>
+      <h3>Fin de tu intervención</h3><p className="muted">Se aplican al entrar en la sala; si cambias uno durante una llamada, vuelve a entrar.</p>
       <label>Cómo se detecta que has terminado <InfoPopover description="Detección inteligente escucha la entonación y decide en cuanto callas si la frase está completa; un silencio fijo espera siempre el mismo tiempo." label="Información sobre la detección del fin de intervención" /><NativeSelect id="turn-end-mode" defaultValue="smart_turn"><option value="smart_turn">Detección inteligente (smart-turn)</option><option value="timer">Silencio fijo</option></NativeSelect></label>
       <label>Silencio mínimo antes de consultar la detección (segundos)<input id="smart-turn-min-silence" type="number" min="0.1" max="3" step="0.1" defaultValue="0.6" /></label><p className="muted">Hasta que la pausa dura esto, no se pregunta si has terminado. Súbelo si te corta al respirar; bájalo si quieres respuestas más inmediatas. Por defecto: 0,6 segundos.</p>
       <label>Silencio máximo con detección inteligente (segundos)<input id="smart-turn-max-silence" type="number" min="0.5" max="15" step="0.5" defaultValue="3" /></label><p className="muted">Si la detección no está segura, la intervención se cierra igualmente tras este silencio. Por defecto: 3 segundos.</p>

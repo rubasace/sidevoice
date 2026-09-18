@@ -64,15 +64,17 @@ Open **http://127.0.0.1:8767/voice/**. The room can stay open without an agent
 selected. The browser downloads model assets on first use, prepares them and
 caches them locally. Initial preparation is slower than subsequent use.
 
-Transcription is configurable from the room: pick the engine (Whisper in the
-browser, on GPU or CPU, or OpenAI) and its model, and store the OpenAI key there.
-With no key the room transcribes in the browser. In every mode the microphone
-audio reaches the room, which runs voice detection and decides when your turn is
-over; with the browser engine the text is recognised on your device and no API
-is called. How the end of a turn is detected, smart-turn or a fixed silence, and
-the detector's sensitivity are settings of each device. The key is kept by the
-room, never by the browser, and the room itself has no access control yet — do
-not expose it publicly with a key installed.
+Every setting belongs to the device: voices, speeds, the transcription engine
+(Whisper in the browser, on GPU or CPU, or OpenAI) and its model, and how the end
+of your turn is detected (smart-turn or a fixed silence, with the detector's
+sensitivity). The browser keeps them and sends them when it joins; the room keeps
+no copy, so a phone can run Whisper tiny while a laptop runs turbo. In every mode
+the microphone audio reaches the room, which runs voice detection and decides
+when your turn is over; with the browser engine the text is recognised on your
+device and no API is called. API keys are the exception: OpenAI and ElevenLabs
+are called by the room, so their keys are stored by the room, never by the
+browser, and the room itself has no access control yet — do not expose it
+publicly with a key installed.
 
 ## Connect a conversation
 

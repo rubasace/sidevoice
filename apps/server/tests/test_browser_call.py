@@ -56,7 +56,6 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.binding.write_text(json.dumps({'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}))
         self.patches = [
             patch('sidevoice.room.BINDING', self.binding),
-            patch('sidevoice.language_settings.PATH', Path(self.temp.name) / 'settings.json'),
         ]
         for active in self.patches: active.start()
         self.hub = Room(RoomHistory(Path(self.temp.name) / 'history.sqlite3'))
@@ -150,6 +149,23 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         timer, _ = mic_settings(LanguageSettings(), {'turn_end_mode': 'timer', 'user_speech_timeout': 4})
         self.assertIsInstance(turn_stop_strategy(timer, {}), SpeechTimeoutUserTurnStopStrategy)
 
+    async def test_the_device_brings_every_setting_and_can_update_the_live_ones(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'settings': {'stt_provider': 'browser', 'stt_model': 'onnx-community/whisper-base',
+                                                             'spanish_voice': 'em_alex', 'audio_grace_seconds': 4,
+                                                             'turn_end_mode': 'timer', 'user_speech_timeout': 1.5}})
+        self.assertEqual(client.settings.spanish_voice, 'em_alex')
+        self.assertEqual(client.audio_grace_seconds, 4)
+        self.assertEqual(client.transcription['model'], 'onnx-community/whisper-base')
+        self.assertEqual(client.mic_settings['user_speech_timeout'], 1.5)
+        # Voices and grace change without a reconnect; invalid updates are refused and reported.
+        client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {'spanish_voice': 'ef_dora', 'audio_grace_seconds': 1}}})
+        self.assertEqual((client.settings.spanish_voice, client.audio_grace_seconds), ('ef_dora', 1))
+        client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {'tts_speed': 9}}})
+        self.assertEqual(client.settings.spanish_voice, 'ef_dora')
+        self.assertIn('no válidos', (await self.received(socket, 'error'))['data']['message'])
+        await self.leave(socket, task)
+
     async def test_invalid_device_settings_fall_back_to_the_room_defaults(self):
         socket = FakeWebSocket()
         task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'vad_confidence': 5}})
@@ -196,11 +212,11 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
     def voice(self, results, session_id='s1'):
         from sidevoice.app import VoiceCall
         from sidevoice.room import RoomClient
-        from sidevoice.language_settings import MicSettings
+        from sidevoice.language_settings import LanguageSettings, MicSettings
         sent = []
         client = RoomClient(session_id, self.hub)
         client.connected = True
-        voice = VoiceCall(client, FakeTranscriber(results), sent.append, mic=MicSettings(),
+        voice = VoiceCall(client, FakeTranscriber(results), sent.append, settings=LanguageSettings(), mic=MicSettings(),
                           choice={'provider': 'browser', 'model': 'onnx-community/whisper-tiny', 'reason': 'explicit'},
                           runtime={'model': 'onnx-community/whisper-tiny', 'device': 'webgpu'})
         return voice, client, sent

@@ -1,9 +1,12 @@
-"""User-selected language preferences, independent of agent instructions."""
+"""The settings a device brings to the room, and their defaults. The room keeps none of them.
+
+Every browser stores its own configuration and sends it when it connects; the
+server validates it, uses it for that call, and forgets it with the call.
+"""
 import json
-import os
 from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from .paths import BROWSER_AUDIO_ROOT, RUNTIME_ROOT
+from .paths import BROWSER_AUDIO_ROOT
 
 CATALOG = json.loads((BROWSER_AUDIO_ROOT / 'catalog.json').read_text())
 LANGUAGES = {item['id']: item for item in CATALOG['languages']}
@@ -18,10 +21,8 @@ class LanguageVoice(BaseModel):
     voice: str = 'inherit'
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
 
-PATH = RUNTIME_ROOT / 'language-settings.json'
-
 class LanguageSettings(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='ignore')
     ui_language: Literal['es', 'en'] = 'es'
     tts_execution: Literal['browser'] = 'browser'
     tts_device: Literal['auto', 'webgpu', 'wasm'] = 'auto'
@@ -30,7 +31,8 @@ class LanguageSettings(BaseModel):
     english_model: str = Field(default='inherit', min_length=1, max_length=120)
     default_voice: str = 'ef_dora'
     language_overrides: dict[str, LanguageVoice] = Field(default_factory=dict)
-    stt_language: Literal['auto', 'es', 'en', 'fr', 'it', 'pt', 'hi'] = 'auto'
+    # Small local Whisper models flip languages on mixed speech; detection is opt-in.
+    stt_language: Literal['auto', 'es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
     stt_context: str = ''
     stt_provider: Literal['browser', 'openai'] = 'browser'
     stt_device: Literal['auto', 'webgpu', 'wasm'] = 'auto'
@@ -64,38 +66,19 @@ class LanguageSettings(BaseModel):
 
 
 def load_settings():
+    """The room's defaults: what a device that saved nothing gets."""
+    return LanguageSettings()
+
+
+def settings_from(data):
+    """A device's settings as it sent them, or the defaults and the reason they were not accepted."""
+    if not isinstance(data, dict) or not data:
+        return LanguageSettings(), None
     try:
-        data = json.loads(PATH.read_text())
-    except (FileNotFoundError, ValueError):
-        return LanguageSettings()
-    # Server-local Whisper became browser-local; OpenAI remains an explicit cloud option.
-    provider = data.get('stt_provider', 'browser')
-    if provider in {'local', 'auto'}:
-        provider = 'browser'
-    if provider not in {'browser', 'openai'}:
-        provider = 'browser'
-    data['stt_provider'] = provider
-    data['stt_device'] = data.get('stt_device', 'auto')
-    if provider == 'browser':
-        data['stt_model'] = {
-            'tiny': 'onnx-community/whisper-tiny',
-            'base': 'onnx-community/whisper-base',
-            'small': 'onnx-community/whisper-small',
-            'turbo': 'onnx-community/whisper-large-v3-turbo',
-            'large-v3': 'onnx-community/whisper-large-v3-turbo',
-        }.get(data.get('stt_model'), data.get('stt_model'))
-        if data['stt_model'] not in {'onnx-community/whisper-tiny', 'onnx-community/whisper-base', 'onnx-community/whisper-small', 'onnx-community/whisper-large-v3-turbo'}:
-            data['stt_model'] = 'onnx-community/whisper-tiny'
-    elif not data.get('stt_model') or str(data['stt_model']).startswith('onnx-community/'):
-        data['stt_model'] = 'gpt-4o-transcribe'
-    return LanguageSettings.model_validate(data)
-
-
-def save_settings(settings):
-    PATH.parent.mkdir(parents=True, exist_ok=True)
-    temp = PATH.with_suffix('.tmp')
-    temp.write_text(settings.model_dump_json(indent=2))
-    os.replace(temp, PATH)
+        return LanguageSettings.model_validate(data), None
+    except ValidationError as error:
+        return LanguageSettings(), 'Ajustes del dispositivo no válidos; se usan los valores por defecto: ' + '; '.join(
+            '.'.join(str(part) for part in item.get('loc', ('?',))) + ' ' + item.get('msg', '') for item in error.errors()[:3])
 
 
 def resolve_voice(settings, language=None):

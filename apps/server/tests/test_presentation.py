@@ -118,14 +118,11 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.patch = patch('sidevoice.room.BINDING', Path(self.temp.name) / 'binding.json')
         self.patch.start()
         # Test the default browser provider, never the live room's preferences or paid API.
-        self.settings_patch = patch('sidevoice.language_settings.PATH', Path(self.temp.name) / 'settings.json')
-        self.settings_patch.start()
         from sidevoice.room_history import RoomHistory
         self.hub = Room(RoomHistory(Path(self.temp.name) / 'history.sqlite3'))
         self.c = joined(self.hub, 'same-webrtc')
 
     async def asyncTearDown(self):
-        self.settings_patch.stop()
         self.patch.stop()
         self.temp.cleanup()
 

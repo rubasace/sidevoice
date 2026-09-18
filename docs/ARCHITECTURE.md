@@ -47,11 +47,14 @@ invariants and its lifecycle are in [the multi-client room](MULTI_CLIENT_ROOM.md
 
 Every browser streams its microphone as 16 kHz PCM over the room's WebSocket, and
 the room runs one Pipecat pipeline per browser: Silero as the voice detector and
-a user-turn strategy that says when the turn is over. The strategy is a setting of
-the device, sent when it connects and kept in the browser: smart-turn v3 (bundled
-with Pipecat, decides from the audio whether the sentence is finished, with a
-maximum silence as a safety net) or a fixed silence timer. Two browsers in the
-same room may use different settings.
+a user-turn strategy that says when the turn is over. Settings are the device's:
+the browser stores them, sends them in its first message and can update the ones
+that need no pipeline (voices, speed, grace) over the same socket; the room
+validates them, uses them for that call and keeps no copy. The strategy is one
+of them: smart-turn v3 (bundled with Pipecat, decides from the audio whether the
+sentence is finished, asked only after a minimum silence, with a maximum silence
+as a safety net) or a fixed silence timer. Two browsers in the same room may use
+different settings.
 
 Transcribing the finished turn is a provider behind that pipeline, and the
 pipeline does not know which one it has: OpenAI is called from the room with the
