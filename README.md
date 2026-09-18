@@ -83,8 +83,10 @@ docker run -d --name sidevoice -p 127.0.0.1:8767:8767 -v sidevoice-data:/data \
   ghcr.io/rubasace/sidevoice:latest
 ```
 
-Every push to `main` publishes `:latest`; tagged versions publish `:X.Y.Z` with a GitHub
-release. Room data lives in `/data`. See [docs/RELEASING.md](docs/RELEASING.md).
+Every push to `main` publishes `:latest`, so it runs ahead of the newest release:
+pull `:stable` for that one, or `:X.Y.Z` for a particular version. Images are built
+for amd64 and arm64. Room data lives in `/data`. See
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Connect a conversation
 
