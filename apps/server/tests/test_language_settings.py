@@ -98,10 +98,13 @@ class ElevenLabsVoiceCatalogTest(unittest.TestCase):
         voice = synthesis._voice_entry({
             'voice_id': 'spanish-voice',
             'name': 'Lucia',
+            'category': 'premade',
             'labels': {'language': 'es'},
             'verified_languages': [{'language': 'en'}, {'language': 'fr'}],
         })
         self.assertEqual(voice['languages'], ['es'])
+        self.assertEqual(voice['label'], 'Lucia')
+        self.assertEqual(voice['description'], 'premade')
 
     def test_verified_languages_are_a_fallback_when_primary_is_missing(self):
         from sidevoice import synthesis

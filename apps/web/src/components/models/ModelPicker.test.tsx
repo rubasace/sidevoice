@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { TooltipProvider } from "../ui/Tooltip";
 import { ModelPicker } from "./ModelPicker";
@@ -9,6 +9,8 @@ test("keeps model labels concise and exposes the optional description separately
   const info = screen.getByRole("button", { name: "Descripción del modelo" });
   expect(info).toHaveAttribute("data-tooltip", "Rápido y barato");
   expect(info).not.toHaveAttribute("hidden");
+  fireEvent.click(info);
+  expect(screen.getByText("Rápido y barato")).toBeInTheDocument();
 });
 
 test("does not render an information control without a description", () => {

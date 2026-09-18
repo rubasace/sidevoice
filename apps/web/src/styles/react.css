@@ -133,3 +133,75 @@ body,
   .language-row .model-field { grid-column:1/-1 }
   .language-row { grid-template-columns:minmax(0,1fr) 4.5rem 2.5rem }
 }
+
+
+/* Stable settings shell and reusable select-with-info controls. */
+.settings-dialog[open] {
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  width:min(60rem,calc(100vw - 2rem));
+  height:min(52rem,calc(100dvh - 2rem));
+  max-height:none;
+  padding:0;
+  overflow:hidden;
+}
+.settings-dialog>#language-form { min-height:0;height:100%;overflow:hidden }
+.settings-dialog .settings-layout { height:100%;min-height:0;grid-template-columns:10.5rem minmax(0,1fr);overflow:hidden }
+.settings-dialog .settings-nav { min-width:0;overflow:auto }
+.settings-dialog .settings-content { min-width:0;min-height:0;max-width:100%;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable }
+.settings-dialog .settings-content>section { min-width:0;max-width:100% }
+.settings-dialog .settings-footer { min-width:0;padding-bottom:max(1rem,env(safe-area-inset-bottom)) }
+.settings-dialog label,.settings-dialog input,.settings-dialog select { max-width:100% }
+.settings-dialog .ui-native-select { min-width:0;text-overflow:ellipsis;white-space:nowrap }
+.settings-dialog .model-picker {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 2.65rem;
+  gap:0;
+  min-width:0;
+  overflow:hidden;
+  border:1px solid #526173;
+  border-radius:.65rem;
+  background:#141b23;
+}
+.settings-dialog .model-picker>.ui-native-select { width:100%;height:2.75rem;margin:0;border:0;border-radius:0;background:transparent }
+.settings-dialog .model-picker>.model-info { width:2.65rem;height:100%;border:0;border-inline-start:1px solid #526173;border-radius:0;background:#ffffff08 }
+.settings-dialog .model-picker>.model-info:hover { background:#ffffff12 }
+.settings-dialog .ui-compact-label { display:none }
+.settings-dialog .language-row { grid-template-columns:minmax(5.5rem,.65fr) minmax(10rem,1.2fr) minmax(10rem,1.3fr) minmax(5.5rem,.55fr) 2.5rem;gap:.65rem;min-width:0 }
+.settings-dialog .language-name,.settings-dialog .language-control,.settings-dialog .language-row .model-field { min-width:0;margin:0 }
+.settings-dialog .language-control { display:block }
+.settings-dialog .language-control>.ui-native-select,.settings-dialog .language-control>input { width:100%;height:2.75rem;margin:0 }
+.settings-dialog .language-preview { width:2.5rem;height:2.75rem;align-self:end }
+.settings-dialog .model-info { flex:none }
+
+@media (max-width:700px) {
+  .settings-dialog[open] { width:calc(100vw - 1rem);height:calc(100dvh - 1rem) }
+  .settings-dialog .settings-layout { display:flex;flex-direction:column }
+  .settings-dialog .settings-nav { display:flex;flex:none;gap:.35rem;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin }
+  .settings-dialog .settings-nav .ui-button { flex:0 0 auto;width:auto;min-width:max-content;margin:0;padding:.65rem .75rem }
+  .settings-dialog .settings-content { flex:1;padding-inline:1rem }
+  .settings-dialog .language-row {
+    grid-template-columns:minmax(0,1fr) minmax(5.5rem,.45fr) 2.5rem;
+    grid-template-areas:"name name name" "model model model" "voice speed preview";
+    gap:.6rem .5rem;
+    margin:0 -.25rem;
+    padding:1rem .25rem;
+  }
+  .settings-dialog .language-row-head { display:none }
+  .settings-dialog .language-name { grid-area:name }
+  .settings-dialog .language-row .model-field { grid-area:model }
+  .settings-dialog .language-voice { grid-area:voice }
+  .settings-dialog .language-speed { grid-area:speed }
+  .settings-dialog .language-preview { grid-area:preview }
+  .settings-dialog .ui-compact-label { display:block;margin:0 0 .35rem;color:var(--sv-muted);font-size:.72rem;line-height:1.2 }
+  .settings-dialog .settings-footer { flex:none }
+}
+
+@media (max-width:430px) {
+  .settings-dialog .language-row {
+    grid-template-columns:minmax(0,1fr) 2.5rem;
+    grid-template-areas:"name name" "model model" "voice voice" "speed preview";
+  }
+  .settings-dialog .language-row input { max-width:none }
+  .settings-dialog .settings-footer { gap:.5rem;padding-inline:1rem }
+}

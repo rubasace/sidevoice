@@ -186,7 +186,7 @@ def _voice_entry(item):
         return None
     name = item.get('name') or voice_id
     category = item.get('category') or item.get('voice_type')
-    return {'id': voice_id, 'label': name + ((' · ' + category) if category else ''),
+    return {'id': voice_id, 'label': name, 'description': category,
             'languages': _voice_languages(item)}
 
 

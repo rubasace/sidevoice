@@ -3,7 +3,7 @@ function setup({strictDOM=false}={}){
  const sourceRoot=__dirname+'/../src'; const uiSource=fs.readdirSync(sourceRoot,{recursive:true}).filter(file=>String(file).endsWith('.tsx')).map(file=>fs.readFileSync(sourceRoot+'/'+file,'utf8')).join('\n');
  class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
  const elements=new Map(),handlers={};
- if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout','default-model-info'])elements.set(id,new Element())}
+ if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout','default-model-info','stt-model-info'])elements.set(id,new Element())}
  const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(sourceRoot+'/services/room-session-controller.js','utf8');vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
@@ -53,7 +53,8 @@ test('STT settings expose only models supported by the detected browser runtime'
  s.run("sttCapabilities.models.push('onnx-community/whisper-small');renderTranscription()");
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['onnx-community/whisper-tiny','onnx-community/whisper-small']);
  s.run("$('stt-model').value='onnx-community/whisper-small';$('stt-model').onchange()");
- assert.equal(s.run("$('stt-model-note').textContent"),'quality');
+ assert.equal(s.run("$('stt-model-note').textContent"),'');
+ assert.equal(s.run("$('stt-model-info').dataset.tooltip"),'quality');
  assert.deepEqual(s.run("$('stt-device').children.map(x=>x.value)"),['auto','webgpu']);
  s.run("$('stt-device').value='wasm';$('stt-device').onchange()");
  assert.equal(s.run("$('stt-device').value"),'auto');
@@ -85,14 +86,15 @@ test('OpenAI models are fetched only when its provider is selected',async()=>{
  assert.match(requests[0],/transcription\/models\?provider=openai/);
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe','gpt-4o-mini-transcribe']);
  assert.equal(s.run("$('stt-model').value"),'gpt-4o-mini-transcribe');
- assert.match(s.run("$('stt-model-note').textContent"),/2 modelos compatibles/);
+ assert.equal(s.run("$('stt-model-note').textContent"),'');
+ assert.match(s.run("$('stt-model-info').dataset.tooltip"),/2 modelos compatibles/);
 });
 test('Model descriptions stay out of labels and appear in optional tooltips',()=>{
  const s=setup({strictDOM:true});
- s.run("voiceCatalog={models:[{id:'eleven_flash_v2_5',label:'Eleven Flash v2.5',provider:'elevenlabs',description:'Rápido'}]};entriesFor($('default-model'),voiceCatalog.models.map(x=>[x.id,x.label]),'eleven_flash_v2_5');setModelInfo($('default-model-info'),'eleven_flash_v2_5')");
+ s.run("voiceCatalog={models:[{id:'eleven_flash_v2_5',label:'Eleven Flash v2.5',provider:'elevenlabs',description:'Rápido'}]};entriesFor($('default-model'),voiceCatalog.models.map(x=>[x.id,x.label]),'eleven_flash_v2_5');setModelInfo($('default-model-info','stt-model-info'),'eleven_flash_v2_5')");
  assert.equal(s.run("$('default-model').children[0].textContent"),'Eleven Flash v2.5');
- assert.equal(s.run("$('default-model-info').dataset.tooltip"),'Rápido');
- assert.equal(s.run("$('default-model-info').hidden"),false);
+ assert.equal(s.run("$('default-model-info','stt-model-info').dataset.tooltip"),'Rápido');
+ assert.equal(s.run("$('default-model-info','stt-model-info').hidden"),false);
 });
 test('ElevenLabs voices are filtered by primary language until all voices are requested',()=>{
  const s=setup({strictDOM:true});
@@ -100,12 +102,13 @@ test('ElevenLabs voices are filtered by primary language until all voices are re
   models:[{id:'eleven_flash_v2_5',label:'Eleven Flash',provider:'elevenlabs'}],
   languages:[{id:'es',label:'Español',voices:[]}],
   providers:{elevenlabs:{voices:[
-   {id:'lucia',label:'Lucía',languages:['es']},
+   {id:'lucia',label:'Lucía · premade',languages:['es']},
    {id:'alice',label:'Alice',languages:['en']},
    {id:'mystery',label:'Sin idioma',languages:[]}
   ]}}
  };elevenCredentials={configured:true};$('tts-device').closest=()=>({hidden:false});$('default-model').value='eleven_flash_v2_5';$('default-tts-language').value='es';renderDefaultVoices('alice')`);
  assert.deepEqual(s.run("$('default-voice').children.map(x=>x.value)"),['lucia','__show_all_voices__']);
+ assert.equal(s.run("$('default-voice').children[0].textContent"),'Lucía');
  assert.equal(s.run("$('default-voice').value"),'lucia','a stored voice from another language must not bypass the filter');
  s.run("window.sidevoiceUI={setLanguageModels(){}};$('default-voice').selectedOptions=[{textContent:'Lucía'}];$('default-voice').value=SHOW_ALL_VOICES;$('default-voice').onchange()");
  assert.deepEqual(s.run("$('default-voice').children.map(x=>x.value)"),['lucia','alice','mystery']);

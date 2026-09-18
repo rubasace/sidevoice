@@ -1,5 +1,6 @@
-import type { PropsWithChildren, ReactNode } from "react";
+import { useState, type PropsWithChildren, type ReactNode } from "react";
 import { Button } from "./Button";
+import { OverlayPortalProvider } from "./Tooltip";
 
 interface DialogFrameProps extends PropsWithChildren {
   id: string;
@@ -12,14 +13,17 @@ interface DialogFrameProps extends PropsWithChildren {
 }
 
 export function DialogFrame({ id, labelledBy, eyebrow, title, closeId, footer, className = "", children }: DialogFrameProps) {
+  const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   return (
-    <dialog id={id} className={className} aria-labelledby={labelledBy}>
-      <div className="settings-heading stats-heading">
+    <dialog ref={setDialog} id={id} className={className} aria-labelledby={labelledBy}>
+      <OverlayPortalProvider container={dialog}>
+        <div className="settings-heading stats-heading">
         <div>{eyebrow && <span className="stats-eyebrow">{eyebrow}</span>}<h2 id={labelledBy}>{title}</h2></div>
         <Button id={closeId} variant="ghost" size="icon" aria-label={`Cerrar ${title.toLowerCase()}`} title="Cerrar">×</Button>
       </div>
       {children}
       {footer}
+      </OverlayPortalProvider>
     </dialog>
   );
 }

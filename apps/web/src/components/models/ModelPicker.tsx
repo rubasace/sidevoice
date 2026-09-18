@@ -13,7 +13,7 @@ interface ModelPickerProps extends SelectHTMLAttributes<HTMLSelectElement> {
 export function ModelPicker({ label, infoId, description, children, compact = false, ...selectProps }: ModelPickerProps) {
   return (
     <label className="ui-field model-field" data-compact={compact || undefined}>
-      <span className={compact ? "sr-only" : "ui-field-label"}>{label}</span>
+      <span className={compact ? "ui-compact-label" : "ui-field-label"}>{label}</span>
       <span className="model-picker">
         <NativeSelect aria-label={selectProps["aria-label"] || label} {...selectProps}>{children}</NativeSelect>
         <ModelInfo id={infoId} description={description} />

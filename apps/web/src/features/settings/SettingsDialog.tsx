@@ -1,5 +1,6 @@
 import { DialogFrame } from "../../components/ui/DialogFrame";
 import { ModelPicker } from "../../components/models/ModelPicker";
+import { InfoPopover } from "../../components/models/ModelInfo";
 import { LanguageModelList } from "./LanguageModelList";
 import { Button } from "../../components/ui/Button";
 import { NativeSelect } from "../../components/ui/NativeSelect";
@@ -20,7 +21,7 @@ function VoiceSettings() {
         <div className="stt-key-actions"><Button id="elevenlabs-key-save" size="compact">Guardar clave</Button><Button id="elevenlabs-key-clear" size="compact">Quitar clave</Button></div>
         <p className="muted">La clave se guarda en la sala. Las voces incluyen las personalizadas disponibles en tu cuenta.</p>
       </div>
-      <label>Voz por defecto<NativeSelect id="default-voice"><option value="ef_dora">Dora · español</option><option value="em_alex">Alex · español</option><option value="em_santa">Santa · español</option><option value="af_heart">Heart · English US</option><option value="af_bella">Bella · English US</option><option value="bf_emma">Emma · English UK</option><option value="bm_george">George · English UK</option></NativeSelect></label>
+      <label>Voz por defecto<NativeSelect id="default-voice"><option value="ef_dora">Dora</option><option value="em_alex">Alex</option><option value="em_santa">Santa</option><option value="af_heart">Heart</option><option value="af_bella">Bella</option><option value="bf_emma">Emma</option><option value="bm_george">George</option></NativeSelect></label>
       <label>Velocidad global <output id="speed-value">1.00×</output><input id="tts-speed" type="range" min="0.5" max="2" step="0.05" defaultValue="1" /></label><p id="speed-note" className="muted" />
       <Button id="prepare-model">Precargar modelo (opcional)</Button><p id="model-status" role="status" className="muted">Se prepara automáticamente al conectar o probar una voz. Puedes precargarlo aquí si quieres.</p>
       <h3>Por idioma</h3><p className="muted">Cada idioma hereda modelo, voz compatible y velocidad. Deja la velocidad vacía para usar la global.</p><LanguageModelList />
@@ -35,7 +36,7 @@ function TranscriptionSettings() {
     <section id="pane-transcription" aria-labelledby="settings-transcription" hidden>
       <h3>Transcripción</h3><p className="muted">Configura cómo se reconoce lo que dices.</p>
       <label>Motor de transcripción<NativeSelect id="stt-provider" /></label><p className="muted" id="stt-provider-note" />
-      <label>Modelo<NativeSelect id="stt-model" /></label><p className="muted" id="stt-model-note" />
+      <ModelPicker label="Modelo" id="stt-model" infoId="stt-model-info" /><p className="muted" id="stt-model-note" />
       <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note">Selecciona primero un modelo.</p></div>
       <div id="stt-credential" hidden><label>Clave de API de OpenAI<input id="stt-key" type="password" placeholder="sk-…" autoComplete="off" spellCheck={false} /></label><p className="muted" id="stt-key-state" role="status" /><div className="stt-key-actions"><Button id="stt-key-save" size="compact">Guardar clave</Button><Button id="stt-key-clear" size="compact">Quitar clave</Button></div></div>
       <label>Idioma al transcribir<NativeSelect id="stt-language"><option value="auto">Detectar automáticamente</option><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
@@ -49,14 +50,14 @@ function AdvancedSettings() {
     <section id="pane-advanced" aria-labelledby="settings-advanced" hidden>
       <h3>Tiempos de conversación</h3>
       <label>Pausa antes del audio pendiente (segundos)<input id="audio-grace-seconds" type="number" min="0" max="10" step="0.5" defaultValue="2" /></label><p className="muted">Tras enviar tu intervención, espera este margen. Si vuelves a hablar, la espera se reinicia. Por defecto: 2 segundos.</p>
-      <label title="También se aplica si mostramos una transcripción parcial; no controla la velocidad del modelo.">Silencio para terminar tu intervención (segundos) ⓘ<input id="user-speech-timeout" type="number" min="0.5" max="15" step="0.5" defaultValue="2.5" aria-describedby="user-speech-timeout-note" /></label><p className="muted" id="user-speech-timeout-note">Tiempo de silencio antes de cerrar y enviar tu intervención. También se aplica cuando hay transcripción parcial; no controla la velocidad del modelo. Por defecto: 2,5 segundos.</p>
+      <label>Silencio para terminar tu intervención <InfoPopover description="También se aplica si mostramos una transcripción parcial; no controla la velocidad del modelo." label="Información sobre la detección de silencio" /><input id="user-speech-timeout" type="number" min="0.5" max="15" step="0.5" defaultValue="2.5" aria-describedby="user-speech-timeout-note" /></label><p className="muted" id="user-speech-timeout-note">Tiempo de silencio antes de cerrar y enviar tu intervención. También se aplica cuando hay transcripción parcial; no controla la velocidad del modelo. Por defecto: 2,5 segundos.</p>
     </section>
   );
 }
 
 export function SettingsDialog() {
   return (
-    <DialogFrame id="language-settings" labelledBy="settings-title" title="Configuración" closeId="settings-close" footer={<div className="settings-footer"><p id="settings-error" role="alert" /><Button type="submit" form="language-form" variant="primary">Guardar cambios</Button></div>}>
+    <DialogFrame id="language-settings" className="settings-dialog" labelledBy="settings-title" title="Configuración" closeId="settings-close" footer={<div className="settings-footer"><p id="settings-error" role="alert" /><Button type="submit" form="language-form" variant="primary">Guardar cambios</Button></div>}>
       <form id="language-form">
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Secciones de configuración">

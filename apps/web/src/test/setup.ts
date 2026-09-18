@@ -8,3 +8,15 @@ Object.defineProperty(HTMLElement.prototype, "scrollTo", {
   configurable: true,
   value: () => undefined,
 });
+
+
+class TestResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(globalThis, "ResizeObserver", {
+  configurable: true,
+  value: TestResizeObserver,
+});

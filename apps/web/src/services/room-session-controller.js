@@ -417,11 +417,12 @@ function updateSpeedRange(){
   :'Velocidad de Kokoro: 0,5–2×. ElevenLabs admite 0,7–1,2× en las voces por idioma.';
 }
 function modelInfo(id){return voiceCatalog?.models?.find(model=>model.id===id)||{id,label:id,provider:id==='kokoro'?'kokoro':'elevenlabs'}}
-function setModelInfo(button,id){
- const description=modelInfo(id).description;
- button.hidden=!description;button.dataset.tooltip=description||'';button.setAttribute('aria-expanded','false');
- if(description){button.title=description;if(!window.sidevoiceUI)button.onclick=event=>{event.stopPropagation();button.setAttribute('aria-expanded',String(button.getAttribute('aria-expanded')!=='true'))}}
+function setInfoContent(button,description){
+ if(!button)return;
+ button.hidden=!description;button.dataset.tooltip=description||"";button.setAttribute("aria-expanded","false");
+ if(description){button.title=description;if(!window.sidevoiceUI)button.onclick=event=>{event.stopPropagation();button.setAttribute("aria-expanded",String(button.getAttribute("aria-expanded")!=="true"))}}
 }
+function setModelInfo(button,id){setInfoContent(button,modelInfo(id).description)}
 function modelInfoButton(id){
  const button=document.createElement('button');button.type='button';button.className='model-info';button.textContent='ⓘ';
  button.setAttribute('aria-label','Descripción del modelo');setModelInfo(button,id);return button;
@@ -431,10 +432,11 @@ document.addEventListener('click',()=>document.querySelectorAll('.model-info[ari
 function providerFor(model){return modelInfo(model||'kokoro').provider||'kokoro'}
 function entriesFor(select,entries,value){select.replaceChildren();const values=new Set(entries.map(entry=>entry[0]));if(value&& !values.has(value))entries=[[value,value],...entries];for(const [id,label] of entries){const option=document.createElement('option');option.value=id;option.textContent=label;select.append(option)}select.value=value||entries[0]?.[0]||''}
 function elevenVoiceItems(){return voiceCatalog?.providers?.elevenlabs?.voices||[]}
+function conciseVoiceLabel(label){return String(label||"").split(" · ")[0].trim()}
 function voicesFor(model,language,showAll=false){
- if(providerFor(model)!=='elevenlabs')return voiceCatalog.languages.find(item=>item.id===language)?.voices||[];
+ if(providerFor(model)!=="elevenlabs")return (voiceCatalog.languages.find(item=>item.id===language)?.voices||[]).map(([id,label])=>[id,conciseVoiceLabel(label)]);
  const voices=elevenVoiceItems(),visible=showAll?voices:voices.filter(item=>item.languages?.includes(language));
- return visible.map(item=>[item.id,item.label]);
+ return visible.map(item=>[item.id,conciseVoiceLabel(item.label)]);
 }
 function voiceEntriesFor(model,language,showAll=false){
  const voices=voicesFor(model,language,showAll);
@@ -461,7 +463,7 @@ function renderLanguageRows(){
    const choices=voiceEntriesFor(actualModel,item.id,expandedVoiceLanguages.has(item.id)),voice=draft.voice==='inherit'||choices.some(([id])=>id===draft.voice)?(draft.voice||'inherit'):'inherit';
    return {language:item.id,label:item.label,model:draft.model||'inherit',actualModel,modelDescription:modelInfo(actualModel).description,
     modelOptions:[['inherit','Usar por defecto'],...voiceCatalog.models.map(entry=>[entry.id,entry.label])].map(([value,label])=>({value,label})),
-    voice,voiceOptions:[['inherit','Por defecto · '+defaultVoice],...choices].map(([value,label])=>({value,label})),
+    voice,voiceOptions:[["inherit","Usar voz predeterminada"],...choices].map(([value,label])=>({value,label})),
     speed:draft.speed==null?null:effectiveSpeed(actualModel,draft.speed),speedMin,speedMax,inheritedSpeed:effectiveSpeed(actualModel,globalSpeed)};
   }));return;
  }
@@ -474,7 +476,7 @@ function renderLanguageRows(){
   model.onchange=()=>{expandedVoiceLanguages.delete(item.id);voiceDraft[item.id]={...voiceDraft[item.id],model:model.value,voice:'inherit'};renderLanguageRows()};
   const actual=model.value==='inherit'?$('default-model').value:model.value,modelCell=document.createElement('span');modelCell.className='model-picker';modelCell.append(model,modelInfoButton(actual));row.append(modelCell);
   const voice=document.createElement('select'),choices=voiceEntriesFor(actual,item.id,expandedVoiceLanguages.has(item.id));voice.id='voice-'+item.id;voice.setAttribute('aria-label','Voz · '+item.label);
-  const selected=draft.voice==='inherit'||choices.some(([id])=>id===draft.voice)?draft.voice:'inherit';entriesFor(voice,[['inherit','Por defecto · '+$('default-voice').selectedOptions[0]?.textContent],...choices],selected);
+  const selected=draft.voice==='inherit'||choices.some(([id])=>id===draft.voice)?draft.voice:'inherit';entriesFor(voice,[['inherit','Usar voz predeterminada'],...choices],selected);
   voice.onchange=()=>{if(voice.value===SHOW_ALL_VOICES){expandedVoiceLanguages.add(item.id);renderLanguageRows();return}voiceDraft[item.id]={...voiceDraft[item.id],voice:voice.value}};
   row.append(voice);
   const speed=document.createElement('input'),[speedMin,speedMax]=speedLimits(actual);speed.type='number';speed.min=String(speedMin);speed.max=String(speedMax);speed.step='0.05';speed.id='speed-'+item.id;speed.value=draft.speed==null?'':effectiveSpeed(actual,draft.speed);speed.placeholder=effectiveSpeed(actual,$('tts-speed').value).toFixed(2)+'×';speed.title='Vacío: velocidad global, ajustada al rango del motor ('+speedMin+'–'+speedMax+'×).';speed.onchange=()=>{voiceDraft[item.id]={...voiceDraft[item.id],speed:speed.value===''?null:Number(speed.value)}};speed.setAttribute('aria-label','Velocidad · '+item.label);row.append(speed);
@@ -548,10 +550,10 @@ function renderTranscription(){
   device.disabled=!entries.length;
   const effective=device.value==='auto'?(supported.includes('webgpu')?'webgpu':'wasm'):device.value;
   $('stt-device-note').textContent=!entries.length?'Este modelo no es compatible con este navegador.':device.value==='auto'?'Automático usará '+(effective==='webgpu'?'WebGPU.':'CPU mediante WebAssembly.'):(effective==='webgpu'?'Aceleración WebGPU disponible.':'Procesamiento CPU mediante WebAssembly.');
-  $('stt-model-note').textContent=selected?.description||'';
+  const description=selected?.description||"";setInfoContent($("stt-model-info"),description);$("stt-model-note").textContent="";
  }else{
   const remote=sttRemote.openai,selected=models.find(model=>model.id===modelSelect.value);
-  $('stt-model-note').textContent=remote.loading?'Consultando los modelos disponibles en tu cuenta…':remote.error||selected?.description||(models.length?models.length+' modelos compatibles cargados directamente desde OpenAI.':'OpenAI no devolvió modelos compatibles para esta cuenta.');
+  const description=remote.loading?"Consultando los modelos disponibles en tu cuenta…":remote.error||selected?.description||(models.length?models.length+" modelos compatibles cargados directamente desde OpenAI.":"OpenAI no devolvió modelos compatibles para esta cuenta.");setInfoContent($("stt-model-info"),description);$("stt-model-note").textContent=remote.loading||remote.error?description:"";
  }
 }
 async function loadTranscriptionModels(provider,refresh=false){
