@@ -117,10 +117,10 @@ neither command touches a `voice-room` skill that is not Sidevoice's.
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook" } ] }
+      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook --harness claude" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook" } ] }
+      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook --harness claude" } ] }
     ]
   }
 }
@@ -132,11 +132,17 @@ per-session hooks):
 
 ```toml
 [[hooks.UserPromptSubmit]]
-hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook" } ]
+hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook --harness codex" } ]
 
 [[hooks.Stop]]
-hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook" } ]
+hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook --harness codex" } ]
 ```
+
+The command names the harness it was installed for (`--harness claude` / `--harness codex`,
+or `SIDEVOICE_HOOK_HARNESS`). It is not a formality: a Codex session started from a Claude
+Code terminal inherits `CLAUDE_CODE_SESSION_ID`, and both harnesses' payloads carry a
+`session_id`, so an undeclared hook can attribute a turn to the wrong harness and report no
+working state at all.
 
 Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt but
 drop the nudge. `UserPromptSubmit` mechanically reports the thread working and

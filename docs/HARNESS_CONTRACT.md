@@ -13,6 +13,15 @@ invalid declaration is `unknown`. Unknown is deliberately not false.
 | `endOfTurn` | Normalize a harness `Stop` hook into an end-of-turn report | supported | supported | unsupported |
 | `sessionIdentity` | Identify the conversation without model-supplied text | supported: façade environment | supported: MCP tool metadata (or hook payload) | supported: explicit environment |
 
+A hook invocation says which harness it belongs to because the installed hook
+command says so (`sidevoice hook --harness <name>`, or `SIDEVOICE_HOOK_HARNESS`);
+`identifyHookHarness` then asks that module alone. Nothing is inferred from the
+process environment: a Codex session started from a Claude Code terminal inherits
+`CLAUDE_CODE_SESSION_ID`, and both harnesses' hook payloads carry a `session_id`,
+so an undeclared hook would silently attribute the turn to the first module that
+recognized something. With no declaration the modules are still asked in order,
+which only holds on a machine running a single harness.
+
 `binding.register` carries this declaration. Bindings remain in-memory room
 state, as before. The participant API exposes the normalized declaration and
 the browser distinguishes `unsupported` from `unknown` when explaining why no
