@@ -31,7 +31,7 @@ class RoomVoice {
   this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
-  this.presence=null;this.presenceSeconds=7.2;this.presencePulseSeconds=3.6;this.presenceFadeSeconds=.6;this.presenceMaxVolume=.12}
+  this.presence=null;this.presenceSeconds=7.2;this.presencePulseSeconds=3.6;this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
  note(kind,detail){const event={at:Date.now(),kind,...(detail?{detail}:{})};this.events.push(event);if(this.events.length>24)this.events.shift();
   // The event list is bounded, so what it proves is kept apart from it: a voice has already left this output.
   if(kind==='play-encoded'||kind==='complete')this.rendered=true;

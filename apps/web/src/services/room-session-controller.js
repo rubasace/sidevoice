@@ -479,17 +479,16 @@ let presenceTurn=null,presenceArmed=null,presenceTimer=null,workingTurn=null;
 function workingOnTurn(){return !!workingTurn}
 // Off, or a peak amplitude as a percentage of full scale. The default is this browser's, not the room's:
 // the room is told nothing about it and keeps nothing.
-const PRESENCE_DEFAULT_PERCENT=3.5;
+const PRESENCE_DEFAULT_PERCENT=7;
 function presenceVolumePercent(preferences){
  const percent=Number((preferences||{}).presence_volume);
- return Number.isFinite(percent)&&percent>0?Math.min(percent,12):PRESENCE_DEFAULT_PERCENT;
+ return Number.isFinite(percent)&&percent>0?Math.min(percent,20):PRESENCE_DEFAULT_PERCENT;
 }
 function presenceOptions(){
  const preferences=voicePreferences||{};
- // Off until it has earned its place: the bed is the only looping source this app plays, and on
- // 2026-09-19 the operator heard audio stick again the first evening it was on. The note on the second
- // tick and the three dots carry the same meaning without a loop. Turn it on in Avanzado to try it.
- if((preferences.presence_sound??'off')!=='on')return null;
+ // On by default since the operator heard the slow breath and asked for it louder: it steps aside for
+ // either voice and comes back in the silence, which is what made the earlier attempts unbearable.
+ if((preferences.presence_sound??'on')==='off')return null;
  return {volume:presenceVolumePercent(preferences)/100};
 }
 // The dots and the bed are not the same thing. The bed is audio and gets out of the way of anything the

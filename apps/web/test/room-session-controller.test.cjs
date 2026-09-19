@@ -1183,7 +1183,7 @@ test('The bed starts when the conversation reads this turn and ends at its first
  s.emit('voice-input-receipt',{...OWN_TURN,status:'pending'});
  assert.deepEqual(s.calls,[],'queued is not in the conversation\'s hands yet');
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['start','read',0.035]]);
+ assert.deepEqual(s.calls,[['start','read',0.07]]);
  assert.equal(s.run('presenceTurn'),'s:user-turn:1');
  let finish;s.context.window.roomVoice.playEncoded=()=>new Promise(resolve=>finish=resolve);
  const playing=s.run("receiveServerSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Ya',audio_base64:'SUQz'})");
@@ -1197,14 +1197,14 @@ test('Without a read receipt the bed waits a moment after delivery, and a read o
  assert.deepEqual(s.calls,[],'a harness that never reports reads still gets the bed, just not instantly');
  assert.deepEqual([...s.timers.values()].map(timer=>timer.ms),[1500]);
  s.flush();
- assert.deepEqual(s.calls,[['start','unconfirmed',0.035]]);
+ assert.deepEqual(s.calls,[['start','unconfirmed',0.07]]);
 
  const later=presenceSetup();
  later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'delivered'});
  later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'read'});
- assert.deepEqual(later.calls,[['start','read',0.035]]);
+ assert.deepEqual(later.calls,[['start','read',0.07]]);
  later.flush();
- assert.deepEqual(later.calls,[['start','read',0.035]],'the armed wait cannot start it a second time');
+ assert.deepEqual(later.calls,[['start','read',0.07]],'the armed wait cannot start it a second time');
 });
 test('A delivery that failed, a new turn, the user speaking and losing the room all end the bed',()=>{
  const failed=presenceSetup();
@@ -1235,7 +1235,7 @@ test('The bed belongs to the turn this browser sent to the conversation it is lo
  s.emit('voice-input-receipt',{...OWN_TURN,session_id:'another-browser',status:'read'});
  assert.deepEqual(s.calls,[],'another conversation, or another browser in the room, is not this bed');
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['start','read',0.035]]);
+ assert.deepEqual(s.calls,[['start','read',0.07]]);
 });
 test('The bed is a device setting: off means silent, and the stored volume is what plays',()=>{
  const off=presenceSetup("{presence_sound:'off'}");
@@ -1245,13 +1245,13 @@ test('The bed is a device setting: off means silent, and the stored volume is wh
  const byDefault=presenceSetup('{}');
  byDefault.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  byDefault.flush();
- assert.deepEqual(byDefault.calls,[],'the looping bed is opt-in until it has earned its place');
+ assert.equal(byDefault.calls.length,1,'the bed is on by default now: the operator asked for it');
  const loud=presenceSetup("{presence_sound:'on',presence_volume:8}");
  loud.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  assert.deepEqual(loud.calls,[['start','read',0.08]],'the stored percentage is a peak amplitude');
  const absurd=presenceSetup("{presence_sound:'on',presence_volume:400}");
  absurd.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(absurd.calls,[['start','read',0.12]],'and it is bounded here as well as in the player');
+ assert.deepEqual(absurd.calls,[['start','read',0.2]],'and it is bounded here as well as in the player');
 });
 test('Turning the bed off while it sounds silences it at once',async()=>{
  const s=presenceSetup();
@@ -1286,7 +1286,7 @@ test('The read receipt is announced: one short note, the dots, and the bed; the 
  s.emit('voice-user-turn',{...OWN_TURN,phase:'finished',text:'Hola'});
  assert.equal(s.run('workingOnTurn')(),false,'nothing is working on it until the conversation says so');
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['start','read',0.035]],'the note lands with the second tick, before the bed');
+ assert.deepEqual(s.calls,[['start','read',0.07]],'the note lands with the second tick, before the bed');
  assert.equal(s.run('workingOnTurn')(),true);
  assert.equal(s.context.__view.working,true,'the conversation side shows the three dots');
  s.run("stopPresence('reply')");
@@ -1481,11 +1481,11 @@ test('The bed belongs to the silence: it goes while anyone speaks and comes back
  s.run("sessionId='s'");
  s.emit('voice-conversation',{thread_id:'a',working:true});
  const last=()=>JSON.stringify(s.calls.at(-1));
- assert.equal(last(),JSON.stringify(['start','working',0.035]),'the harness said it is working; the room is quiet');
+ assert.equal(last(),JSON.stringify(['start','working',0.07]),'the harness said it is working; the room is quiet');
  s.emit('user-started-speaking',{});
  assert.equal(last(),JSON.stringify(['stop','user_speaking']),'and it gets out of the way at once');
  s.emit('user-stopped-speaking',{});
- assert.equal(last(),JSON.stringify(['start','quiet',0.035]),'back in the silence, while the dots are still on');
+ assert.equal(last(),JSON.stringify(['start','quiet',0.07]),'back in the silence, while the dots are still on');
  assert.equal(s.run('workingOnTurn')(),true);
  // With the sound off there is nothing to hear, whatever happens.
  const silent=presenceSetup("{presence_sound:'off'}");
