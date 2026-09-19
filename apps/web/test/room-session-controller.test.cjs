@@ -4,7 +4,7 @@ function setup({strictDOM=false}={}){
  class Element{constructor(){this.children=[];this.dataset={};this.style={setProperty(){}};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
  const elements=new Map(),handlers={};
  if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout','default-model-info','stt-model-info'])elements.set(id,new Element())}
- const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
+ const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,btoa:value=>Buffer.from(value,'binary').toString('base64'),sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
  const source=fs.readFileSync(sourceRoot+'/services/room-session-controller.js','utf8');vm.runInContext(source,context);
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
@@ -1308,4 +1308,119 @@ test('Everything that ends the bed also takes the dots away',()=>{
   s.emit(event,data);
   assert.equal(s.run('workingOnTurn')(),false,event);
  }
+});
+
+// ----- what the microphone kept hearing while the socket was down (#46) -----
+// 20 ms frames of 16 kHz PCM, the shape the capture worklet posts to the page.
+const GAP_FRAMES=`makeFrames=peaks=>peaks.map(peak=>{const frame=new Int16Array(320);for(let i=0;i<320;i++)frame[i]=Math.round(peak*32767*(i%2?1:-1));return frame.buffer});
+ feed=peaks=>{for(const buffer of makeFrames(peaks))bufferGapAudio(buffer)};
+ decode=messages=>{const parts=messages.map(m=>atob(JSON.parse(m).data.audio_base64));const bytes=new Uint8Array(parts.reduce((total,part)=>total+part.length,0));let at=0;for(const part of parts){for(let i=0;i<part.length;i++)bytes[at++]=part.charCodeAt(i)}return new Int16Array(bytes.buffer)};`;
+function gapSetup(){
+ const s=setup();
+ s.context.atob=value=>Buffer.from(value,'base64').toString('binary');
+ s.run(GAP_FRAMES);
+ return s;
+}
+test('The gap buffer keeps what was said, bounded, and sends silence as nothing at all',()=>{
+ const s=gapSetup();
+ // Nothing is kept while the call is up: the buffer only exists between a lost socket and the next one.
+ s.run("feed([0.5,0.5])");
+ assert.equal(s.run('gap.samples'),0,'audio is only buffered once a reconnection is under way');
+ s.run("armGapBuffer(16000);feed([0,0,0.5,0.5,0,0])");
+ assert.equal(s.run('gap.samples'),6*320);
+ const speech=s.run('gapSpeech()');
+ assert.equal(speech.truncated,false);
+ assert.equal(speech.samples.length,6*320,'the 250 ms margin covers this whole recording');
+ // A gap that held only room noise is not a message: the page sends nothing rather than an empty turn.
+ s.run("armGapBuffer(16000);feed([0,0.005,0,0.01])");
+ assert.equal(s.run('gapSpeech()'),null);
+ assert.equal(s.run("sendGapAudio({readyState:1,send(){throw Error('nothing to send')}})"),0);
+ assert.equal(s.run('gap.armed'),false,'and the buffer is let go either way');
+});
+test('A gap longer than the buffer drops the oldest audio and says the message was cut',()=>{
+ const s=gapSetup();
+ s.run("armGapBuffer(16000);feed(Array(GAP_BUFFER_SECONDS*50+200).fill(0.5))");
+ assert.equal(s.run('gap.samples'),s.run('GAP_BUFFER_SECONDS*16000'),'the buffer is bounded at the declared seconds');
+ assert.equal(s.run('gap.dropped'),true);
+ assert.equal(s.run('gapSpeech().truncated'),true,'the oldest audio was already speech: how much came before is unknowable');
+ // Speech that starts after the buffer had room to spare lost nothing, even though older audio fell out.
+ s.run("armGapBuffer(16000);feed(Array(GAP_BUFFER_SECONDS*50+200).fill(0));feed([0.5,0.5])");
+ assert.equal(s.run('gap.dropped'),true);
+ assert.equal(s.run('gapSpeech().truncated'),false);
+});
+test('The catch-up travels as text slices naming the audio, never as microphone frames',()=>{
+ const s=gapSetup();
+ s.run("armGapBuffer(16000);feed(Array(2000).fill(0.5))");
+ const started=s.run('gap.startedAt'),sent=[];
+ const socket={readyState:1,send:value=>sent.push(value)};
+ const slices=s.run('sendGapAudio')(socket);
+ assert.equal(sent.length,slices);
+ assert.ok(slices>1,'a long gap is split so no frame limit between here and the room can drop it');
+ const messages=sent.map(value=>JSON.parse(value));
+ assert.deepEqual([...new Set(messages.map(m=>m.type))],['voice-catchup']);
+ assert.deepEqual(messages.map(m=>m.data.seq),messages.map((_,index)=>index));
+ assert.deepEqual(messages.map(m=>m.data.final),messages.map((_,index)=>index===messages.length-1));
+ assert.equal(messages[0].data.session_id,'s');
+ assert.equal(messages[0].data.sample_rate,16000);
+ assert.equal(messages[0].data.truncated,true);
+ assert.equal(messages[0].data.started_at,started,'the room is told when this was spoken, by this browser\'s clock');
+ assert.ok(sent.every(value=>typeof value==='string'),'binary frames are microphone audio and this is not');
+ s.context.__sent=sent;
+ assert.equal(s.run('decode(__sent).length'),s.run('GAP_BUFFER_SECONDS*16000'),'every sample reaches the room once');
+ assert.equal(s.run('gap.armed'),false,'the page forgets the recording once it has handed it over');
+});
+test('A socket that is not up again keeps nobody waiting and loses no memory',()=>{
+ const s=gapSetup();
+ s.run("armGapBuffer(16000);feed([0.5,0.5])");
+ assert.equal(s.run('sendGapAudio')({readyState:3,send(){assert.fail('a closed socket is not sent to')}}),0);
+ assert.equal(s.run('gap.samples'),0);
+});
+test('While the room is away the microphone keeps being captured, and the new session is handed what it said',async()=>{
+ const s=setup();const sockets=[];
+ s.context.atob=value=>Buffer.from(value,'base64').toString('binary');
+ s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
+ s.context.WebSocket.OPEN=1;
+ s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});s.context.crypto={randomUUID:()=>'hello-id'};
+ s.context.fetch=async()=>({ok:true,json:async()=>({binding:null,room:{revision:0},clients:[],call:null,participants:[]})});
+ s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
+ s.run(`RECONNECT_DELAYS_MS.splice(0,RECONNECT_DELAYS_MS.length,1,1);
+  var meterStops=0;startMeter=()=>{};stopMeter=()=>{meterStops++};startCapture=async()=>{};keepScreenAwake=()=>{};
+  window.roomVoice={unlock:async()=>{},cancel(){},context:{state:'running'}};window.roomTranscription={stop(){},start(){}};
+  voicePreferences={stt_provider:'openai'};stream={getAudioTracks:()=>[{enabled:true}]};sessionId='old-session';ws={readyState:1};
+  ${GAP_FRAMES}`);
+ const pending=s.run('lostConnection')({code:1006},s.run('connectEpoch'),{browserStt:false,sttRuntime:null});
+ assert.equal(s.run('meterStops'),0,'losing the socket never stops the capture: the microphone was not paused');
+ assert.equal(s.run('gap.armed'),true);
+ // The person keeps talking while the page is retrying.
+ s.run("feed(Array(60).fill(0.4))");
+ await new Promise(resolve=>setTimeout(resolve,5));
+ const socket=sockets[0];socket.readyState=1;socket.onopen();
+ socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'new-session',sample_rate:16000,channels:1}})});
+ await pending;
+ const catchup=socket.sent.map(value=>JSON.parse(value)).filter(m=>m.type==='voice-catchup');
+ assert.ok(catchup.length,'what was said during the gap reaches the session that came back');
+ assert.equal(catchup[0].data.session_id,'new-session','it is this browser\'s new call that carries it');
+ assert.equal(catchup.at(-1).data.final,true);
+ assert.equal(s.run('gap.armed'),false);
+ assert.equal(s.run('stream')!==null,true,'and the microphone stream is still the same one');
+});
+test('A message the room recovered from the gap gets its own bubble, and takes nothing from the turn in hand',()=>{
+ const s=setup();const shown=[];
+ s.context.window.sidevoiceUI=new Proxy({},{get:(_,name)=>value=>{if(name==='setConversation')shown.push(value)}});
+ s.run("roomBinding={thread_id:'a',title:'A'};sessionId='s';userTurn={key:'user-turn:4',text:'',thread:'a'};pendingPhase='listening'");
+ s.run("message(JSON.stringify({type:'voice-catchup-turn',data:{session_id:'s',history_id:'s:user-catchup:1',thread_id:'a',text:'lo que dije sin sala',offline:'buffered',time:1758290000000}}))");
+ const bubble=shown.at(-1).messages.find(m=>m.segment==='s:user-catchup:1');
+ assert.equal(bubble.text,'lo que dije sin sala');
+ assert.equal(bubble.time,1758290000000,'it is placed when it was spoken, not when the room caught up');
+ assert.equal(bubble.offlineNote,'Capturado sin conexión');
+ assert.equal(bubble.delivery,'pending');
+ assert.equal(s.run('pendingPhase'),'listening','the turn that is open right now is untouched');
+ assert.equal(s.run('userTurn')!==null,true);
+ // A truncated one says what was lost instead of shortening the sentence in silence.
+ assert.equal(s.run("offlineNote({role:'user',offline:'truncated'})"),'Capturado sin conexión · solo se guardaron los últimos 30 s');
+ assert.equal(s.run("offlineNote({role:'assistant',offline:'buffered'})"),'','only what this browser said can have been captured offline');
+ assert.equal(s.run("offlineNote({role:'user'})"),'');
+ // Another browser's catch-up is not this one's.
+ s.run("message(JSON.stringify({type:'voice-catchup-turn',data:{session_id:'other',history_id:'other:user-catchup:1',thread_id:'a',text:'no es mío'}}))");
+ assert.equal(shown.at(-1).messages.some(m=>m.text==='no es mío'),false);
 });

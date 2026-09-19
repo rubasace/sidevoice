@@ -1,7 +1,8 @@
 """One transcription per user turn, by whichever provider the room chose.
 
 The pipeline decides where a turn ends (VAD plus a timer, or smart-turn); this
-module only turns the turn's audio into text. Two providers share one contract:
+module only turns audio into text: a turn the pipeline closed, or a block of PCM a
+browser captured while it had no socket. Two providers share one contract:
 OpenAI's API, called from here, and the browser that is speaking, which already
 runs Whisper locally and is asked over its own WebSocket. Both get the same WAV
 and both go through the same speech gate and text filters.
@@ -148,10 +149,24 @@ class TurnTranscriber(SegmentedSTTService):
             self._audio_buffer.clear()
         if not pcm:
             return None
-        pcm = bytes(pcm) + self._trailing_silence()
+        return await self.recognise(bytes(pcm) + self._trailing_silence(), self.sample_rate)
+
+    async def transcribe_audio(self, pcm, sample_rate=None):
+        """Audio this room never heard as it happened — what a browser captured while its socket was
+        down — through the same gate, the same provider and the same filters as a turn.
+
+        It reaches recognition and nothing else. The detector, the turn strategy and the aggregator
+        never see it, so audio spoken to a session that no longer exists cannot open a turn here.
+        """
+        if not pcm:
+            return None
+        return await self.recognise(bytes(pcm), sample_rate or self.sample_rate)
+
+    async def recognise(self, pcm, sample_rate):
+        """One block of PCM to text: usage, the speech gate, the provider and the text filters."""
         self._record_stt_audio_usage(pcm)
         await self.emit_stt_usage_metrics()
-        wav = pcm_to_wav(pcm, self.sample_rate)
+        wav = pcm_to_wav(pcm, sample_rate)
         evidence = await asyncio.to_thread(self.speech_gate.assess, wav)
         # Only acoustic/decoder measurements: no waveform or transcript archive.
         measurement = {'speech_ms': evidence.speech_ms, 'peak_probability': round(evidence.peak_probability, 4),

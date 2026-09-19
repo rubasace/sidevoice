@@ -161,7 +161,11 @@ class RoomClient:
 
     # ----- input this browser produced -----
 
-    def enqueue_input(self, text, *, target=None, revision=None, message_id=None, history_id=None):
+    def enqueue_input(self, text, *, target=None, revision=None, message_id=None, history_id=None,
+                      offline=None, at=None):
+        """`offline` and `at` carry input this room did not hear as it happened: what a browser
+        captured while its socket was down, with that browser's own clock. Delivery is unchanged —
+        the harness gets the same envelope — and only the journal records where it came from."""
         if target is None and self.cancelled_turn == self.turn_revision:
             return
         target = self.turn_target if target is None else target
@@ -179,7 +183,8 @@ class RoomClient:
             return
         if self.journal:
             self.journal.put(id=history_id, thread=payload['thread_id'], role='user', text=text,
-                             name='Tú', session=self.id, revision=revision, status='pending', payload=payload)
+                             name='Tú', session=self.id, revision=revision, status='pending', payload=payload,
+                             offline=offline, at=at)
         else:
             try:
                 self.input_queue.put_nowait(payload)

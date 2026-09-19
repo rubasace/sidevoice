@@ -24,6 +24,7 @@ export function MessageBubble({ message, position, showName }: { message: ChatMe
         {!message.draft && <time dateTime={new Date(message.time).toISOString()}>{new Date(message.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>}
         {delivery && <span className="receipt delivery" data-state={delivery} title={receiptLabel[delivery]} aria-label={receiptLabel[delivery]}>{receiptSymbol[delivery]}</span>}
       </div>
+      {message.offlineNote && <span className="chat-audio-note">{message.offlineNote}</span>}
       {message.audioNote && <span className="chat-audio-note">{message.audioNote}</span>}
     </article>
   );

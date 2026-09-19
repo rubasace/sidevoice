@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import json
+import time
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
@@ -30,8 +32,17 @@ class FakeWebSocket:
 class FakeTranscriber:
     """Stands in for the pipeline's transcriber: hands back scripted results, one per finished turn."""
 
-    def __init__(self, results):
+    def __init__(self, results, offline=()):
         self.results, self.calls = list(results), 0
+        self.offline, self.offline_audio = list(offline), []
+
+    async def transcribe_audio(self, pcm, sample_rate=None):
+        """The catch-up path: audio the room never heard live, recognised on its own."""
+        self.offline_audio.append((pcm, sample_rate))
+        result = self.offline.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     async def transcribe_turn(self):
         self.calls += 1
@@ -229,7 +240,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
 
     # ----- what a turn does, whatever closed it -----
 
-    def voice(self, results, session_id='s1'):
+    def voice(self, results, session_id='s1', offline=()):
         from sidevoice.app import VoiceCall
         from sidevoice.room import RoomClient
         from sidevoice.language_settings import LanguageSettings, MicSettings
@@ -237,7 +248,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         client = RoomClient(session_id, self.hub)
         client.connected = True
         client.target = {'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}
-        voice = VoiceCall(client, FakeTranscriber(results), sent.append, settings=LanguageSettings(), mic=MicSettings(),
+        voice = VoiceCall(client, FakeTranscriber(results, offline), sent.append, settings=LanguageSettings(), mic=MicSettings(),
                           choice={'provider': 'browser', 'model': 'onnx-community/whisper-tiny', 'reason': 'explicit'},
                           runtime={'model': 'onnx-community/whisper-tiny', 'device': 'webgpu'})
         return voice, client, sent
@@ -442,6 +453,121 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertTrue(all(client.connected for _, _, client in joined))
         for socket, task, _ in joined:
             await self.leave(socket, task)
+
+    # ----- what a browser captured while it had no socket -----
+
+    def catchup(self, voice, pcm, *, rate=16000, truncated=False, at=None, slice_bytes=8000, session=None):
+        """The browser's upload, exactly as the page sends it: base64 slices in text frames."""
+        task, total = None, max(1, -(-len(pcm) // slice_bytes))
+        for index in range(total):
+            chunk = pcm[index * slice_bytes:(index + 1) * slice_bytes]
+            task = voice.browser_message({'type': 'voice-catchup', 'data': {
+                'session_id': voice.call.id if session is None else session,
+                'sample_rate': rate, 'seq': index, 'audio_base64': base64.b64encode(chunk).decode('ascii'),
+                'final': index == total - 1, 'truncated': truncated, 'started_at': at}})
+        return task
+
+    async def test_audio_captured_offline_becomes_one_message_and_never_a_turn(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([], offline=[Transcript('Esto lo dije sin sala')])
+        pcm, spoken_at = b'\x10\x00' * 16000, int(time.time() * 1000) - 9000
+        self.assertIsNotNone(await self.catchup(voice, pcm, at=spoken_at))
+        # The whole recording reached recognition once, at the rate the browser declared.
+        self.assertEqual(voice.transcriber.offline_audio, [(pcm, 16000)])
+        self.assertEqual(voice.transcriber.calls, 0, 'a catch-up is never transcribed as a live turn')
+        # Nothing about this browser's turn-taking moved: no epoch, no open turn, no held text.
+        self.assertEqual((client.revision, client.turn_revision, client.speaking, voice.held), (0, 0, False, None))
+        turn = next(m for m in sent if m['type'] == 'voice-catchup-turn')
+        history_id = client.id + ':user-catchup:1'
+        self.assertEqual(turn['data'], {'session_id': client.id, 'history_id': history_id, 'thread_id': 'thread-a',
+                                        'text': 'Esto lo dije sin sala', 'offline': 'buffered', 'time': spoken_at})
+        self.assertFalse([m for m in sent if m['type'] == 'voice-user-turn'])
+        # One journal row, marked as captured offline and stamped with the browser's own clock.
+        row = self.hub.journal.get(history_id)
+        self.assertEqual((row['offline'], row['time'], row['status'], row['text'], row['revision']),
+                         ('buffered', spoken_at, 'pending', 'Esto lo dije sin sala', 0))
+        self.assertEqual([r['offline'] for r in self.hub.journal.history('thread-a')], ['buffered'],
+                         'the transcript carries the mark, so a reload still says where the message came from')
+        self.assertIsNone(voice.catchup, 'the audio is dropped the moment it has been recognised')
+
+    async def test_a_gap_that_held_no_words_produces_nothing_at_all(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([], offline=[Transcript('  ')])
+        await self.catchup(voice, b'\x00\x00' * 8000)
+        self.assertEqual(sent, [], 'silence is not a message, and not an incident either')
+        self.assertEqual(self.hub.journal.history('thread-a'), [])
+
+    async def test_a_buffer_that_overflowed_says_so_instead_of_shortening_in_silence(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([], offline=[Transcript('…y por eso te lo cuento')])
+        await self.catchup(voice, b'\x10\x00' * 32000, truncated=True)
+        turn = next(m for m in sent if m['type'] == 'voice-catchup-turn')
+        self.assertEqual(turn['data']['offline'], 'truncated')
+        self.assertEqual(self.hub.journal.get(client.id + ':user-catchup:1')['offline'], 'truncated')
+
+    async def test_a_recording_that_arrived_broken_is_dropped_rather_than_transcribed_with_a_hole(self):
+        voice, client, sent = self.voice([], offline=[])
+        data = lambda seq, final=False: {'type': 'voice-catchup', 'data': {
+            'session_id': client.id, 'sample_rate': 16000, 'seq': seq,
+            'audio_base64': base64.b64encode(b'\x10\x00' * 800).decode('ascii'), 'final': final}}
+        self.assertIsNone(voice.browser_message(data(0)))
+        self.assertIsNone(voice.browser_message(data(2, final=True)), 'a slice out of order ends the upload')
+        self.assertIsNone(voice.catchup)
+        # A first slice that does not start at zero is not an upload this room is in the middle of.
+        self.assertIsNone(voice.browser_message(data(1, final=True)))
+        self.assertEqual(voice.transcriber.offline_audio, [])
+        self.assertEqual(self.hub.journal.history('thread-a'), [])
+
+    async def test_more_audio_than_any_gap_could_hold_is_refused_and_said_so(self):
+        from sidevoice.app import CATCHUP_MAX_SECONDS
+        voice, client, sent = self.voice([], offline=[])
+        for index in range(CATCHUP_MAX_SECONDS + 5):
+            voice.browser_message({'type': 'voice-catchup', 'data': {
+                'session_id': client.id, 'sample_rate': 16000, 'seq': index,
+                'audio_base64': base64.b64encode(b'\x10\x00' * 16000).decode('ascii'), 'final': False}})
+        self.assertIsNone(voice.catchup)
+        self.assertIn('demasiado largo', next(m for m in sent if m['type'] == 'error')['data']['message'])
+        self.assertEqual(voice.transcriber.offline_audio, [])
+
+    async def test_a_browser_clock_that_makes_no_sense_leaves_the_room_s_own(self):
+        from sidevoice.app import catchup_time
+        from sidevoice.transcribers import Transcript
+        now = time.time() * 1000
+        self.assertIsNone(catchup_time(0))
+        self.assertIsNone(catchup_time(now + 600_000))
+        self.assertIsNone(catchup_time('ayer'))
+        self.assertIsNone(catchup_time(True))
+        self.assertEqual(catchup_time(now - 1000), int(now - 1000))
+        voice, client, sent = self.voice([], offline=[Transcript('Hola')])
+        await self.catchup(voice, b'\x10\x00' * 8000, at=0)
+        self.assertGreater(self.hub.journal.get(client.id + ':user-catchup:1')['time'], now - 1000)
+
+    async def test_a_catch_up_that_could_not_be_transcribed_says_so_and_invents_no_message(self):
+        voice, client, sent = self.voice([], offline=[RuntimeError('GPU perdida')])
+        await self.catchup(voice, b'\x10\x00' * 8000)
+        self.assertIn('GPU perdida', next(m for m in sent if m['type'] == 'error')['data']['message'])
+        self.assertEqual(self.hub.journal.history('thread-a'), [])
+        self.assertFalse([m for m in sent if m['type'] == 'voice-catchup-turn'])
+
+    async def test_a_catch_up_and_a_live_turn_are_two_messages_and_neither_takes_the_other_s_place(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript('Y ahora esto')], offline=[Transcript('Lo de antes')])
+        voice.turn_started()
+        catch_up = self.catchup(voice, b'\x10\x00' * 8000)
+        await voice.turn_stopped()
+        await catch_up
+        rows = {row['id']: row for row in self.hub.journal.history('thread-a')}
+        self.assertEqual({row['text'] for row in rows.values()}, {'Lo de antes', 'Y ahora esto'})
+        self.assertEqual(rows[client.id + ':user-catchup:1']['offline'], 'buffered')
+        self.assertEqual(rows[client.id + ':user-turn:1']['offline'], None,
+                         'what the room heard live is not marked as captured offline')
+        self.assertEqual(client.revision, 1, 'only the live turn moved this browser\'s epoch')
+
+    async def test_a_catch_up_for_another_session_is_not_this_call_s(self):
+        voice, client, sent = self.voice([], offline=[])
+        self.assertIsNone(self.catchup(voice, b'\x10\x00' * 800, session='someone-else'))
+        self.assertIsNone(voice.catchup)
+        self.assertEqual(voice.transcriber.offline_audio, [])
 
     async def test_a_browser_over_the_limit_is_refused_without_disturbing_the_room(self):
         from sidevoice.app import browser_call

@@ -1,5 +1,6 @@
 """Voice room server: browser audio in, durable delivery out. No LLM lives here."""
 import asyncio
+import base64
 import json
 import os
 import time
@@ -33,6 +34,18 @@ from .paths import REPOSITORY_ROOT
 from .transcribers import TurnTranscriber
 
 HELLO_TIMEOUT = 10.0
+# The ceiling the room accepts for audio a browser captured while its socket was down. The page keeps
+# the last 30 s of it; this leaves room for that and refuses anything that is not a gap.
+CATCHUP_MAX_SECONDS = 35
+CATCHUP_SLICE_BYTES = 128 * 1024
+
+
+def catchup_time(value):
+    """The browser's own clock for audio it captured, when it is plausible; otherwise the room's."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    now = time.time() * 1000
+    return int(value) if now - 3600_000 <= value <= now + 60_000 else None
 
 
 async def room_is_full(websocket):
@@ -112,6 +125,8 @@ class VoiceCall:
         self.finishing = set()
         self.lock = asyncio.Lock()
         self.held = None   # text of a turn the user resumed before it was delivered; the next turn carries it
+        self.catchup = None   # the slices of a gap recording still arriving from the browser
+        self.catchups = 0     # how many of them this call has already turned into messages
         call.stt = transcriber
         call.voice = self
         call.settings = settings
@@ -130,13 +145,17 @@ class VoiceCall:
         apply to this call at once for what needs no pipeline (voice, speed, grace).
         Transcription and microphone changes are this pipeline's own shape: the browser
         brings them in the hello of another socket, and lets this one go once that
-        one answers.
+        one answers. A catch-up is audio from before this session existed; it is
+        recognised on its own and never reaches this pipeline's detector.
         """
-        if not isinstance(message, dict) or message.get('type') not in {'voice-stt-ready', 'voice-settings', 'voice-audio-health'}:
+        if not isinstance(message, dict) or message.get('type') not in {
+                'voice-stt-ready', 'voice-settings', 'voice-audio-health', 'voice-catchup'}:
             return
         data = message.get('data') if isinstance(message.get('data'), dict) else {}
         if data.get('session_id') != self.call.id:
             return
+        if message['type'] == 'voice-catchup':
+            return self.catch_up_slice(data)
         if message['type'] == 'voice-audio-health':
             # What the browser's output did lately (stalls, cancels, refusals), so a stuck phone can be read from the room.
             health = data.get('health') if isinstance(data.get('health'), dict) else {}
@@ -166,6 +185,89 @@ class VoiceCall:
             return
         if runtime:
             self.call.transcription = {**self.call.transcription, **runtime}
+
+    # ----- what this browser captured while the room was unreachable -----
+
+    def catch_up_slice(self, data):
+        """One slice of the audio a browser buffered while its socket was down.
+
+        It arrives base64 in text frames, never as the socket's binary frames. Binary frames are
+        microphone PCM and go straight to the detector; this audio was spoken to a session that no
+        longer exists, so it must not be able to open a turn here, and a text frame makes that
+        impossible by construction rather than by care. Slices also keep every frame small enough
+        that no proxy's message limit can drop the one thing this feature exists to save.
+        """
+        rate, seq = data.get('sample_rate'), data.get('seq')
+        if not isinstance(seq, int) or isinstance(seq, bool) or not isinstance(rate, int) or not 8000 <= rate <= 48000:
+            self.catchup = None
+            return None
+        if seq == 0:
+            self.catchup = {'pcm': bytearray(), 'seq': 0, 'rate': rate,
+                            'truncated': bool(data.get('truncated')), 'at': catchup_time(data.get('started_at'))}
+        pending = self.catchup
+        # A slice out of order means the recording is no longer what the browser sent: drop the lot
+        # rather than transcribe a sentence with a hole in it.
+        if pending is None or seq != pending['seq'] or rate != pending['rate']:
+            self.catchup = None
+            return None
+        try:
+            audio = base64.b64decode(data.get('audio_base64') or '', validate=True)
+        except (ValueError, TypeError):
+            self.catchup = None
+            return None
+        if len(audio) > CATCHUP_SLICE_BYTES or len(pending['pcm']) + len(audio) > CATCHUP_MAX_SECONDS * rate * 2:
+            self.catchup = None
+            self.send({'type': 'error', 'data': {'message': 'El audio capturado sin conexión era demasiado largo.'}})
+            return None
+        pending['pcm'].extend(audio)
+        pending['seq'] += 1
+        if not data.get('final'):
+            return None
+        self.catchup = None
+        task = asyncio.create_task(self.catch_up(bytes(pending['pcm']), rate,
+                                                 truncated=pending['truncated'], at=pending['at']))
+        self.finishing.add(task)
+        task.add_done_callback(self.finishing.discard)
+        return task
+
+    async def catch_up(self, pcm, sample_rate, *, truncated=False, at=None):
+        """What the person said while this browser had no socket, as one message of its own.
+
+        It is not a live turn and is never made to look like one: the epoch, the detector and the
+        text this session is holding all belong to audio the room actually heard. This is recognised
+        on its own, under the same lock so it cannot interleave with a turn, and written to the
+        journal with the browser's own clock and a mark saying where it came from. The PCM is
+        dropped the moment it has been recognised; the room stores none of it.
+        """
+        call = self.call
+        self.catchups += 1
+        history_id = f'{call.id}:user-catchup:{self.catchups}'
+        started_at = time.monotonic()
+        async with self.lock:
+            target = dict(call.target)
+            try:
+                result = await self.transcriber.transcribe_audio(pcm, sample_rate)
+            except Exception as error:
+                failed = 'No se pudo transcribir lo que se capturó sin conexión: ' + (str(error) or type(error).__name__)
+                call.error = failed
+                self.send({'type': 'error', 'data': {'message': failed}})
+                return None
+            text = (result.text if result else '').strip()
+            logger.info('Call {}: {} ms captured offline, recognised in {} ms · {} · {}', call.id[:8],
+                        round(len(pcm) / (sample_rate * 2) * 1000), round((time.monotonic() - started_at) * 1000),
+                        'truncated' if truncated else 'complete', 'became a message' if text else 'nothing voiced')
+            # A gap that held no words is not a message and not an incident: there is nothing to show.
+            if not text:
+                return None
+            offline = 'truncated' if truncated else 'buffered'
+            # The browser must have the bubble before its receipt arrives, exactly as with a live turn.
+            self.send({'type': 'voice-catchup-turn', 'data': {
+                'session_id': call.id, 'history_id': history_id, 'thread_id': target.get('thread_id'),
+                'text': text, 'offline': offline, 'time': at}})
+            # Revision 0 is this browser's epoch before it ever opened a turn here, which is exactly
+            # where this audio belongs: it interrupts nothing and no live turn can ever carry it.
+            return call.enqueue_input(text, target=target, revision=0, history_id=history_id,
+                                      offline=offline, at=at)
 
     def turn_started(self):
         call = self.call
@@ -250,6 +352,7 @@ class VoiceCall:
                 await call.finish_user_turn()
 
     def close(self):
+        self.catchup = None
         for task in list(self.finishing):
             task.cancel()
 

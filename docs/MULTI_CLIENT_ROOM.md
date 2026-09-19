@@ -123,6 +123,15 @@ acknowledgement. **Ordering when turns overlap** is therefore the order turns
 *completed*, which is total and stable; each browser's revision only orders that
 browser's own turns and governs its audio. Whoever finishes first is delivered first.
 
+One kind of input is not a turn at all: what a browser captured while its socket
+was down. It arrives on the new client as base64 in text frames, is recognised on
+its own, and becomes one journal row under `<client id>:user-catchup:<n>` at
+revision 0 — this browser's epoch before it ever opened a turn, which is where
+audio from a session that no longer exists belongs. It moves no epoch, opens no
+turn, interrupts no playback and takes nothing from the text a session is holding;
+it is marked in the journal as captured offline, with the browser's own clock, and
+ordered with everything else by the `seq` it got when it completed.
+
 A receipt for a row is routed back to the client named in its payload, and only
 there. Every other browser learns the same fact from the shared history poll, so
 a stale receipt can never move a state that is not its own. The same holds for

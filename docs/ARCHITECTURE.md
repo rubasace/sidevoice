@@ -73,6 +73,16 @@ the tab's chosen conversation cross unchanged; a refusal leaves the call exactly
 as it was and says why. For as long as the swap takes, one device counts as two
 browsers against `Room.MAX_CLIENTS`.
 
+A socket that drops does not end the call, and no longer loses what was said while
+it was down. The microphone is never paused, so the page keeps the last 30 seconds
+it could not stream and hands them to the session that comes back as one catch-up:
+base64 in text frames, never as the binary frames the detector reads, so audio
+spoken to a session that no longer exists cannot open a turn in the one that
+replaced it. The room recognises it on its own, through the same gate and filters,
+and writes one journal row marked as captured offline with the browser's own clock.
+A gap that held no voice produces nothing; one that overflowed the buffer says so in
+the message rather than shortening it in silence. Nothing of that audio is stored.
+
 Transcribing the finished turn is a provider behind that pipeline, and the
 pipeline does not know which one it has: OpenAI is called from the room with the
 stored key; the browser provider sends the turn's WAV back to the browser that
