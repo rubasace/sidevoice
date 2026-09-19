@@ -115,6 +115,11 @@ class ConnectorControl:
             if self.live.get(binding_id) != connector_id:
                 return  # Not this connector's delivery: ignore, never let a stranger settle it.
             del self.inflight[binding_id]
+            row = self.journal.get(event_id)
+            if row and row['status'] == 'read':
+                # The conversation already admitted it (a hook said so, faster than this acknowledgement
+                # came back): nothing the delivery path learns later can take the second tick away.
+                return
             if status == 'accepted':
                 self.journal.update(event_id, 'delivered')
                 self.hub.delivery_status(event_id, 'delivered')

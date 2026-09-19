@@ -126,6 +126,23 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.hub.receipts.count((row['id'], 'read')), 1)
         task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
+    async def test_a_read_receipt_that_arrives_before_the_delivery_acknowledgement_is_not_downgraded(self):
+        socket, task = await self.run_connection([
+            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
+            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
+        ])
+        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        row = self.queue_input('sess-1', 'hola', message_id='m-fast')
+        await self.control.tick()   # delivered: the row is in flight, waiting for the harness's answer
+        delivered = [f for f in socket.sent if f['type'] == 'input.deliver' and f['message_id'] == 'm-fast'][0]
+        self.assertEqual(self.journal.get(row['id'])['status'], 'sending')
+        await self.control.read(self.connector_id, {'binding_id': registered['binding_id'], 'message_id': 'm-fast', 'session_id': 'call', 'revision': 1})
+        self.assertEqual(self.journal.get(row['id'])['status'], 'read')
+        await self.control.acknowledge(self.connector_id, {'event_id': delivered['event_id'], 'status': 'unknown', 'detail': 'inbox'})
+        self.assertEqual(self.journal.get(row['id'])['status'], 'read', 'a late acknowledgement never takes the second tick away')
+        self.assertEqual([status for (_, status) in self.hub.receipts if _ == row['id']][-1], 'read')
+        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
     async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id='gone-after-restart')
         self.assertNotEqual(binding['id'], 'gone-after-restart')
