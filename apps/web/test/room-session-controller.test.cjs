@@ -816,7 +816,7 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
  const s=setup();const sockets=[];
  s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
  s.context.WebSocket.OPEN=1;
- s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});
+ s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});s.context.crypto={randomUUID:()=>'hello-id'};
  s.context.fetch=async()=>({ok:true,json:async()=>({binding:null,room:{revision:0},clients:[],call:null,participants:[]})});
  s.run("RECONNECT_DELAYS_MS.splice(0,RECONNECT_DELAYS_MS.length,1,1);startMeter=()=>{};stopMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};window.roomVoice={unlock:async()=>{},cancel(){},context:{state:'running'}};window.roomTranscription={stop(){},start(){}};voicePreferences={stt_provider:'openai'};stream={getAudioTracks:()=>[{enabled:true}]};sessionId='old-session';ws={readyState:1}");
  s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
