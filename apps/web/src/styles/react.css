@@ -228,3 +228,12 @@ body,
 .cancel-input:hover,.cancel-input:focus-visible{color:#ffd4ce;text-decoration:underline}
 
 .receipt.delivery[data-state=read]{color:#8ab4f8;letter-spacing:-.15em}
+
+/* The conversation is working on your turn: three dots, one beat each, at the pace of the presence pulse. */
+.chat-bubble.thinking{padding:12px 16px;min-height:0}
+.thinking-dots{display:inline-flex;gap:5px;align-items:center}
+.thinking-dots i{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.35;animation:thinking-dot 1.2s infinite ease-in-out}
+.thinking-dots i:nth-child(2){animation-delay:.16s}
+.thinking-dots i:nth-child(3){animation-delay:.32s}
+@keyframes thinking-dot{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.thinking-dots i{animation:none;opacity:.7}}

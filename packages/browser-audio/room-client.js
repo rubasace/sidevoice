@@ -31,7 +31,7 @@ class RoomVoice {
   this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
-  this.presence=null;this.presenceSeconds=4;this.presencePulseSeconds=2;this.presenceFadeSeconds=.25;this.presenceMaxVolume=.12}
+  this.presence=null;this.presenceSeconds=2.4;this.presencePulseSeconds=1.2;this.presenceFadeSeconds=.25;this.presenceMaxVolume=.12}
  note(kind,detail){const event={at:Date.now(),kind,...(detail?{detail}:{})};this.events.push(event);if(this.events.length>24)this.events.shift();
   // The event list is bounded, so what it proves is kept apart from it: a voice has already left this output.
   if(kind==='play-encoded'||kind==='complete')this.rendered=true;
@@ -163,27 +163,56 @@ class RoomVoice {
   * leaves through the same media element as the voice (see ensureOutput), so a phone's echo
   * cancellation subtracts it instead of the detector hearing it as speech. */
  presenceBuffer(){
+  /* A pulse, not a bed of noise. The first attempt (2026-09-19) mixed a filtered noise band under two
+   * partials and the operator's verdict was "horrible": on a phone speaker a hiss reads as a fault, not
+   * as company. What reads as thinking is a warm tone that breathes — soft attack, long decay, silence
+   * between beats — the way a voice assistant's waiting sound does. Two beats per loop, and the loop
+   * joins itself at zero because the second beat has decayed by the seam. */
   const rate=this.context.sampleRate||48000,length=Math.round(rate*this.presenceSeconds);
-  const fade=Math.min(Math.round(rate*.12),length>>2),noise=new Float32Array(length+fade);
-  const lowCoefficient=Math.exp(-2*Math.PI*420/rate),meanCoefficient=Math.exp(-2*Math.PI*110/rate);
-  let low=0,mean=0,noisePeak=0;
-  for(let i=0;i<noise.length;i++){
-   low=low*lowCoefficient+(Math.random()*2-1)*(1-lowCoefficient);   // one pole, everything above ~420 Hz gone
-   mean=mean*meanCoefficient+low*(1-meanCoefficient);               // and its slow mean...
-   noise[i]=low-mean;                                               // ...taken back out: no rumble either
-   noisePeak=Math.max(noisePeak,Math.abs(noise[i]));
+  const samples=new Float32Array(length),beat=this.presencePulseSeconds;
+  const attack=.05,decay=.55,partials=[[330,1],[495,.34],[660,.12]];
+  for(let at=0;at+beat<=this.presenceSeconds+1e-9;at+=beat){
+   const from=Math.round(at*rate),span=Math.round((attack+decay)*rate);
+   for(let i=0;i<span&&from+i<length;i++){
+    const t=i/rate;
+    // Raised-cosine attack into an exponential decay: no click at the onset, nothing left at the seam.
+    const envelope=t<attack?(.5-.5*Math.cos(Math.PI*t/attack)):Math.exp(-(t-attack)*4.2);
+    let value=0;for(const [hz,weight] of partials)value+=weight*Math.sin(2*Math.PI*hz*t);
+    samples[from+i]+=envelope*value;
+   }
   }
-  if(noisePeak>0)for(let i=0;i<noise.length;i++)noise[i]/=noisePeak;
-  // The loop has to join itself: the extra tail is crossfaded into the head, so the seam has no step.
-  for(let i=0;i<fade;i++){const weight=i/fade;noise[i]=noise[i]*weight+noise[length+i]*(1-weight)}
-  const samples=new Float32Array(length);let peak=0;
-  for(let i=0;i<length;i++){
-   const at=i/rate,breath=.3+.7*(.5-.5*Math.cos(2*Math.PI*at/this.presencePulseSeconds));
-   samples[i]=breath*(noise[i]*.55+.3*Math.sin(2*Math.PI*220*at)+.15*Math.sin(2*Math.PI*330*at));
-   peak=Math.max(peak,Math.abs(samples[i]));
-  }
+  let peak=0;for(let i=0;i<length;i++)peak=Math.max(peak,Math.abs(samples[i]));
   if(peak>0)for(let i=0;i<length;i++)samples[i]/=peak;
   const buffer=this.context.createBuffer(1,length,rate);buffer.copyToChannel(samples,0);return buffer;
+ }
+ /* One short, soft note, for the moment a message is read by the conversation: the second tick, made
+  * audible. It is a one-shot through the same sink as everything else, never over speech, and it leaves
+  * the usual silent tail behind so the sink is not emptied when it ends. */
+ chime(kind='read',{volume=.05}={}){
+  if(!this.context||this.context.state!=='running'||this.job)return false;
+  if(typeof this.context.createBufferSource!=='function')return false;
+  if(!this.presenceReady()){this.note('chime-refused','output not yet rendering');return false}
+  try{
+   const rate=this.context.sampleRate||48000,seconds=.22,length=Math.round(rate*seconds);
+   const samples=new Float32Array(length),level=Math.min(.12,Math.max(0,Number(volume)||0));
+   const notes=kind==='read'?[[587.33,0],[880,.055]]:[[440,0]];
+   for(const [hz,at] of notes){
+    const from=Math.round(at*rate);
+    for(let i=0;from+i<length;i++){
+     const t=i/rate,envelope=t<.008?t/.008:Math.exp(-(t-.008)*16);
+     if(t>.008&&envelope<1e-4)break;   // only the decay ends the note; the attack starts at zero by design
+     samples[from+i]+=envelope*Math.sin(2*Math.PI*hz*t);
+    }
+   }
+   let peak=0;for(let i=0;i<length;i++)peak=Math.max(peak,Math.abs(samples[i]));
+   if(peak>0)for(let i=0;i<length;i++)samples[i]*=level/peak;
+   const buffer=this.context.createBuffer(1,length,rate);buffer.copyToChannel(samples,0);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
+   source.start(this.context.currentTime+.01);
+   source.onended=()=>{if(!this.presence&&!this.job)this.tail('chime-tail')};
+   this.note('chime',kind);
+   return true;
+  }catch(error){this.note('chime-failed',error?.message||'chime');return false}
  }
  /* True once something audible has already left this output. A fresh sink must never be opened with the
   * bed: the greeting is what puts the media element in the phone's echo reference, and until it has

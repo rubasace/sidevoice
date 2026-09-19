@@ -29,6 +29,8 @@ export interface ConversationView {
   pendingCancellable: boolean;
   /** While a turn is open the bubble shows bars instead of text: listening, then transcribing. */
   pendingPhase?: "" | "listening" | "transcribing";
+  /** The conversation is working on this browser's last turn: the three dots say so. */
+  working?: boolean;
 }
 
 export interface ParticipantView {

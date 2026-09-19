@@ -335,15 +335,39 @@ test('The bed refuses a volume of nothing and bounds one that is too much',async
  assert.equal(s.voice.startPresence({volume:5}),true);
  assert.equal(s.voice.presence.volume,s.voice.presenceMaxVolume);
 });
-test('The loop is a breathing two-tone bed, normalized so its gain is its peak amplitude',()=>{
+test('The loop is a pulse, not a noise bed: two beats that decay to silence, normalized so its gain is its peak',()=>{
  const s=setup();s.voice.context=new s.context.AudioContext();
- const buffer=s.voice.presenceBuffer(),rate=48000;
- assert.equal(buffer.duration,4,'four seconds: both partials close a whole number of cycles at the seam');
- let peak=0;for(const value of buffer.data)peak=Math.max(peak,Math.abs(value));
+ const buffer=s.voice.presenceBuffer(),rate=48000,data=buffer.data;
+ assert.equal(buffer.duration,2.4,'two beats of 1.2 s');
+ let peak=0;for(const value of data)peak=Math.max(peak,Math.abs(value));
  assert.ok(Math.abs(peak-1)<1e-9,'peak 1, so the gain asked for is the peak amplitude in full scale');
- assert.ok(Math.abs(buffer.data[0]-buffer.data[buffer.data.length-1])<.05,'the loop joins itself without a step');
- const rms=(from,to)=>{let squares=0;for(let i=from;i<to;i++)squares+=buffer.data[i]*buffer.data[i];return Math.sqrt(squares/(to-from))};
- const loud=rms(rate*.9,rate*1.1),quiet=rms(rate*1.9,rate*2.1);
- assert.ok(loud>2*quiet,'it breathes: full at the middle of each two-second pulse, a third of it at the joins');
- assert.ok(rms(rate*2.9,rate*3.1)>2*quiet,'and it breathes twice per loop, not once');
+ const rms=(from,to)=>{from=Math.round(from);to=Math.round(to);let squares=0;for(let i=from;i<to;i++)squares+=data[i]*data[i];return Math.sqrt(squares/(to-from))};
+ // Each beat is loud at its onset and gone before the next one: that gap is what a bed of noise never had.
+ const firstBeat=rms(0,rate*.2),firstGap=rms(rate*.95,rate*1.15);
+ const secondBeat=rms(rate*1.2,rate*1.4),secondGap=rms(rate*2.2,rate*2.4);
+ assert.ok(firstBeat>20*firstGap,'it beats and then lets go: '+firstBeat+' vs '+firstGap);
+ assert.ok(secondBeat>20*secondGap,'twice per loop, not once');
+ assert.ok(secondGap<.01,'the seam is silence, so the loop cannot click');
+ assert.equal(data[0],0,'and it starts from zero');
+});
+test('The read chime is one short soft note through the same sink, and only once the output is rendering',()=>{
+ const s=setup();const {context}=mediaOutput(s);
+ const made=[];let written=null;
+ context.createBuffer=(channels,frames,rate)=>({duration:frames/rate,frames,rate,copyToChannel(data){written=data}});
+ context.createBufferSource=()=>{const src={connect(target){src.target=target},start(){},stop(){}};made.push(src);return src};
+ context.sampleRate=48000;
+ s.voice.output={sink:{stream:{}},element:{paused:false}};
+ assert.equal(s.voice.chime('read'),false,'a fresh output has not rendered voice yet');
+ assert.equal(s.voice.health().events.at(-1).kind,'chime-refused');
+ s.voice.note('complete');
+ assert.equal(s.voice.chime('read',{volume:.05}),true);
+ assert.equal(made.at(-1).target,s.voice.output.sink,'through the media-element sink, like everything else');
+ assert.ok(written.length===Math.round(48000*.22),'a fifth of a second, no more');
+ let peak=0;for(const value of written)peak=Math.max(peak,Math.abs(value));
+ assert.ok(Math.abs(peak-.05)<1e-6,'asked for 0.05 peak, got '+peak);
+ assert.equal(written[0],0,'starts from zero, no click');
+ assert.equal(s.voice.health().events.at(-1).kind,'chime');
+ // Never over speech: an utterance in flight owns the output.
+ s.voice.job={};
+ assert.equal(s.voice.chime('read'),false);
 });
