@@ -49,15 +49,6 @@ class RoomVoice {
   element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;
   try{await element.play()}catch(error){this.note('element-refused',error?.message||'play');return}
   this.output={sink,element};this.note('element-ready');
-  // The destination never runs out of inputs: a silent source stays connected for the life of the
-  // output, so stopping the last voice source (a barge-in) cannot leave the stream starved — which
-  // is what iOS turns into the last instant on a loop.
-  try{
-   let keepalive=null;
-   if(typeof this.context.createConstantSource==='function'){keepalive=this.context.createConstantSource();keepalive.offset.value=0}
-   else if(typeof this.context.createBufferSource==='function'){keepalive=this.context.createBufferSource();keepalive.buffer=this.context.createBuffer(1,this.context.sampleRate||48000,this.context.sampleRate||48000);keepalive.loop=true}
-   if(keepalive){keepalive.connect(sink);keepalive.start();this.output.keepalive=keepalive;this.note('keepalive')}
-  }catch(error){this.note('keepalive-failed',error?.message||'keepalive')}
   // iOS interrupts the page's audio when the user pulls down notifications, switches apps, or the
   // microphone takes the audio route over — which is what an interruption while we speak looks
   // like in a car. An element left playing through that comes back as a stuck buzz, so it is

@@ -200,23 +200,23 @@ test('A clock that advances raises no alarm, and cancelling while the context is
  assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','resuming','stalls']);
 });
 
-test('The media-element sink is never left without an input, and a barge-in fades the voice out instead of cutting its last input dead',async()=>{
+test('A barge-in fades the voice out through its own gain instead of cutting the sink's last input dead',async()=>{
  const s=setup();const {context}=mediaOutput(s);
  const connections=[];const gains=[];
- context.createConstantSource=()=>({offset:{value:1},connect(target){connections.push(['keepalive',target])},start(){this.started=true}});
+ // No silent keep-alive on the sink: one was tried on 2026-09-19 and the phone's echo cancellation stopped
+ // covering the room's voice while it ran (the agent's own replies opened turns). The sink only ever
+ // carries the voice.
+ context.createConstantSource=()=>{throw Error('must not be used')};
  context.createGain=()=>{const ramps=[];const gain={gain:{value:1,setValueAtTime(v,t){ramps.push(['set',v,t])},linearRampToValueAtTime(v,t){ramps.push(['ramp',v,t])}},ramps,connect(target){connections.push(['gain',target])},disconnect(){gain.disconnected=true}};gains.push(gain);return gain};
  const stops=[];context.createBufferSource=()=>{const src={connect(target){connections.push(['source',target])},start(){},stop(when){stops.push(when);src.stopped=true}};s.sources.push(src);return src};
  await s.voice.unlock();
- const keepalive=s.voice.output.keepalive;
- assert.ok(keepalive&&keepalive.started,'a silent source keeps the destination fed for the life of the output');
- assert.equal(keepalive.offset.value,0);
- assert.deepEqual(connections[0],['keepalive',s.voice.output.sink]);
+ assert.equal(s.voice.output.keepalive,undefined);
  const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
  await new Promise(resolve=>setImmediate(resolve));
- assert.deepEqual(connections.slice(1),[['gain',s.voice.output.sink],['source',gains[0]]],'the voice goes through its own gain into the sink');
+ assert.deepEqual(connections,[['gain',s.voice.output.sink],['source',gains[0]]],'the voice goes through its own gain into the sink');
  context.currentTime=2;
  s.voice.cancel();await rejected;
  assert.deepEqual(gains[0].ramps,[['set',1,2],['ramp',0,2.03]],'a cancel fades the gain to zero over 30 ms');
- assert.deepEqual(stops,[2.04],'the source stops just after the fade, never dead on the sink');
+ assert.deepEqual(stops,[2.04],'the source stops just after the fade');
  assert.equal(s.voice.health().events.at(-1).kind,'cancel');
 });
