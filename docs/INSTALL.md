@@ -90,6 +90,39 @@ The connector declares protocol version 1 when it connects; the room accepts a
 stated range and `voice_status` says when a bump is needed. Connector and room
 do not have to be the same version.
 
+## Read receipts and speaking first (optional hook)
+
+The room shows one tick when the harness accepted a voice message and two when the
+conversation actually read it. The second tick, and a nudge that asks the model to
+acknowledge by voice before any other tool, come from a harness hook that runs
+`sidevoice hook` when a prompt is admitted. The hook only acts on Sidevoice voice
+messages; any other prompt exits silently. It reports to the connector over its
+local socket, so no room credential lives in the hook configuration.
+
+Claude Code (`~/.claude/settings.json`, or the project's `.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook" } ] }
+    ]
+  }
+}
+```
+
+Codex (`~/.codex/config.toml`; verified for a turn started directly, still to be
+checked for a queued message on a long-lived thread):
+
+```toml
+[[hooks.UserPromptSubmit]]
+hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook" } ]
+```
+
+Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt but
+drop the nudge. Installing a hook changes how that harness runs every session on the
+machine: ask before adding it to someone's settings.
+
 ## Uninstall
 
 Remove the MCP server entry from your harness, the skill directory, and

@@ -2,12 +2,13 @@ import { Button } from "../../components/ui/Button";
 import type { ChatMessage } from "../../state/room-types";
 import { KaraokeText } from "./KaraokeText";
 
-const receiptSymbol: Record<string, string> = { pending: "◷", sending: "◷", delivered: "✓", unconfirmed: "✓", uncertain: "!", not_sent: "!" };
+const receiptSymbol: Record<string, string> = { pending: "◷", sending: "◷", delivered: "✓", unconfirmed: "✓", read: "✓✓", uncertain: "!", not_sent: "!" };
 const receiptLabel: Record<string, string> = {
   pending: "Enviando",
   sending: "Enviando",
   delivered: "Entregado a la conversación; lectura sin confirmar",
   unconfirmed: "Escrito en la conversación, sin acuse",
+  read: "Leído por la conversación",
   uncertain: "Entrega sin confirmar",
   not_sent: "No enviado",
 };

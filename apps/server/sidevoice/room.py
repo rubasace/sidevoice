@@ -143,6 +143,8 @@ class RoomClient:
                 self.latency.turn(payload['thread_id'], payload['revision'], 'queued')
             elif status == 'delivered':
                 self.latency.turn(payload['thread_id'], payload['revision'], 'delivery_accepted')
+            elif status == 'read':
+                self.latency.turn(payload['thread_id'], payload['revision'], 'read')
         if self.on_input_receipt:
             self.on_input_receipt({'revision': payload['revision'], 'history_id': payload.get('history_id'),
                                    'thread_id': payload['thread_id'],

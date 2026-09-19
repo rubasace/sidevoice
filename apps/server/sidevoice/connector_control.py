@@ -128,6 +128,19 @@ class ConnectorControl:
                 self.hub.delivery_status(event_id, 'pending')
             return
 
+    async def read(self, connector_id, message):
+        """A harness hook, through its connector, says the conversation admitted this message: the second tick."""
+        binding = self.journal.binding(message.get('binding_id'))
+        if not binding or self.live.get(binding['id']) != connector_id:
+            return
+        row = self.journal.find_message(message.get('message_id'))
+        if not row or row['thread'] != binding['thread'] or row['role'] != 'user':
+            return
+        if row['status'] in {'read', 'not_sent'}:
+            return
+        self.journal.update(row['id'], 'read')
+        self.hub.delivery_status(row['id'], 'read')
+
     # ----- bindings and speech -----
 
     async def register(self, connector_id, socket, message):
@@ -236,6 +249,8 @@ class ConnectorControl:
                     await self.speech(connector_id, socket, message)
                 elif kind == 'input.ack':
                     await self.acknowledge(connector_id, message)
+                elif kind == 'input.read':
+                    await self.read(connector_id, message)
         except (WebSocketDisconnect, asyncio.TimeoutError, ValueError, RuntimeError):
             pass
         finally:

@@ -31,7 +31,7 @@ class CallLatency:
         return records[key]
 
     def turn(self, thread, revision, event):
-        if event not in {'queued', 'delivery_accepted'} or not thread:
+        if event not in {'queued', 'delivery_accepted', 'read'} or not thread:
             return
         marks = self._bounded(self.turns, (thread, revision), {})
         marks.setdefault(event, self.clock())
@@ -97,6 +97,9 @@ class CallLatency:
                 ('input_queued_to_delivery_accepted_ms', turn.get('queued'), turn.get('delivery_accepted')),
                 ('input_queued_to_reply_received_ms', turn.get('queued'), marks.get('received')),
                 ('delivery_accepted_to_reply_received_ms', turn.get('delivery_accepted'), marks.get('received')),
+                ('delivery_accepted_to_read_ms', turn.get('delivery_accepted'), turn.get('read')),
+                ('input_queued_to_read_ms', turn.get('queued'), turn.get('read')),
+                ('read_to_reply_received_ms', turn.get('read'), marks.get('received')),
                 ('reply_received_to_synthesis_started_ms', marks.get('received'), marks.get('synthesis_started')),
                 ('synthesis_started_to_audio_ready_ms', marks.get('synthesis_started'), marks.get('audio_ready')),
                 ('audio_dispatched_to_playing_receipt_ms', marks.get('audio_dispatched'), marks.get('playing_receipt')),

@@ -101,6 +101,15 @@ class RoomHistory:
         row = self.messages.get(id)
         return dict(row) if row else None
 
+    def find_message(self, message_id):
+        """The user row that carried this message id to the harness, or None."""
+        if not isinstance(message_id, str) or not message_id:
+            return None
+        for row in reversed(self.messages.values()):
+            if row['role'] == 'user' and row['payload'] and ('"message_id": "' + message_id + '"') in row['payload']:
+                return dict(row)
+        return None
+
     def update(self, id, status, reason=None):
         row = self.messages.get(id)
         if row:

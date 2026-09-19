@@ -768,6 +768,7 @@ test('The stages view lists the last turn in order with bars scaled to the longe
  const items=s.run("$('stats-stages').children.map(li=>[li.children[0].textContent,!!li.children[1].hidden,li.children[1].style.width||'',li.children[2].textContent])");
  assert.equal(JSON.stringify(items[0]),JSON.stringify(['Silencio hasta cerrar el turno',false,'7%','610 ms']));
  assert.equal(JSON.stringify(items[2]),JSON.stringify(['Whisper en este navegador',true,'','—']));
- assert.equal(JSON.stringify(items[4]),JSON.stringify(['Agente: entrega → primera respuesta',false,'100%','9.00 s']));
+ assert.equal(JSON.stringify(items[6]),JSON.stringify(['Agente: entrega → primera respuesta',false,'100%','9.00 s']));
+ assert.equal(JSON.stringify(items[4]),JSON.stringify(['Entregado → leído por la conversación',true,'','—']));
  assert.match(s.run("$('stats-stages-note').textContent"),/Turno 4/);
 });

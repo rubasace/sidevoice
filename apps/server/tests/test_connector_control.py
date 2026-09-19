@@ -108,6 +108,24 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rejected[0]['status'], 'rejected')
         task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
+    async def test_a_read_receipt_marks_the_row_read_only_for_its_own_binding_and_thread(self):
+        socket, task = await self.run_connection([
+            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
+            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
+        ])
+        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        row = self.queue_input('sess-1', 'hola', message_id='m-read')
+        self.journal.update(row['id'], 'unconfirmed')
+        other = self.queue_input('sess-2', 'ajeno', message_id='m-other')
+        socket.incoming.append({'type': 'input.read', 'binding_id': registered['binding_id'], 'message_id': 'm-other', 'session_id': 'call', 'revision': 1})
+        socket.incoming.append({'type': 'input.read', 'binding_id': registered['binding_id'], 'message_id': 'm-read', 'session_id': 'call', 'revision': 1})
+        socket.incoming.append({'type': 'input.read', 'binding_id': registered['binding_id'], 'message_id': 'm-read', 'session_id': 'call', 'revision': 1})
+        await asyncio.sleep(.1)
+        self.assertEqual(self.journal.get(row['id'])['status'], 'read')
+        self.assertEqual(self.journal.get(other['id'])['status'], 'pending')
+        self.assertEqual(self.hub.receipts.count((row['id'], 'read')), 1)
+        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
     async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id='gone-after-restart')
         self.assertNotEqual(binding['id'], 'gone-after-restart')
