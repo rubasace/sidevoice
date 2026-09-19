@@ -112,3 +112,8 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 .screen-lock[data-state="partial"] .screen-lock-dot{background:#e0a640;box-shadow:0 0 6px #e0a640cc}
 
 .stats-stages{list-style:none;margin:0;padding:0;display:grid;gap:6px}.stats-stages li{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,2fr) auto;gap:10px;align-items:center;font-size:13px}.stats-stages li span{color:#a8c7fa}.stats-stages li i{display:block;height:8px;border-radius:4px;background:#8ab4f8;min-width:2px}.stats-stages li i[hidden]{display:none}.stats-stages li b{font-variant-numeric:tabular-nums;font-weight:600}
+.stats-aggregates{display:grid;gap:14px}
+.stats-aggregates .stats-table caption{text-align:left;padding:11px 12px;color:#a8c7fa;font-size:12px;font-weight:550;background:#252d37;border-bottom:1px solid #323b46}
+.stats-aggregates-actions{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
+.stats-aggregates-actions button{padding:8px 14px}
+.stats-aggregates-actions span{font-size:12px}
