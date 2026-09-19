@@ -55,5 +55,7 @@ class BrowserSocketTest(IsolatedAsyncioTestCase):
         self.assertIsNone(await serializer.serialize(TextFrame(text='x')))
 
     def test_the_call_announces_its_id_and_the_format_it_expects(self):
-        self.assertEqual(session_message('call-1', BrowserFrameSerializer()), {
-            'type': 'voice-session', 'data': {'session_id': 'call-1', 'sample_rate': 16000, 'channels': 1}})
+        message = session_message('call-1', BrowserFrameSerializer())
+        room = message['data'].pop('room')
+        self.assertEqual(message, {'type': 'voice-session', 'data': {'session_id': 'call-1', 'sample_rate': 16000, 'channels': 1}})
+        self.assertEqual(set(room), {'version', 'web_build'}, 'the room also says what it is and which web build it serves')

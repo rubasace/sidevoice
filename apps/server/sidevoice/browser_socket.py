@@ -54,7 +54,9 @@ class BrowserFrameSerializer(FrameSerializer):
 
 
 def session_message(session_id, serializer):
-    """First text frame of a call: the id the room minted and the PCM format it expects."""
+    """First text frame of a call: the id the room minted, the PCM format it expects, and what the room is."""
+    from .paths import build_info
     return {'type': 'voice-session', 'data': {'session_id': session_id,
                                               'sample_rate': serializer.sample_rate,
-                                              'channels': serializer.channels}}
+                                              'channels': serializer.channels,
+                                              'room': build_info()}}

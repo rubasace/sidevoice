@@ -27,7 +27,7 @@ function roomQuery(path){return sessionId?path+(path.includes('?')?'&':'?')+'ses
 const SELECTED_KEY='sidevoice.selected';
 function rememberedThread(){try{return sessionStorage.getItem(SELECTED_KEY)||null}catch{return null}}
 function rememberThread(id){try{if(id)sessionStorage.setItem(SELECTED_KEY,id);else sessionStorage.removeItem(SELECTED_KEY)}catch{}}
-let ws=null,stream=null,sessionId=null,connecting=false,connectEpoch=0,micEnabled=true,roomBinding=null,people=[],switching=false,switchingTranscription=false;
+let ws=null,stream=null,sessionId=null,connecting=false,connectEpoch=0,micEnabled=true,roomBinding=null,people=[],switching=false,switchingTranscription=false,roomInfo=null;
 window.sidevoiceSessionId=()=>sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false,userLive=false,botLive=false,pendingUser=null,pendingUserText='';
 let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0;
@@ -311,6 +311,11 @@ function reportAudioHealth(reason){
 }
 window.addEventListener('voice-output',event=>{const kind=event.detail?.kind;if(REPORTED_OUTPUT_EVENTS.has(kind))reportAudioHealth(kind)});
 function forgetThread(threadId){history=history.filter(r=>r.thread!==threadId);save();if(viewedThread===threadId)viewedThread=null;renderHistory()}
+function versionFacts(){
+ const page=window.sidevoiceBuildId||'dev',served=roomInfo?.web_build||null;
+ const stale=served&&page!=='dev'&&served!==page;
+ return [['Versión de la página',page],['Versión que sirve la sala',served?served+(stale?' · hay una versión nueva, recarga':' · al día'):'—'],['Servidor',roomInfo?.version||'—']];
+}
 function audioOutputFacts(health){
  if(!health)return [];
  const states={running:'activo',suspended:'suspendido',interrupted:'interrumpido',closed:'cerrado',none:'sin iniciar'};
@@ -330,6 +335,7 @@ function renderConnectionStats(data,roundTrip){
   ?[stt.device,stt.compute_type].filter(Boolean).join(' · ')
   :'Remota';
  const facts=[
+  ...versionFacts(),
   ['WebSocket',socket],
   ['Consulta al servidor (HTTP)',statsDuration(roundTrip)],
   ['Sesión',sessionId||'Sin llamada'],
@@ -445,7 +451,7 @@ function measureMic(samples,enabled){
 function startMeter(rate){try{audioContext=window.roomVoice?.context||roomAudioContext(rate);analyser=audioContext.createAnalyser();analyser.fftSize=1024;micSource=audioContext.createMediaStreamSource(stream);micSource.connect(analyser);const data=new Float32Array(1024);let clipUntil=0,lastWave=0;function tick(){if(!analyser)return;analyser.getFloatTimeDomainData(data);const enabled=!!stream?.getAudioTracks()[0]?.enabled,level=measureMic(data,enabled);if(level.state==='clip')clipUntil=Date.now()+600;const state=enabled&&Date.now()<clipUntil?'clip':level.state;$('mute').style.setProperty('--mic-fill',level.value+'%');const meter=$('mic-level-meter'),mic=$('mic-control');mic.dataset.signal=state;if(Date.now()-lastWave>=80){updateWave(level.value);lastWave=Date.now()}meter.setAttribute('aria-valuenow',String(level.value));const description=state==='clip'?'Posible saturación del micrófono':state==='high'?'Nivel de micrófono alto':'Nivel de micrófono';if(meter.dataset.signal!==state){meter.dataset.signal=state;meter.setAttribute('title',description);meter.setAttribute('aria-label',description)}meterFrame=requestAnimationFrame(tick)}tick()}catch{}}
 function roomSocketUrl(){return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/presentation/ws'}
 // The room speaks first: its call id and the PCM format it expects. Anything else arriving meanwhile is an ordinary room event.
-function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>fail('La sala no respondió'),10000);socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));socket.onerror=()=>fail('No se pudo conectar con la sala');socket.onclose=()=>fail('La sala rechazó la conexión');socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});return}if(m.type!=='voice-session'){message(e.data);return}clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
+function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>fail('La sala no respondió'),10000);socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));socket.onerror=()=>fail('No se pudo conectar con la sala');socket.onclose=()=>fail('La sala rechazó la conexión');socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});return}if(m.type!=='voice-session'){message(e.data);return}roomInfo=m.data?.room||roomInfo;clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
 // Capturing at the room's rate lets the browser resample; the worklet covers browsers that refuse the rate.
 function roomAudioContext(rate){try{return new AudioContext({sampleRate:rate})}catch{return new AudioContext()}}
 async function startCapture(socket,session){if(!micSource)throw Error('No se pudo capturar el micrófono');

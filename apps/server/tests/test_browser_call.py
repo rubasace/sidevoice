@@ -225,6 +225,15 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
                           runtime={'model': 'onnx-community/whisper-tiny', 'device': 'webgpu'})
         return voice, client, sent
 
+    async def test_the_session_message_and_the_snapshot_say_which_build_the_room_serves(self):
+        from unittest.mock import patch as patch_
+        from sidevoice.browser_socket import session_message, BrowserFrameSerializer
+        with patch_('sidevoice.paths.build_info', return_value={'version': '9.9.9', 'web_build': 'abc123'}):
+            message = session_message('call-1', BrowserFrameSerializer())
+            self.assertEqual(message['data']['room'], {'version': '9.9.9', 'web_build': 'abc123'})
+            self.assertEqual(self.hub.snapshot()['room']['web_build'], 'abc123')
+            self.assertEqual(self.hub.snapshot()['room']['version'], '9.9.9')
+
     async def test_the_browser_can_report_its_audio_output_and_the_room_shows_it_for_that_call(self):
         voice, client, sent = self.voice([])
         report = {'type': 'voice-audio-health', 'data': {'session_id': client.id, 'reason': 'stall', 'health': {

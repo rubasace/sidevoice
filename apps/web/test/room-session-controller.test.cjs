@@ -800,3 +800,14 @@ test('Selecting a conversation is this tab\'s own choice: it names the session, 
  assert.equal(await s.run('selectOnlyListeningConversation')(),false);
  assert.equal(posted.some(([path])=>path.endsWith('/api/presentation/select')),false);
 });
+
+test('The stats say which build the page runs and which the room serves, and flag a stale page',()=>{
+ const s=setup();
+ s.context.window.sidevoiceBuildId='page1';
+ s.run("roomInfo={version:'0.3.0',web_build:'page1'}");
+ assert.equal(JSON.stringify(s.run('versionFacts')()),JSON.stringify([['Versión de la página','page1'],['Versión que sirve la sala','page1 · al día'],['Servidor','0.3.0']]));
+ s.run("roomInfo={version:'0.3.0',web_build:'page2'}");
+ assert.equal(s.run('versionFacts')()[1][1],'page2 · hay una versión nueva, recarga');
+ s.run("roomInfo=null");
+ assert.equal(s.run('versionFacts')()[1][1],'—');
+});

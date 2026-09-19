@@ -351,6 +351,11 @@ class RoomClient:
             'timings_ms': audio['timings_ms'] if fresh else {}, 'shared': not fresh}})
 
 
+def _build_info():
+    from .paths import build_info
+    return build_info()
+
+
 class Room:
     """One conversation, one journal, one epoch — and as many browsers as people looking."""
 
@@ -648,7 +653,8 @@ class Room:
                          'switching': client.switching if client else False,
                          'clients': len(self.clients), 'audio': self.assets.stats(),
                          'utterances': [u.snapshot() for u in self.utterances.values()],
-                         'audio_reports': list(self.audio_reports)[-10:]},
+                         'audio_reports': list(self.audio_reports)[-10:],
+                         **_build_info()},
                 'clients': [c.identity() for c in self.clients.values()],
                 'call': client.snapshot() if client else None}
 
