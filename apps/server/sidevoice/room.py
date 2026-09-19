@@ -413,6 +413,13 @@ class Room:
     def speaking(self):
         return any(client.speaking for client in self.clients.values())
 
+    def conversation_working(self, thread_id, working):
+        """Told by the harness, not deduced from what was said: every browser on that conversation sees it."""
+        for client in self.audience(thread_id):
+            if client.on_browser_event:
+                client.on_browser_event({'type': 'voice-conversation',
+                                         'data': {'thread_id': thread_id, 'working': working}})
+
     def audience(self, thread_id):
         """The connected browsers whose selected conversation is this one."""
         return [client for client in self.listeners() if thread_id and client.target.get('thread_id') == thread_id]

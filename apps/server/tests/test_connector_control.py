@@ -25,8 +25,9 @@ class FakeSocket:
 
 class FakeHub:
     def __init__(self, journal):
-        self.journal = journal; self.activated = []; self.published = []; self.receipts = []
+        self.journal = journal; self.activated = []; self.published = []; self.receipts = []; self.working = []
     async def activate(self, target): self.activated.append(target)
+    def conversation_working(self, thread, working): self.working.append((thread, working))
     async def publish(self, speech): self.published.append(speech); return {'status': 'queued', 'text_saved': True, 'utterance_id': speech.utterance_id}
     def delivery_status(self, row_id, status): self.receipts.append((row_id, status))
 
@@ -141,6 +142,20 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         await self.control.acknowledge(self.connector_id, {'event_id': delivered['event_id'], 'status': 'unknown', 'detail': 'inbox'})
         self.assertEqual(self.journal.get(row['id'])['status'], 'read', 'a late acknowledgement never takes the second tick away')
         self.assertEqual([status for (_, status) in self.hub.receipts if _ == row['id']][-1], 'read')
+        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
+    async def test_the_harness_saying_it_is_working_reaches_the_browsers_on_that_conversation(self):
+        socket, task = await self.run_connection([
+            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
+            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
+        ])
+        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id'], 'working': True})
+        socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id'], 'working': False})
+        # A binding this connector does not hold says nothing about anyone.
+        socket.incoming.append({'type': 'input.working', 'binding_id': 'someone-elses', 'working': True})
+        await asyncio.sleep(.1)
+        self.assertEqual(self.hub.working, [('sess-1', True), ('sess-1', False)])
         task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):

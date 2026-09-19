@@ -146,6 +146,13 @@ class ConnectorControl:
         self.journal.update(row['id'], 'read')
         self.hub.delivery_status(row['id'], 'read')
 
+    async def working(self, connector_id, message):
+        """The harness itself says whether that conversation is busy. The room shows it while it lasts."""
+        binding = self.journal.binding(message.get('binding_id'))
+        if not binding or self.live.get(binding['id']) != connector_id:
+            return
+        self.hub.conversation_working(binding['thread'], bool(message.get('working')))
+
     # ----- bindings and speech -----
 
     async def register(self, connector_id, socket, message):
@@ -255,6 +262,8 @@ class ConnectorControl:
                     await self.speech(connector_id, socket, message)
                 elif kind == 'input.ack':
                     await self.acknowledge(connector_id, message)
+                elif kind == 'input.working':
+                    await self.working(connector_id, message)
                 elif kind == 'input.read':
                     await self.read(connector_id, message)
         except (WebSocketDisconnect, asyncio.TimeoutError, ValueError, RuntimeError):
