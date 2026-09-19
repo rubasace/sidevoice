@@ -56,8 +56,10 @@ test('The controller publishes serializable snapshots through the React store br
 test('The React component tree initializes without inventing missing DOM elements',()=>{
  const s=setup({strictDOM:true});
  assert.equal(s.run("$('missing-element')"),null);
- for(const id of ['connect','mute','elevenlabs-key-save','elevenlabs-key-clear','stt-key-save','stt-key-clear'])
+ for(const id of ['elevenlabs-key-save','elevenlabs-key-clear','stt-key-save','stt-key-clear'])
   assert.equal(s.run("typeof $('"+id+"').onclick"),'function');
+ for(const action of ['toggleCall','toggleMic','cancelInput'])
+  assert.equal(s.run("typeof window.sidevoiceActions."+action),'function','React calls '+action+', it does not reach into the DOM');
  for(const id of ['elevenlabs-credential','elevenlabs-key','elevenlabs-key-state','stt-provider','stt-credential','stt-key','stt-key-state'])
   assert.ok(s.run("$('"+id+"')"),id);
 });
@@ -156,8 +158,7 @@ test('Joining with ElevenLabs reaches microphone capture without loading Kokoro'
   s.context.fetch=async()=>{assert.equal(unlocked,true,'audio unlock must precede network I/O');return {ok:true,json:async()=>({default_model:model,tts_device:'auto'})}};
   s.context.window.roomVoice={unlock:async()=>{unlocked=true},prepare:async()=>{prepared++},cancel(){}};
   s.context.navigator={mediaDevices:{getUserMedia:async()=>{captured++;throw Error('Microphone test boundary')}}};
-  s.run("$('mute').style.setProperty=()=>{}");
-  await s.run("$('connect').onclick()");
+  await s.run('toggleCall()');
   assert.equal(captured,1,model);
   assert.equal(prepared,model==='kokoro'?1:0,model);
   // The failure is a fact in the store; JoinStatus is the one that paints it.
@@ -362,16 +363,17 @@ test('Text entry is unavailable when viewing a different inactive history',()=>{
 });
 test('Microphone preference can be toggled before joining',()=>{
  const s=setup();
- s.run("$('mute').click()");
+ s.run('window.sidevoiceActions.toggleMic()');
  assert.equal(s.run('micEnabled'),false);
- s.run("$('mute').click()");
+ assert.equal(s.run('SessionState.micView(state).label'),'Activar micrófono');
+ s.run('window.sidevoiceActions.toggleMic()');
  assert.equal(s.run('micEnabled'),true);
+ assert.equal(s.run('SessionState.micView(state).pressed'),false);
 });
 test('Hangup releases media and cancels an in-flight connection without clearing history',()=>{
  const s=setup();
  s.run(`
  var stopped=0,closed=0;
- $('mute').style.setProperty=()=>{};
  window.roomVoice={cancel(){}};
  ws={close(){closed++}};
  stream={getTracks:()=>[{stop(){stopped++}}]};
@@ -487,16 +489,15 @@ test('The tap that starts the call asks for the lock, before there is a socket',
  s.run('connecting=true');
  await s.run('keepScreenAwake()');
  assert.equal(requests,1,'a lock asked for while connecting keeps the gesture Safari needs');
- assert.equal(s.run("$('screen-lock').hidden"),false);
- assert.equal(s.run("$('screen-lock').dataset.state"),'on');
+ assert.equal(s.run('screenLock.state'),'on','the light is a fact; ScreenLock paints it');
 });
 test('A refused lock shows red and says so, instead of failing silently',async()=>{
  const s=setup();
  s.context.navigator={wakeLock:{request:async()=>{throw Error('NotAllowedError')}}};
  s.run('ws={}');
  await s.run('keepScreenAwake()');
- assert.equal(s.run("$('screen-lock').dataset.state"),'off');
- assert.match(s.run("$('screen-lock-text').textContent"),/No se pudo/);
+ assert.equal(s.run('screenLock.state'),'off');
+ assert.match(s.run('screenLock.note'),/No se pudo/);
 });
 test('A lock the system takes back is asked for again while the call is up, and not after it ends',async()=>{
  const s=setup();let requests=0,release=null;const scheduled=[];
@@ -506,7 +507,7 @@ test('A lock the system takes back is asked for again while the call is up, and 
  await s.run('keepScreenAwake()');
  assert.equal(requests,1);
  release();
- assert.equal(s.run("$('screen-lock').dataset.state"),'off');
+ assert.equal(s.run('screenLock.state'),'off');
  assert.equal(scheduled.length,1,'the retry waits rather than spinning');
  await scheduled.pop()();
  assert.equal(requests,2);
@@ -539,7 +540,7 @@ test('Capture shares the playback context, streams PCM to the room, and hangup o
  const context={state:'running',createAnalyser:()=>({getFloatTimeDomainData(data){data.fill(0)},disconnect(){}}),createMediaStreamSource:()=>source,audioWorklet:{addModule:async()=>{}},close:async()=>{closed++}};
  s.context.window.roomVoice={context};
  s.context.AudioWorkletNode=class{constructor(_context,_name,options){nodeOptions=options;this.port={}}connect(){}disconnect(){}};
- s.run("$('mute').style.setProperty=()=>{};stream={getAudioTracks:()=>[{enabled:true}]};ws={readyState:1,send(){}}");
+ s.run("stream={getAudioTracks:()=>[{enabled:true}]};ws={readyState:1,send(){}}");
  s.run('ws').send=frame=>{if(typeof frame==='string'||frame?.byteLength!==640)throw Error('the room expects raw PCM frames');sentFrames++};
  s.run('startMeter(16000)');
  assert.equal(s.run('audioContext'),context);
@@ -1143,8 +1144,8 @@ function joining(s,{preferences={},capabilities={webgpu:false,wasm:true,models:[
  s.context.window.roomTranscription={capabilities:async()=>capabilities,start(){},stop(){},
   prepare:prepareWhisper||(async({model})=>{s.handlers['voice-preparation']({detail:{kind:'transcription',phase:'loading',progress:17}});return {model,device:'wasm'}})};
  s.context.navigator={mediaDevices:{getUserMedia:getUserMedia||(async()=>({getAudioTracks:()=>[track],getTracks:()=>[track]}))}};
- s.run("startMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};$('mute').style.setProperty=()=>{};people=[{thread_id:'t-1',title:'Astra',available:true,reach:{state:'listening'}}]");
- return {published,sockets,tap:()=>s.run("$('connect').onclick")()};
+ s.run("startMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};people=[{thread_id:'t-1',title:'Astra',available:true,reach:{state:'listening'}}]");
+ return {published,sockets,tap:()=>s.run('toggleCall')()};
 }
 async function firstSocket(sockets){for(let attempt=0;attempt<200&&!sockets.length;attempt++)await new Promise(resolve=>setTimeout(resolve,2));return sockets[0]}
 

@@ -15,6 +15,7 @@ export function initialSessionFacts() {
         userTurn: null, pendingPhase: '', pendingUserText: '', cancelledInput: false, textSending: false, micEnabled: true,
         voicePreferences: null, enginePreferences: null, sttRuntime: null, engineReady: false, outputHealth: 'ok', echoFacts: null,
         joinStep: null, joinFailure: '', joinProgress: null, joinDetail: '', joinSubject: '',
+        screenLock: { state: '', note: '' }, deviceNote: '', holding: false,
         harness: {}, turns: {}, now: 0, karaokeState: null, bootError: null, languageModels: [],
     };
 }
@@ -62,6 +63,29 @@ export function echoCoverage(f) {
     if (f.health?.element?.paused)
         return { state: 'partial', note: 'La salida de audio está en pausa; se recupera con la siguiente locución.' };
     return { state: 'on', note: 'Cancelación de eco activa y la voz sale por el elemento de audio.' };
+}
+/** The microphone button: what it says and whether it can be pressed. The level itself is not here —
+ *  it changes per animation frame and belongs to whoever owns the meter. */
+export function micView(s) {
+    const enabled = s.micEnabled !== false;
+    const label = enabled ? 'Silenciar micrófono' : 'Activar micrófono';
+    return { enabled, label, pressed: !enabled, disabled: !s.ws,
+        title: label + ' (⌘D / Ctrl+D). Mantén Espacio para hablar si está silenciado.' };
+}
+/** The call button: joining and leaving are the same button, and it says which one it is now. */
+export function callView(s) {
+    const joined = !!(s.ws || s.connecting);
+    return { joined, busy: !!(s.reconnecting || s.switchingSession),
+        label: joined ? 'Salir de la sala' : 'Entrar en la sala' };
+}
+/** The name over the transcript: the conversation being looked at, whoever it is. */
+export function viewedTitle(s) {
+    const id = viewedThread(s);
+    if (!id)
+        return 'Conversación en directo';
+    return s.people.find(p => p.thread_id === id)?.title
+        || s.history.find(r => r.thread === id && r.role === 'assistant')?.name
+        || s.roomBinding?.title || 'Conversación en directo';
 }
 export function engineView(s) {
     const base = s.engineReady ? engineBadgeText(s.enginePreferences || s.voicePreferences, s.sttRuntime) : '';
@@ -142,7 +166,9 @@ export function createRoomSessionStore(seed = {}) {
     let snapshot;
     function project() {
         return { facts, session: sessionStatus(facts), conversation: conversationView(facts), participants: participantsView(facts),
-            join: joinView(facts), engine: engineView(facts), echo: echoCoverage({ ...facts.echoFacts, connected: !!facts.ws, track: !!facts.stream }), live: liveText(facts), bootError: facts.bootError, languageModels: facts.languageModels };
+            join: joinView(facts), engine: engineView(facts), echo: echoCoverage({ ...facts.echoFacts, connected: !!facts.ws, track: !!facts.stream }), live: liveText(facts),
+            mic: micView(facts), call: callView(facts), title: viewedTitle(facts), screenLock: facts.screenLock, deviceNote: facts.deviceNote,
+            bootError: facts.bootError, languageModels: facts.languageModels };
     }
     function publish() { if (depth || !dirty)
         return; dirty = false; const previous = snapshot; snapshot = project(); for (const listener of listeners)

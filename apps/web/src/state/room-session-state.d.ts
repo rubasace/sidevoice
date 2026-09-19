@@ -10,6 +10,7 @@ export interface SessionFacts {
  voicePreferences: Record<string, unknown> | null; enginePreferences: Record<string, unknown> | null;
  sttRuntime: Record<string, unknown> | null; engineReady: boolean; outputHealth: 'ok' | 'recovering' | 'failed'; echoFacts: unknown;
  joinStep: string | null; joinFailure: string; joinProgress: number | null; joinDetail: string; joinSubject: string;
+ screenLock: {state: string; note: string}; deviceNote: string;
  harness: Record<string, boolean>; turns: Record<string, {session: string; thread: string; status?: string; settled?: boolean; harnessEnded?: boolean; readyAt?: number}>;
  now: number; karaokeState: (KaraokeRange & {segment: string}) | null; bootError: string | null; languageModels: LanguageModelView[];
 }
@@ -21,6 +22,9 @@ export interface SessionStatus {
 export interface SessionSnapshot {
  facts: SessionFacts; session: SessionStatus; conversation: ConversationView; participants: ParticipantView[];
  join: JoinStatusView | null; engine: {text: string; title: string; output: string}; echo: {state: string; note: string}; live: string;
+ mic: {enabled: boolean; label: string; title: string; pressed: boolean; disabled: boolean; holding: boolean};
+ call: {joined: boolean; busy: boolean; label: string}; title: string;
+ screenLock: {state: string; note: string}; deviceNote: string;
  bootError: string | null; languageModels: LanguageModelView[];
 }
 export interface SessionStore {

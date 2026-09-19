@@ -4,6 +4,9 @@ import { afterEach } from "vitest";
 
 afterEach(cleanup);
 
+// Store updates outside an event handler are what the runtime does all day; act() needs to know this is a test.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 Object.defineProperty(HTMLElement.prototype, "scrollTo", {
   configurable: true,
   value: () => undefined,
