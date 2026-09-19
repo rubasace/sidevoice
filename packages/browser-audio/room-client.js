@@ -58,10 +58,12 @@ class RoomVoice {
    const rate=this.context.sampleRate||48000,notes=[[660,0,.11],[880,.12,.13]],length=Math.round(rate*(this.greetSeconds||1.8));
    const buffer=this.context.createBuffer(1,length,rate),samples=new Float32Array(length);
    for(const [hz,at,dur] of notes){const from=Math.round(at*rate),n=Math.round(dur*rate);
-    for(let i=0;i<n&&from+i<length;i++){const env=.5-.5*Math.cos(2*Math.PI*i/n);samples[from+i]+=.12*env*Math.sin(2*Math.PI*hz*i/rate)}}
+    for(let i=0;i<n&&from+i<length;i++){const env=.5-.5*Math.cos(2*Math.PI*i/n);samples[from+i]+=.22*env*Math.sin(2*Math.PI*hz*i/rate)}}
    buffer.copyToChannel(samples,0);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
-   source.start(this.context.currentTime+.02);this.note('chime');
+   // A moment after the element has been handed its stream: started at once, the first notes go out before
+   // the phone has opened its audio route and nobody hears the greeting.
+   source.start(this.context.currentTime+.2);this.note('chime');
   }catch(error){this.note('chime-failed',error?.message||'chime')}
  }
  /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only

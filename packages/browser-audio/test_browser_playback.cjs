@@ -269,7 +269,7 @@ test('A fresh output is greeted once: audible notes first, then silence long eno
  assert.equal(written.length,Math.round(48000*1.8),'notes plus a silent tail in one buffer');
  const notes=Array.from(written.slice(0,Math.round(48000*.26))),tail=Array.from(written.slice(Math.round(48000*.3)));
  const peak=Math.max(...notes.map(Math.abs));
- assert.ok(peak>.05&&peak<=.13,'audible but soft: '+peak);
+ assert.ok(peak>.1&&peak<=.25,'audible on a phone speaker but soft: '+peak);
  assert.equal(written[0],0,'starts from zero, no click');
  assert.equal(tail.every(v=>v===0),true,'silence keeps the sink fed after the notes');
  assert.equal(s.voice.health().events.at(-1).kind,'chime');
