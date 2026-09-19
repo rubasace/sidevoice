@@ -40,11 +40,12 @@ class RoomVoice {
    playing:!!this.job?.playing,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
  }
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
- async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput();this.prime()}
- /* The first utterance of every session used to stall on the phone until the watchdog re-handed the element
-  * its stream: the freshly created output had never carried audio. So the output is primed once, right after
-  * it exists, with the same short silence a cut leaves behind. */
- prime(){if(!this.output||this.output.primed)return;this.output.primed=true;this.tail('prime')}
+ async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput()}
+ /* No priming of a fresh output with silence. It was tried on 2026-09-19 to spare the first utterance its
+  * stall, and the phone's echo cancellation stopped covering the room's voice for the whole session: when
+  * the first thing a media element renders is digital silence, iOS Safari appears to leave it out of the
+  * echo reference for good (the permanent silent source failed the same way). The first stall is the
+  * watchdog's to recover; the silent tail after a cut is fine because voice has already been rendered. */
  /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only
   * media-element playback is part of the echo-cancellation reference, so this is what lets the
   * microphone subtract our own voice instead of opening a turn with it. Falls back to the context. */
