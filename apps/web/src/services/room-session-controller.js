@@ -718,7 +718,17 @@ function engineBadgeText(p,runtime){
  const model=String(runtime?.model||p.stt_model||'').split('/').pop().replace('whisper-','Whisper '),where=runtime?.device==='webgpu'?'GPU':runtime?.device==='wasm'?'CPU':'';
  return [model,where+(runtime?.fallback_from?' (GPU falló)':''),turn].filter(Boolean).join(' · ');
 }
-function showEngineBadge(text){const badge=$('engine-badge');if(!badge)return;badge.textContent=text||'';badge.title=text||'';badge.hidden=!text}
+let engineBadge='',outputHealth='ok';
+const OUTPUT_MARKS={ok:'',recovering:' · audio ↻',failed:' · audio ✕'};
+const OUTPUT_TITLES={ok:'Salida de audio en orden',recovering:'La salida de audio se atascó y se está recuperando',failed:'La salida de audio falló; revisa las estadísticas'};
+function showEngineBadge(text){engineBadge=text||'';renderEngineBadge()}
+function renderEngineBadge(){const badge=$('engine-badge');if(!badge)return;const text=engineBadge?engineBadge+OUTPUT_MARKS[outputHealth]:'';badge.textContent=text;badge.title=engineBadge?engineBadge+' · '+OUTPUT_TITLES[outputHealth]:'';badge.dataset.output=outputHealth;badge.hidden=!text}
+// What the output reports moves the mark: a stall is 'recovering' until something plays through; a refusal or a failure stays until the next playout succeeds.
+function noteOutputHealth(kind){
+ const next=kind==='stall'?'recovering':['fail','attach-refused','resume-refused','element-refused','unlock-refused','chime-failed'].includes(kind)?'failed':['complete','play-encoded'].includes(kind)?'ok':null;
+ if(next&&next!==outputHealth){outputHealth=next;renderEngineBadge()}
+}
+window.addEventListener('voice-output',event=>noteOutputHealth(event.detail?.kind));
 async function prepareLocalWhisper(model,device){
  const caps=sttCapabilities||(window.roomTranscription.capabilities?await window.roomTranscription.capabilities():{wasm:true});
  if(device==='auto'&&storedPreferences().stt_gpu_failed)device='wasm';

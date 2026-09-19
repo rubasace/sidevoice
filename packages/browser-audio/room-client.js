@@ -40,12 +40,24 @@ class RoomVoice {
    playing:!!this.job?.playing,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
  }
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
- async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput()}
- /* No priming of a fresh output with silence. It was tried on 2026-09-19 to spare the first utterance its
-  * stall, and the phone's echo cancellation stopped covering the room's voice for the whole session: when
-  * the first thing a media element renders is digital silence, iOS Safari appears to leave it out of the
-  * echo reference for good (the permanent silent source failed the same way). The first stall is the
-  * watchdog's to recover; the silent tail after a cut is fine because voice has already been rendered. */
+ async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput();this.greet()}
+ /* The first thing a fresh output renders is a short, audible chime: it tells the person they are in, and
+  * it warms the output so the first reply does not stall. Never silence here: priming with silence
+  * (2026-09-19) made iPhone Safari leave the media element out of the echo reference for the session, so
+  * the room's own voice opened user turns; a permanent silent source had failed the same way. */
+ greet(){
+  if(!this.context||!this.output||this.greeted||typeof this.context.createBufferSource!=='function')return;
+  this.greeted=true;
+  try{
+   const rate=this.context.sampleRate||48000,notes=[[660,0,.11],[880,.12,.13]],length=Math.round(rate*.26);
+   const buffer=this.context.createBuffer(1,length,rate),samples=new Float32Array(length);
+   for(const [hz,at,dur] of notes){const from=Math.round(at*rate),n=Math.round(dur*rate);
+    for(let i=0;i<n&&from+i<length;i++){const env=.5-.5*Math.cos(2*Math.PI*i/n);samples[from+i]+=.12*env*Math.sin(2*Math.PI*hz*i/rate)}}
+   buffer.copyToChannel(samples,0);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
+   source.start(this.context.currentTime+.02);this.note('chime');
+  }catch(error){this.note('chime-failed',error?.message||'chime')}
+ }
  /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only
   * media-element playback is part of the echo-cancellation reference, so this is what lets the
   * microphone subtract our own voice instead of opening a turn with it. Falls back to the context. */

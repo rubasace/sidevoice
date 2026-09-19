@@ -841,3 +841,20 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
  assert.equal(s.run('globalThis.__ended'),true);
  assert.equal(sockets.length,1);
 });
+
+test('The engine badge carries the audio output health: recovering on a stall, failed on a refusal, clean once something plays',()=>{
+ const s=setup();
+ s.run("showEngineBadge('OpenAI · gpt-4o')");
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o');
+ s.run("noteOutputHealth('stall')");
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · audio ↻');
+ assert.equal(s.run("$('engine-badge').dataset.output"),'recovering');
+ s.run("noteOutputHealth('complete')");
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o');
+ s.run("noteOutputHealth('attach-refused')");
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · audio ✕');
+ s.run("noteOutputHealth('cancel')");
+ assert.equal(s.run("$('engine-badge').dataset.output"),'failed','a cancel says nothing about health');
+ s.run("noteOutputHealth('play-encoded')");
+ assert.equal(s.run("$('engine-badge').dataset.output"),'ok');
+});
