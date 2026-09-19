@@ -1216,7 +1216,7 @@ test('A delivery that failed, a new turn, the user speaking and losing the room 
  for(const [label,event,reason] of [
   ['another turn',['voice-user-turn',{...OWN_TURN,revision:2,phase:'started'}],'new_turn'],
   ['the user speaking',['user-started-speaking',{}],'user_speaking'],
-  ['a cancelled turn',['voice-cancel',{...OWN_TURN,revision:2}],'cancelled'],
+  ['the audio being cancelled',['voice-cancel',{...OWN_TURN,revision:2}],'audio_cancelled'],
  ]){
   const s=presenceSetup();
   s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
@@ -1319,6 +1319,7 @@ test('The dots belong to the conversation, not to the microphone: only a final r
  assert.equal(s.run('workingOnTurn')(),true);
  // The person speaks again, and starts another turn: the conversation is still working on the first one.
  s.emit('user-started-speaking',{});
+ s.emit('voice-cancel',{session_id:'s',revision:2});   // the room cancels the audio the instant a voice is heard
  s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
  assert.equal(s.run('workingOnTurn')(),true,'speaking does not make the conversation idle');
  assert.ok(s.calls.some(call=>call[0]==='stop'),'the bed does get out of the way');
