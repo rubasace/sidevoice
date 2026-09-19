@@ -43,6 +43,14 @@ export interface ParticipantView {
   detail?: string;
 }
 
+/** The step a join (or a reconnection) is on, already written the way the person reads it. */
+export interface JoinStatusView {
+  step: string | null;
+  text: string;
+  progress: number | null;
+  failed: boolean;
+}
+
 export interface SelectOption {
   value: string;
   label: string;

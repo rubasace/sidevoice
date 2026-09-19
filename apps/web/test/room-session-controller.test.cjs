@@ -133,7 +133,8 @@ test('Joining with ElevenLabs reaches microphone capture without loading Kokoro'
   await s.run("$('connect').onclick()");
   assert.equal(captured,1,model);
   assert.equal(prepared,model==='kokoro'?1:0,model);
-  assert.equal(s.run("$('error').textContent"),'Microphone test boundary');
+  assert.match(s.run("$('join-status').textContent"),/No se pudo abrir el micrófono: Microphone test boundary/,model);
+  assert.equal(s.run("$('join-status').dataset.state"),'failed');
   assert.equal(s.run('connecting'),false);
  }
 });
@@ -918,7 +919,7 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
  const s=setup();const sockets=[];
  s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
  s.context.WebSocket.OPEN=1;
- s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});s.context.crypto={randomUUID:()=>'hello-id'};
+ const joinLine=[];s.context.window.sidevoiceUI=new Proxy({},{get:(_,name)=>value=>{if(name==='setJoinStatus')joinLine.push(value?value.text:null)}});s.context.crypto={randomUUID:()=>'hello-id'};
  s.context.fetch=async()=>({ok:true,json:async()=>({binding:null,room:{revision:0},clients:[],call:null,participants:[]})});
  s.run("RECONNECT_DELAYS_MS.splice(0,RECONNECT_DELAYS_MS.length,1,1);startMeter=()=>{};stopMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};window.roomVoice={unlock:async()=>{},cancel(){},context:{state:'running'}};window.roomTranscription={stop(){},start(){}};voicePreferences={stt_provider:'openai'};stream={getAudioTracks:()=>[{enabled:true}]};sessionId='old-session';ws={readyState:1}");
  s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
@@ -927,7 +928,7 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
  const pending=s.run('lostConnection')({code:1006},epoch,{browserStt:false,sttRuntime:null});
  await new Promise(resolve=>setTimeout(resolve,5));
  assert.equal(sockets.length,1,'a new socket is opened after the first delay');
- assert.match(s.run("$('live').textContent"),/Reconectando/);
+ assert.deepEqual(joinLine,['Reconectando con la sala…'],'the reconnection uses the join line, not the transcript status');
  const socket=sockets[0];socket.readyState=1;socket.onopen();
  const hello=JSON.parse(socket.sent[0]);
  assert.equal(hello.type,'client-ready');assert.equal(hello.data.conversation,'t-1','the remembered conversation travels in the hello');
@@ -937,6 +938,7 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
  assert.equal(s.run('ws'),socket);
  assert.equal(s.run('stream')!==null,true,'the microphone stream was kept');
  assert.equal(s.run('reconnecting'),false);
+ assert.equal(joinLine.at(-1),null,'and the line goes away once the room answers again');
  // A refusal is final: no retry, the call ends.
  let ended=false;s.run("disconnect=()=>{ws=null;globalThis.__ended=true}");
  await s.run('lostConnection')({code:1013},s.run('connectEpoch'),{browserStt:false,sttRuntime:null});
@@ -980,4 +982,66 @@ test('The echo light says whether the page can expect its own voice to be cancel
  assert.equal(s.run("$('echo-cover').dataset.state"),'off');
  s.run("ws=null");s.run('showEchoCover')();
  assert.equal(s.run("$('echo-cover').hidden"),true,'no call, no light');
+});
+
+/* One indicator from the tap to the room: these two tests are the sequence a person reads, and what
+ * takes its place when a step fails. */
+function joining(s,{preferences={},capabilities={webgpu:false,wasm:true,models:['onnx-community/whisper-tiny']},prepareVoice,prepareWhisper,getUserMedia}={}){
+ const published=[],sockets=[],track={enabled:true,stop(){},getSettings:()=>({echoCancellation:true}),applyConstraints:async()=>{}};
+ s.context.window.sidevoiceUI=new Proxy({},{get:(_,name)=>value=>{if(name==='setJoinStatus')published.push(value?value.text:null)}});
+ s.context.crypto={randomUUID:()=>'hello-id'};
+ s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
+ s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
+ s.context.WebSocket.OPEN=1;
+ s.context.fetch=async path=>({ok:true,json:async()=>
+  path.includes('/languages')?{stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',stt_device:'auto',default_model:'kokoro',tts_device:'auto',...preferences}
+  :path.includes('/participants')?{participants:[{thread_id:'t-1',title:'Astra',available:true,reach:{state:'listening'}}]}
+  :{binding:null,room:{revision:0},clients:[],call:null,participants:[]}});
+ s.context.window.roomVoice={unlock:async()=>{},cancel(){},prepare:prepareVoice||(async()=>{s.handlers['voice-preparation']({detail:{phase:'loading',progress:42}})})};
+ s.context.window.roomTranscription={capabilities:async()=>capabilities,start(){},stop(){},
+  prepare:prepareWhisper||(async({model})=>{s.handlers['voice-preparation']({detail:{kind:'transcription',phase:'loading',progress:17}});return {model,device:'wasm'}})};
+ s.context.navigator={mediaDevices:{getUserMedia:getUserMedia||(async()=>({getAudioTracks:()=>[track],getTracks:()=>[track]}))}};
+ s.run("startMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};$('mute').style.setProperty=()=>{};people=[{thread_id:'t-1',title:'Astra',available:true,reach:{state:'listening'}}]");
+ return {published,sockets,tap:()=>s.run("$('connect').onclick")()};
+}
+async function firstSocket(sockets){for(let attempt=0;attempt<200&&!sockets.length;attempt++)await new Promise(resolve=>setTimeout(resolve,2));return sockets[0]}
+
+test('The join names each step it is on, from the tap until the conversation is back',async()=>{
+ const s=setup({strictDOM:true}),{published,sockets,tap}=joining(s);
+ const joined=tap();
+ const socket=await firstSocket(sockets);
+ socket.readyState=1;socket.onopen();
+ socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'call-1',sample_rate:16000,channels:1}})});
+ await joined;
+ assert.deepEqual(published,[
+  'Preparando audio',
+  'Cargando Whisper','Cargando Whisper (17 %)',
+  'Cargando el modelo de voz','Cargando el modelo de voz (42 %)',
+  'Pidiendo el micrófono',
+  'Entrando en la sala',
+  'Volviendo a Astra',
+  null
+ ]);
+});
+
+test('A step that fails leaves its reason, and what to do, where the step was',async()=>{
+ const denied=setup({strictDOM:true});
+ const mic=joining(denied,{getUserMedia:async()=>{const error=Error('Permission denied');error.name='NotAllowedError';throw error}});
+ await mic.tap();
+ assert.equal(mic.published.at(-1),'El micrófono está bloqueado para esta página. Dale permiso en el navegador y vuelve a pulsar para entrar.');
+ assert.equal(denied.run('connecting'),false);
+
+ const device=setup({strictDOM:true});
+ const model=joining(device,{prepareWhisper:async()=>{throw Error('WebGPU no disponible')}});
+ await model.tap();
+ assert.match(model.published.at(-1),/El modelo no se pudo cargar en este dispositivo \(WebGPU no disponible\)/);
+ assert.match(model.published.at(-1),/Configuración/);
+
+ const full=setup({strictDOM:true});
+ const room=joining(full);
+ const joined=room.tap();
+ const socket=await firstSocket(room.sockets);
+ socket.onclose({code:1013});
+ await joined;
+ assert.equal(room.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.');
 });

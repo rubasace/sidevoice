@@ -1,13 +1,14 @@
 import { createContext, useContext } from "react";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
-import type { ConversationView, LanguageModelView, ParticipantView } from "./room-types";
+import type { ConversationView, JoinStatusView, LanguageModelView, ParticipantView } from "./room-types";
 
 export interface RoomViewState {
   conversation: ConversationView;
   participants: ParticipantView[];
   languageModels: LanguageModelView[];
   bootError: string | null;
+  join: JoinStatusView | null;
 }
 
 export type RoomStore = StoreApi<RoomViewState>;
@@ -18,6 +19,7 @@ export function createRoomStore(): RoomStore {
     participants: [],
     languageModels: [],
     bootError: null,
+    join: null,
   }));
 }
 
@@ -35,6 +37,7 @@ export function installRoomBridge(store: RoomStore) {
     setParticipants: (participants) => store.setState({ participants }),
     setLanguageModels: (languageModels) => store.setState({ languageModels }),
     setBootError: (bootError) => store.setState({ bootError }),
+    setJoinStatus: (join) => store.setState({ join }),
     // A playback cue changes one message's karaoke; nothing else in the list moves.
     updateKaraoke: (segment, karaoke) => store.setState((state) => ({ conversation: { ...state.conversation, messages: state.conversation.messages.map((m) => (m.segment === segment ? { ...m, karaoke, playback: "playing" } : m)) } })),
   };

@@ -1,6 +1,6 @@
 export {};
 
-import type { ConversationView, KaraokeRange, LanguageModelView, ParticipantView, SidevoiceActions } from "../state/room-types";
+import type { ConversationView, JoinStatusView, KaraokeRange, LanguageModelView, ParticipantView, SidevoiceActions } from "../state/room-types";
 
 declare global {
   interface Window {
@@ -22,6 +22,7 @@ declare global {
       setParticipants(value: ParticipantView[]): void;
       setLanguageModels(value: LanguageModelView[]): void;
       setBootError(value: string | null): void;
+      setJoinStatus?(value: JoinStatusView | null): void;
       updateKaraoke?(segment: string, karaoke: KaraokeRange | null): void;
     };
     /** The meter's analyser, pulled per animation frame by the waveform bubble; null while no call captures. */

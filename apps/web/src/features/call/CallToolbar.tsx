@@ -1,11 +1,13 @@
 import { HangupIcon, MicrophoneIcon, SettingsIcon, SpeakerIcon } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
 import { NativeSelect } from "../../components/ui/NativeSelect";
+import { JoinStatus } from "./JoinStatus";
 
 export function CallToolbar() {
   return (
     <footer className="call-bar">
       <div className="controls" id="call-controls">
+        <JoinStatus />
         <div id="audio-device-panel" className="audio-devices-panel" hidden>
           <label className="audio-device-choice"><MicrophoneIcon /><span className="sr-only">Micrófono</span><NativeSelect id="input-device" aria-label="Micrófono"><option value="default">Predeterminado del sistema</option></NativeSelect></label>
           <label className="audio-device-choice"><SpeakerIcon /><span className="sr-only">Altavoces</span><NativeSelect id="output-device" aria-label="Altavoces"><option value="default">Predeterminado del sistema</option></NativeSelect></label>

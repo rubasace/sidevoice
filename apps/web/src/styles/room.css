@@ -117,3 +117,11 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 .stats-aggregates-actions{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
 .stats-aggregates-actions button{padding:8px 14px}
 .stats-aggregates-actions span{font-size:12px}
+
+/* The join's own line, above the controls pill: quiet, one step at a time, and out of the way. */
+.join-status{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;margin:0;max-width:min(92vw,30rem);padding:7px 14px;border:1px solid #3a4453;border-radius:18px;background:#1b212aee;color:#cfe0f5;font-size:12px;line-height:1.45;text-align:center}
+.join-status[hidden]{display:none}
+.join-status[data-state=failed]{color:#f2c6bd;border-color:#7d4a45;background:#2a1d1cee}
+.join-status-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#8ab4f8;animation:join-status-pulse 1.4s ease-in-out infinite}
+@keyframes join-status-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@media(prefers-reduced-motion:reduce){.join-status-dot{animation:none;opacity:.8}}
