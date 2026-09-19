@@ -69,7 +69,9 @@ export function echoCoverage(f) {
 export function micView(s) {
     const enabled = s.micEnabled !== false;
     const label = enabled ? 'Silenciar micrófono' : 'Activar micrófono';
-    return { enabled, label, pressed: !enabled, disabled: !s.ws,
+    // Never disabled: the preference is set before joining as often as during a call, and a button that
+    // looks dead right after a reload reads as "the microphone is broken" (2026-09-20).
+    return { enabled, label, pressed: !enabled, disabled: false, holding: !!s.holding,
         title: label + ' (⌘D / Ctrl+D). Mantén Espacio para hablar si está silenciado.' };
 }
 /** The call button: joining and leaving are the same button, and it says which one it is now. */

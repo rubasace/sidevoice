@@ -20,13 +20,12 @@ test("the call bar says what the session facts say, and asks the runtime to act"
   window.sidevoiceActions = { toggleMic, toggleCall } as unknown as typeof window.sidevoiceActions;
 
   const mute = () => screen.getByRole("button", { name: /micrófono$/i });
-  expect(mute()).toBeDisabled();
+  expect(mute()).not.toBeDisabled(); // the preference is set before joining too
   expect(screen.getByRole("button", { name: "Entrar en la sala" })).toBeInTheDocument();
 
   act(() => { store.patch({ ws: {}, micEnabled: false }); });
   expect(mute()).toHaveAttribute("aria-label", "Activar micrófono");
   expect(mute()).toHaveAttribute("aria-pressed", "true");
-  expect(mute()).not.toBeDisabled();
   expect(document.getElementById("mic-control")).toHaveAttribute("data-muted", "true");
   expect(screen.getByRole("button", { name: "Salir de la sala" })).toHaveClass("joined");
 
