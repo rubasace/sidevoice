@@ -303,6 +303,14 @@ function renderLatencyStages(reply){
  for(const [label,value] of values){const item=document.createElement('li');const name=document.createElement('span');name.textContent=label;const bar=document.createElement('i');if(statsNumber(value))bar.style.width=Math.max(1,Math.round(value/max*100))+'%';else bar.hidden=true;const amount=document.createElement('b');amount.textContent=statsDuration(value);item.append(name,bar,amount);list.append(item)}
  $('stats-stages-note').textContent='Turno '+reply.reply_revision+' · el tramo más largo marca la escala.';
 }
+function audioOutputFacts(health){
+ if(!health)return [];
+ const states={running:'activo',suspended:'suspendido',interrupted:'interrumpido',closed:'cerrado',none:'sin iniciar'};
+ const output=health.output==='element'?(health.element?.paused?'Elemento de audio en pausa':'Elemento de audio reproduciendo'):health.output==='context'?'Contexto directo (sin cancelación de eco propia)':'Sin salida';
+ const clock=statsNumber(health.clock)?health.clock.toFixed(2)+' s · '+(states[health.context]||health.context):'—';
+ const events=(health.events||[]).slice(-6).map(e=>new Date(e.at).toTimeString().slice(3,8)+' '+e.kind+(e.detail?' ('+e.detail+')':'')).join(' · ')||'Ninguno';
+ return [['Salida de audio',output],['Reloj de audio',clock],['Bloqueos de reproducción',String(health.stalls||0)+(health.resuming?' · recuperando':'')],['Últimos eventos de audio',events]];
+}
 function renderConnectionStats(data,roundTrip){
  const call=sessionId&&data?.call?.id===sessionId?data.call:null,track=micTrack(),settings=track?.getSettings?.()||{};
  const selectedLabel=id=>$(id).selectedOptions?.[0]?.textContent||'Predeterminado del sistema';
@@ -323,6 +331,7 @@ function renderConnectionStats(data,roundTrip){
   ['Ejecución STT',sttExecution],
   ['Selección STT',sttReasons[stt?.reason]||stt?.reason||'—'],
   ['Motor de audio',({running:'Activo',suspended:'Suspendido',closed:'Cerrado'})[context?.state]||'No iniciado'],
+  ...audioOutputFacts(window.roomVoice?.health?.()),
   ['Micrófono',track?.label||selectedLabel('input-device')],
   ['Captura',!track?'No iniciada':track.readyState==='ended'?'Finalizada':track.muted?'Sin señal del dispositivo':track.enabled?'Activa':'Silenciada'],
   ['Altavoces',selectedLabel('output-device')],

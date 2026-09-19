@@ -158,3 +158,44 @@ test('Audio arriving while the context is stopped asks for it back instead of sc
  assert.equal(resumes,1);
  const rejected=assert.rejects(speech,{name:'AbortError'});s.voice.cancel();await rejected;
 });
+
+function mediaOutput(s){
+ const sink={stream:{}};const counters={paused:0,played:0,attached:0,resumes:0};const listeners={};
+ s.context.Audio=class{constructor(){this.paused=false}async play(){counters.played++;this.paused=false}pause(){counters.paused++;this.paused=true}set srcObject(value){counters.attached++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ s.context.Date=Date;
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};
+ context.resume=async()=>{counters.resumes++;context.state='running'};s.voice.context=context;
+ return {context,counters,listeners};
+}
+const settle=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+test('A frozen audio clock during playout asks the output back, and one that stays frozen fails the utterance instead of buzzing',async()=>{
+ const s=setup();const {context,counters}=mediaOutput(s);await s.voice.unlock();
+ s.voice.stallCheckMs=4;s.voice.stallAfterMs=6;s.voice.stallLimit=3;
+ const statuses=[];const speech=s.voice.playEncoded({audio_base64:'SUQz'},text=>statuses.push(text));
+ const rejected=assert.rejects(speech,/se detuvo en este dispositivo/);
+ await settle(15);
+ // The clock did not move: the element was paused and the context asked to run again, once per check.
+ assert.ok(counters.resumes>=1||counters.attached>=2,'the output was asked back');
+ assert.ok(s.voice.health().stalls>=1);
+ assert.equal(s.voice.health().events.some(e=>e.kind==='stall'),true);
+ await rejected;
+ assert.equal(s.voice.job,null);
+ assert.equal(s.voice.health().events.at(-1).kind,'fail');
+ assert.ok(s.voice.health().stalls>=3);
+});
+test('A clock that advances raises no alarm, and cancelling while the context is stopped pauses the element',async()=>{
+ const s=setup();const {context,counters}=mediaOutput(s);await s.voice.unlock();
+ s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
+ const ticker=setInterval(()=>{context.currentTime+=.1},1);
+ await settle(25);clearInterval(ticker);
+ assert.equal(s.voice.health().stalls,0);
+ assert.equal(s.voice.health().playing,true);
+ context.state='interrupted';const pausedBefore=counters.paused;
+ s.voice.cancel();await rejected;
+ assert.equal(counters.paused,pausedBefore+1,'a cancel while the context is stopped pauses the element so it cannot loop');
+ assert.equal(s.voice.health().events.at(-1).kind,'cancel');
+ const health=s.voice.health();
+ assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','resuming','stalls']);
+});
