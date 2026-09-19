@@ -56,6 +56,28 @@ function showScreenLock(state,note){
  if(text)text.textContent=state?note:'';
  $('screen-note').textContent=note;
 }
+/* Echo coverage, as far as the page can see it: the microphone track must have echo cancellation on, and the
+ * room's voice must leave through the media element (on iOS only that playback joins the echo reference). The
+ * page cannot see whether the canceller is doing well; what it can see is whether the conditions hold. */
+function echoCoverage(){
+ const track=micTrack();
+ if(!track)return {state:'',note:''};
+ const aec=track.getSettings?.().echoCancellation;
+ const health=window.roomVoice?.health?.();
+ if(aec===false)return {state:'off',note:'El micrófono no tiene cancelación de eco: la voz de la sala por el altavoz abrirá intervenciones.'};
+ if(aec!==true)return {state:'partial',note:'El navegador no confirma la cancelación de eco del micrófono.'};
+ if(health&&health.output!=='element')return {state:'partial',note:'La voz no sale por el elemento de audio: en el iPhone no entra en la cancelación de eco.'};
+ if(health&&health.element?.paused)return {state:'partial',note:'La salida de audio está en pausa; se recupera con la siguiente locución.'};
+ return {state:'on',note:'Cancelación de eco activa y la voz sale por el elemento de audio.'};
+}
+function showEchoCover(){
+ const {state,note}=ws?echoCoverage():{state:'',note:''};
+ const light=$('echo-cover'),text=$('echo-cover-text'),detail=$('echo-note');
+ if(light){light.hidden=!state;if(state)light.dataset.state=state;light.title=note}
+ if(text)text.textContent=state?'Eco: '+note:'';
+ if(detail)detail.textContent=note;
+}
+window.addEventListener('voice-output',()=>showEchoCover());
 async function keepScreenAwake(){
  // Asked for while connecting too: Safari grants the lock to the tap that started the
  // call, and by the end of the preparation chain that gesture has expired.
@@ -469,14 +491,14 @@ function disconnect(){
  releaseScreenWakeLock();audioSession(false);++deviceEpoch;
  window.roomVoice?.cancel();window.roomTranscription?.stop();if($('voice-loading').open)$('voice-loading').close();
  cancelBrowserSpeech();stopPreview();
- const socket=ws;ws=null;socket?.close();showEngineBadge('');
+ const socket=ws;ws=null;socket?.close();showEngineBadge('');showEchoCover();
  stream?.getTracks().forEach(t=>t.stop());stream=null;
  stopMeter();sessionId=null;userLive=botLive=holding=spaceDown=false;userTurn=null;pendingPhase='';pendingBotText=[];partial('');
  $('connect').disabled=false;$('connect').classList.remove('joined');
  $('connect').title='Entrar en la sala';$('connect').setAttribute('aria-label','Entrar en la sala');
  $('mute').classList.remove('holding');updateMic();
 }
-$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);keepScreenAwake();refreshAudioDevices();showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);keepScreenAwake();refreshAudioDevices();showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();showEchoCover();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
 // ----- the socket: opened on join, reopened by itself when the room goes away -----
 // A room restart or a network blip must not end the call: the microphone permission, the media stream
 // and the unlocked output all survive it; only the socket needs reopening, with the same hello.

@@ -858,3 +858,24 @@ test('The engine badge carries the audio output health: recovering on a stall, f
  s.run("noteOutputHealth('play-encoded')");
  assert.equal(s.run("$('engine-badge').dataset.output"),'ok');
 });
+
+test('The echo light says whether the page can expect its own voice to be cancelled: mic AEC on and voice through the media element',()=>{
+ const s=setup();
+ const settings={echoCancellation:true};
+ s.run("ws={readyState:1}");
+ s.context.window.roomVoice={health:()=>({output:'element',element:{paused:false}})};
+ s.context.__settings=settings;
+ s.run("stream={getAudioTracks:()=>[{enabled:true,getSettings:()=>globalThis.__settings}]}");
+ s.run('showEchoCover')();
+ assert.equal(s.run("$('echo-cover').hidden"),false);
+ assert.equal(s.run("$('echo-cover').dataset.state"),'on');
+ s.context.window.roomVoice={health:()=>({output:'context',element:null})};
+ s.run('showEchoCover')();
+ assert.equal(s.run("$('echo-cover').dataset.state"),'partial');
+ assert.match(s.run("$('echo-note').textContent"),/elemento de audio/);
+ settings.echoCancellation=false;
+ s.run('showEchoCover')();
+ assert.equal(s.run("$('echo-cover').dataset.state"),'off');
+ s.run("ws=null");s.run('showEchoCover')();
+ assert.equal(s.run("$('echo-cover').hidden"),true,'no call, no light');
+});

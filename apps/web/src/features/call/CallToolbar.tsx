@@ -10,10 +10,11 @@ export function CallToolbar() {
           <label className="audio-device-choice"><MicrophoneIcon /><span className="sr-only">Micrófono</span><NativeSelect id="input-device" aria-label="Micrófono"><option value="default">Predeterminado del sistema</option></NativeSelect></label>
           <label className="audio-device-choice"><SpeakerIcon /><span className="sr-only">Altavoces</span><NativeSelect id="output-device" aria-label="Altavoces"><option value="default">Predeterminado del sistema</option></NativeSelect></label>
           <Button id="audio-settings-open" variant="ghost" size="icon" className="device-settings" aria-label="Configuración de audio" title="Configuración de audio"><SettingsIcon size={24} /></Button>
-          <div className="device-notes"><div><p id="audio-device-note" role="status" /><p id="screen-note" role="status" /></div><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos">↻</Button></div>
+          <div className="device-notes"><div><p id="audio-device-note" role="status" /><p id="screen-note" role="status" /><p id="echo-note" role="status" /></div><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos">↻</Button></div>
         </div>
         <div className="call-actions">
           <span id="screen-lock" className="screen-lock" role="status" hidden><i className="screen-lock-dot" aria-hidden="true" /><span id="screen-lock-text" className="sr-only" /></span>
+          <span id="echo-cover" className="screen-lock echo-cover" role="status" hidden><i className="screen-lock-dot" aria-hidden="true" /><span id="echo-cover-text" className="sr-only" /></span>
           <span id="engine-badge" className="engine-badge" role="status" hidden />
           <div id="mic-control" className="mic-control" data-muted="false">
             <span id="mic-level-meter" className="sr-only" role="meter" aria-label="Nivel de micrófono" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0} />
