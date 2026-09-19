@@ -40,7 +40,11 @@ class RoomVoice {
    playing:!!this.job?.playing,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
  }
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
- async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput()}
+ async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput();this.prime()}
+ /* The first utterance of every session used to stall on the phone until the watchdog re-handed the element
+  * its stream: the freshly created output had never carried audio. So the output is primed once, right after
+  * it exists, with the same short silence a cut leaves behind. */
+ prime(){if(!this.output||this.output.primed)return;this.output.primed=true;this.tail('prime')}
  /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only
   * media-element playback is part of the echo-cancellation reference, so this is what lets the
   * microphone subtract our own voice instead of opening a turn with it. Falls back to the context. */
@@ -121,13 +125,13 @@ class RoomVoice {
   * instant while the graph went on, and the next utterance's first source unstuck it. So a cut is followed
   * by what the next utterance would do: half a second of silence into the same sink. (A permanent silent
   * source was tried first and the phone's echo cancellation stopped covering the voice while it ran.) */
- tail(){
+ tail(kind='tail'){
   if(!this.context||typeof this.context.createBufferSource!=='function')return;
   try{
    const rate=this.context.sampleRate||48000,buffer=this.context.createBuffer(1,Math.round(rate*this.tailSeconds),rate);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
-   source.start(this.context.currentTime+.05);this.note('tail');
-  }catch(error){this.note('tail-failed',error?.message||'tail')}
+   source.start(this.context.currentTime+.05);this.note(kind);
+  }catch(error){this.note(kind+'-failed',error?.message||kind)}
  }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
  async setOutputDevice(id){

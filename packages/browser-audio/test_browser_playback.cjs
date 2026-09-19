@@ -211,6 +211,7 @@ test('A barge-in fades the voice out through its own gain instead of cutting the
  const stops=[];context.createBufferSource=()=>{const src={connect(target){connections.push(['source',target])},start(){},stop(when){stops.push(when);src.stopped=true}};s.sources.push(src);return src};
  await s.voice.unlock();
  assert.equal(s.voice.output.keepalive,undefined);
+ assert.deepEqual(connections,[['source',s.voice.output.sink]],'the fresh output is primed once with a short silence');connections.length=0;
  const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
  await new Promise(resolve=>setImmediate(resolve));
  assert.deepEqual(connections,[['gain',s.voice.output.sink],['source',gains[0]]],'the voice goes through its own gain into the sink');
@@ -253,4 +254,18 @@ test('Cutting a voice mid-utterance leaves half a second of silence in the sink,
  assert.equal(tail.startedAt,3.05);
  assert.equal(counters.paused,0,'the element is left alone while the context runs');
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
+});
+
+test('A fresh media-element output is primed once with a short silence, and never again on later unlocks',async()=>{
+ const s=setup();const {context}=mediaOutput(s);
+ const made=[];context.createBufferSource=()=>{const src={connect(target){src.target=target},start(when){src.startedAt=when},stop(){}};made.push(src);return src};
+ context.createBuffer=(channels,frames,rate)=>({duration:frames/rate,frames,rate,copyToChannel(){}});context.sampleRate=48000;
+ await s.voice.unlock();
+ assert.equal(made.length,1);assert.equal(made[0].target,s.voice.output.sink);assert.equal(made[0].buffer.duration,.5);
+ assert.equal(s.voice.health().events.at(-1).kind,'prime');
+ await s.voice.unlock();await s.voice.unlock();
+ assert.equal(made.length,1,'priming happens once per output');
+ // Without a media element there is nothing to prime.
+ const plain=setup();await plain.voice.unlock();
+ assert.equal(plain.voice.health().events.some(e=>e.kind==='prime'),false);
 });
