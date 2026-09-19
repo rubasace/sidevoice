@@ -121,6 +121,19 @@ def mount_presentation(app):
                 await hub.stop()
     app.router.lifespan_context = room_lifespan
     from fastapi.staticfiles import StaticFiles
+
+    @app.middleware('http')
+    async def cache_policy(request: Request, call_next):
+        # The audio engine, the worklet and the page shell change with every deploy and carry no hash in
+        # their name: a browser must revalidate them every time. The hashed bundle may be kept for good.
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith('/voice/assets/'):
+            response.headers.setdefault('Cache-Control', 'public, max-age=31536000, immutable')
+        elif path.startswith('/voice-browser/') or path in {'/voice/', '/voice/mic_capture.js'}:
+            response.headers['Cache-Control'] = 'no-cache'
+        return response
+
     if BROWSER_AUDIO_DIST.exists():
         app.mount('/voice-browser', StaticFiles(directory=BROWSER_AUDIO_DIST, html=True), name='voice-browser')
     web_assets = WEB_DIST / 'assets'

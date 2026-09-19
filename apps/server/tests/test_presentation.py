@@ -469,3 +469,28 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.c.user_started()
         self.c.enqueue_input('Send next')
         self.assertEqual(self.hub.journal.pending()[0]['text'], 'Send next')
+
+
+class CachePolicyTests(IsolatedAsyncioTestCase):
+    async def test_the_audio_engine_and_page_shell_are_never_cached_while_hashed_assets_are_immutable(self):
+        import tempfile
+        from pathlib import Path
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from unittest.mock import patch
+        import sidevoice.presentation as presentation
+        with tempfile.TemporaryDirectory() as directory:
+            browser, assets = Path(directory) / 'browser', Path(directory) / 'assets'
+            browser.mkdir(); assets.mkdir()
+            (browser / 'room-client.js').write_text('// engine')
+            (assets / 'index-abc123.js').write_text('// bundle')
+            with patch.object(presentation, 'BROWSER_AUDIO_DIST', browser), patch.object(presentation, 'WEB_DIST', Path(directory)):
+                app = FastAPI()
+                presentation.mount_presentation(app)
+                with TestClient(app) as client:
+                    engine = client.get('/voice-browser/room-client.js?v=abc')
+                    self.assertEqual(engine.status_code, 200)
+                    self.assertEqual(engine.headers['cache-control'], 'no-cache')
+                    bundle = client.get('/voice/assets/index-abc123.js')
+                    self.assertEqual(bundle.status_code, 200)
+                    self.assertEqual(bundle.headers['cache-control'], 'public, max-age=31536000, immutable')

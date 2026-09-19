@@ -33,7 +33,7 @@ class BrowserTranscription{
  }
  _ensureWorker(){
   if(this.worker)return;
-  this.worker=new Worker('/voice-browser/stt-worker.js?v=browser-stt-3',{type:'module'});
+  this.worker=new Worker('/voice-browser/stt-worker.js?v='+encodeURIComponent(globalThis.sidevoiceBuildId||'dev'),{type:'module'});
   this.worker.onmessage=({data})=>{
    const request=this.pending.get(data.id);if(!request)return;
    if(data.type==='progress'){request.progress?.(data.progress);return}

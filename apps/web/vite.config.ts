@@ -3,6 +3,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   base: "/voice/",
+  // Scripts loaded outside the hashed bundle (browser audio, worklets, workers) carry this in their URL:
+  // a fixed tag let Safari keep serving a day-old audio engine from its cache (2026-09-19).
+  define: { __BUILD_ID__: JSON.stringify(process.env.SIDEVOICE_BUILD_ID || Date.now().toString(36)) },
   plugins: [react()],
   build: { outDir: "dist", emptyOutDir: true },
   server: {

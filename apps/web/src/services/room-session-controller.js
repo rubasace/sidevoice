@@ -212,7 +212,7 @@ function updateMic(){const enabled=micTrack()?.enabled??micEnabled;$('mic-contro
 function setMic(enabled){stopPreview();micEnabled=enabled;applyMicState();updateMic()}
 function releaseHold(){spaceDown=false;$('mute').classList.remove('holding');if(holding){holding=false;setMic(false)}}
 function live(){const queued=!userLive&&!botLive&&ws&&roomBinding?.thread_id;$('live').textContent=ws&&stream&&!micTrack()?.enabled?'Micrófono silenciado':userLive?'Te estamos escuchando…':botLive?'La conversación está hablando · Puedes interrumpir':queued?'Puedes hablar. La transcripción aparece al completar tu intervención.':ws?'Estás en la sala · Esperando a una conversación':'Entra en la sala para hablar.'}
-function renderPeople(){const signature=JSON.stringify([people.map(p=>[p.thread_id,p.title,p.available,p.reach?.state]),roomBinding?.thread_id,roomBinding?.title,switching,history.filter(r=>r.role==='assistant').map(r=>[r.thread,r.seq]),roomSeen]);if(signature===rosterSignature)return;rosterSignature=signature;const box=$("participants");let entries=[...people];for(const r of history)if(r.thread&&!entries.some(p=>p.thread_id===r.thread))entries.push({thread_id:r.thread,title:r.name==='Tú'?'Conversación':r.name,available:false});if(targetId()&&!entries.some(p=>p.thread_id===targetId()))entries.unshift({thread_id:targetId(),title:roomBinding.title,available:true});if(window.sidevoiceUI){window.sidevoiceUI.setParticipants(entries.map(p=>{const selected=p.thread_id===targetId(),unread=unseen(p.thread_id),reach=p.reach?.state||(p.available?"listening":"offline"),base=reach==="listening"?(unread?unread+" nuevas":"Escuchando"):reach==="holding"?"No puede recibir":(p.available?"Sin poder recibir":"Desconectada");return {threadId:p.thread_id,title:p.title,selected,available:!!p.available,switching,unread,reach,stateLabel:unread&&reach!=="listening"?base+" · "+unread+" nuevas":base,detail:p.reach?.detail?(p.reach.detail+(p.reach.remedy?"\n\n"+p.reach.remedy:"")):undefined}}));return}box.replaceChildren();for(const p of entries){const selected=p.thread_id===targetId(),btn=document.createElement('button');btn.className='person'+(selected?' selected':'');btn.disabled=switching;btn.setAttribute('aria-pressed',String(selected));const avatar=document.createElement('span');avatar.className='avatar';avatar.textContent='AI';const info=document.createElement('div'),name=document.createElement('div'),state=document.createElement('div');name.className='person-name';name.textContent=p.title;state.className='person-state';const count=unseen(p.thread_id),reach=p.reach?.state||(p.available?'listening':'offline');
+function renderPeople(){const signature=JSON.stringify([people.map(p=>[p.thread_id,p.title,p.available,p.reach?.state]),roomBinding?.thread_id,roomBinding?.title,switching,history.filter(r=>r.role==='assistant').map(r=>[r.thread,r.seq]),roomSeen]);if(signature===rosterSignature)return;rosterSignature=signature;const box=$("participants");let entries=[...people];if(targetId()&&!entries.some(p=>p.thread_id===targetId()))entries.unshift({thread_id:targetId(),title:roomBinding.title,available:true});if(window.sidevoiceUI){window.sidevoiceUI.setParticipants(entries.map(p=>{const selected=p.thread_id===targetId(),unread=unseen(p.thread_id),reach=p.reach?.state||(p.available?"listening":"offline"),base=reach==="listening"?(unread?unread+" nuevas":"Escuchando"):reach==="holding"?"No puede recibir":(p.available?"Sin poder recibir":"Desconectada");return {threadId:p.thread_id,title:p.title,selected,available:!!p.available,switching,unread,reach,stateLabel:unread&&reach!=="listening"?base+" · "+unread+" nuevas":base,detail:p.reach?.detail?(p.reach.detail+(p.reach.remedy?"\n\n"+p.reach.remedy:"")):undefined}}));return}box.replaceChildren();for(const p of entries){const selected=p.thread_id===targetId(),btn=document.createElement('button');btn.className='person'+(selected?' selected':'');btn.disabled=switching;btn.setAttribute('aria-pressed',String(selected));const avatar=document.createElement('span');avatar.className='avatar';avatar.textContent='AI';const info=document.createElement('div'),name=document.createElement('div'),state=document.createElement('div');name.className='person-name';name.textContent=p.title;state.className='person-state';const count=unseen(p.thread_id),reach=p.reach?.state||(p.available?'listening':'offline');
  // "Connected" and "will receive what you say" are different things: never show one as the other.
  if(reach!=='listening')btn.classList.add('unreachable');
  state.dataset.state=reach;
@@ -310,6 +310,7 @@ function reportAudioHealth(reason){
  try{ws.send(JSON.stringify({type:'voice-audio-health',data:{session_id:sessionId,reason,health:window.roomVoice.health()}}))}catch{}
 }
 window.addEventListener('voice-output',event=>{const kind=event.detail?.kind;if(REPORTED_OUTPUT_EVENTS.has(kind))reportAudioHealth(kind)});
+function forgetThread(threadId){history=history.filter(r=>r.thread!==threadId);save();if(viewedThread===threadId)viewedThread=null;renderHistory()}
 function audioOutputFacts(health){
  if(!health)return [];
  const states={running:'activo',suspended:'suspendido',interrupted:'interrumpido',closed:'cerrado',none:'sin iniciar'};
@@ -453,7 +454,7 @@ async function startCapture(socket,session){if(!micSource)throw Error('No se pud
  if(audioContext.state!=='running'){try{await audioContext.resume()}catch{}}
  if(audioContext.state!=='running')throw Error('El navegador no autorizó la captura de audio. Vuelve a pulsar para unirte.');
  const context=audioContext,source=micSource,epoch=connectEpoch;
- await context.audioWorklet.addModule('/voice/mic_capture.js');
+ await context.audioWorklet.addModule('/voice/mic_capture.js?v='+encodeURIComponent(window.sidevoiceBuildId||'dev'));
  if(ws!==socket||audioContext!==context||epoch!==connectEpoch)return;
  const node=new AudioWorkletNode(context,'mic-capture',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit',processorOptions:{sampleRate:session.sample_rate}});captureNode=node;node.port.onmessage=e=>{if(captureNode===node&&ws===socket&&socket.readyState===WebSocket.OPEN&&micTrack()?.enabled)socket.send(e.data)};source.connect(node);node.connect(context.destination)/* reachable from the destination so it keeps running; its output stays silent */}
 function disconnect(){
@@ -708,8 +709,13 @@ window.sidevoiceActions={
   updateComposer();
  },
  async closeParticipant(threadId){
-  try{await post('/api/presentation/close',{thread_id:threadId});rosterSignature='';await refresh();await refreshPeople();await refreshHistory()}
-  catch(e){setRoomError(e.message);throw e}
+  try{await post('/api/presentation/close',{thread_id:threadId})}
+  catch(e){
+   // The room does not know it (it was closed elsewhere, or the room restarted): only this page remembered it.
+   if(!/No se encuentra/.test(e.message||'')){setRoomError(e.message);throw e}
+   forgetThread(threadId)
+  }
+  rosterSignature='';await refresh();await refreshPeople();await refreshHistory()
  },
  updateLanguageModel(language,model){
   expandedVoiceLanguages.delete(language);voiceDraft[language]={...voiceDraft[language],model,voice:'inherit'};renderLanguageRows();

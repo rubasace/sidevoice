@@ -17,11 +17,15 @@ import "./styles/react.css";
 
 const root = createRoot(document.getElementById("root")!);
 
+declare const __BUILD_ID__: string;
+const buildId = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
+(window as unknown as { sidevoiceBuildId?: string }).sidevoiceBuildId = buildId;
+
 try {
   await Promise.all([
-    loadExternalScript("/voice-browser/room-i18n.js?v=react-1"),
-    loadExternalScript("/voice-browser/room-client.js?v=react-1"),
-    loadExternalScript("/voice-browser/stt-client.js?v=react-1"),
+    loadExternalScript(`/voice-browser/room-i18n.js?v=${buildId}`),
+    loadExternalScript(`/voice-browser/room-client.js?v=${buildId}`),
+    loadExternalScript(`/voice-browser/stt-client.js?v=${buildId}`),
   ]);
   root.render(<App />);
 } catch (error) {
