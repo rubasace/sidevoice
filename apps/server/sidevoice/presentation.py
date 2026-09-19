@@ -13,7 +13,7 @@ from .room_history import RoomHistory
 from .paths import BROWSER_AUDIO_DIST, BROWSER_AUDIO_ROOT, RUNTIME_ROOT, WEB_DIST
 from .pipeline_frames import PresentationBoundary, PresentationSpeech
 from .room import Room, RoomClient  # noqa: F401 — RoomClient is re-exported for app.py
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pipecat.frames.frames import LLMContextFrame, TTSAudioRawFrame, ErrorFrame
@@ -239,12 +239,47 @@ def mount_presentation(app):
         # Defaults only: each device keeps its own settings and brings them when it connects.
         return load_settings().model_dump()
 
+    # While the interface is being worked on, the room can serve it from Vite instead of from dist, so a
+    # change reaches the phone without anyone reloading: set VOICE_WEB_DEV_SERVER to the dev server's base
+    # URL. Everything else about the room is unchanged, and unset (the normal case) costs nothing.
+    # Vite's own hot-reload socket does not come through here — the page is told where to find it — because
+    # proxying a websocket to gain a development convenience is not worth the code it would take.
+    dev_server = (os.getenv('VOICE_WEB_DEV_SERVER') or '').strip().rstrip('/')
+
+    async def from_dev_server(request: Request, path: str):
+        import httpx
+        url = dev_server + path
+        async with httpx.AsyncClient(timeout=20) as client:
+            try:
+                answer = await client.get(url, params=request.query_params,
+                                          headers={'accept': request.headers.get('accept', '*/*')})
+            except httpx.HTTPError as error:
+                raise HTTPException(502, f'El servidor de desarrollo no responde ({error}).') from error
+        headers = {name: value for name, value in answer.headers.items()
+                   if name.lower() in {'content-type', 'cache-control', 'etag', 'sourcemap', 'x-sourcemap'}}
+        return Response(content=answer.content, status_code=answer.status_code, headers=headers)
+
+    if dev_server:
+        for prefix in ('/@vite', '/@id', '/@fs', '/src', '/node_modules', '/.vite'):
+            @app.get(prefix + '/{path:path}', include_in_schema=False)
+            async def dev_asset(path: str, request: Request, prefix=prefix):
+                return await from_dev_server(request, prefix + '/' + path)
+
     @app.get('/voice/', include_in_schema=False)
-    async def view():
+    async def view(request: Request):
+        if dev_server:
+            return await from_dev_server(request, '/voice/')
         index = WEB_DIST / 'index.html'
         if not index.exists():
             raise HTTPException(503, 'Construye la interfaz con npm run build.')
         return FileResponse(index)
+
+    if dev_server:
+        @app.get('/voice/{path:path}', include_in_schema=False)
+        async def dev_page_asset(path: str, request: Request):
+            if path == 'mic_capture.js':
+                return FileResponse(BROWSER_AUDIO_ROOT / 'mic_capture.js', media_type='text/javascript')
+            return await from_dev_server(request, '/voice/' + path)
 
     @app.get('/voice/mic_capture.js', include_in_schema=False)
     async def mic_capture():
