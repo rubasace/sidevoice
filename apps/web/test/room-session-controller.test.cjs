@@ -811,3 +811,33 @@ test('The stats say which build the page runs and which the room serves, and fla
  s.run("roomInfo=null");
  assert.equal(s.run('versionFacts')()[1][1],'—');
 });
+
+test('When the room goes away the call stays up: the socket is reopened by itself with the same hello and the mic survives',async()=>{
+ const s=setup();const sockets=[];
+ s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
+ s.context.WebSocket.OPEN=1;
+ s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});
+ s.context.fetch=async()=>({ok:true,json:async()=>({binding:null,room:{revision:0},clients:[],call:null,participants:[]})});
+ s.run("RECONNECT_DELAYS_MS.splice(0,RECONNECT_DELAYS_MS.length,1,1);startMeter=()=>{};stopMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};window.roomVoice={unlock:async()=>{},cancel(){},context:{state:'running'}};window.roomTranscription={stop(){},start(){}};voicePreferences={stt_provider:'openai'};stream={getAudioTracks:()=>[{enabled:true}]};sessionId='old-session';ws={readyState:1}");
+ s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
+ const epoch=s.run('connectEpoch');
+ // The room restarts: the socket closes with a code that is not a refusal.
+ const pending=s.run('lostConnection')({code:1006},epoch,{browserStt:false,sttRuntime:null});
+ await new Promise(resolve=>setTimeout(resolve,5));
+ assert.equal(sockets.length,1,'a new socket is opened after the first delay');
+ assert.match(s.run("$('live').textContent"),/Reconectando/);
+ const socket=sockets[0];socket.readyState=1;socket.onopen();
+ const hello=JSON.parse(socket.sent[0]);
+ assert.equal(hello.type,'client-ready');assert.equal(hello.data.conversation,'t-1','the remembered conversation travels in the hello');
+ socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'new-session',sample_rate:16000,channels:1,room:{version:'x',web_build:'y'}}})});
+ await pending;
+ assert.equal(s.run('sessionId'),'new-session');
+ assert.equal(s.run('ws'),socket);
+ assert.equal(s.run('stream')!==null,true,'the microphone stream was kept');
+ assert.equal(s.run('reconnecting'),false);
+ // A refusal is final: no retry, the call ends.
+ let ended=false;s.run("disconnect=()=>{ws=null;globalThis.__ended=true}");
+ await s.run('lostConnection')({code:1013},s.run('connectEpoch'),{browserStt:false,sttRuntime:null});
+ assert.equal(s.run('globalThis.__ended'),true);
+ assert.equal(sockets.length,1);
+});

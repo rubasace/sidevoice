@@ -476,7 +476,50 @@ function disconnect(){
  $('connect').title='Entrar en la sala';$('connect').setAttribute('aria-label','Entrar en la sala');
  $('mute').classList.remove('holding');updateMic();
 }
-$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);const socket=new WebSocket(roomSocketUrl());ws=socket;keepScreenAwake();refreshAudioDevices();socket.binaryType='arraybuffer';showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await openSession(socket,{conversation:rememberedThread(),settings:voicePreferences,transcription:sttRuntime});if(epoch!==connectEpoch)return;socket.onerror=null;socket.onclose=()=>{if(ws===socket)disconnect()};socket.onmessage=e=>{if(ws===socket)message(e.data)};if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');sessionId=session.session_id;roomRevision=0;if(browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});startMeter(session.sample_rate);await startCapture(socket,session);if(epoch!==connectEpoch)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);keepScreenAwake();refreshAudioDevices();showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();live();await refresh();await refreshPeople()}catch(e){if(epoch===connectEpoch){disconnect();setRoomError(e.message)}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+// ----- the socket: opened on join, reopened by itself when the room goes away -----
+// A room restart or a network blip must not end the call: the microphone permission, the media stream
+// and the unlocked output all survive it; only the socket needs reopening, with the same hello.
+const RECONNECT_DELAYS_MS=[1000,2000,5000,10000,10000,20000];
+let reconnecting=false;
+function shouldReconnect(event){return ![1008,1013].includes(event?.code)}   // refused by policy or full: do not insist
+async function joinRoom(epoch,context){
+ const socket=new WebSocket(roomSocketUrl());ws=socket;socket.binaryType='arraybuffer';
+ const session=await openSession(socket,{conversation:rememberedThread(),settings:voicePreferences,transcription:context.sttRuntime});
+ if(epoch!==connectEpoch)return null;
+ socket.onerror=null;
+ socket.onclose=event=>{if(ws===socket)lostConnection(event,epoch,context)};
+ socket.onmessage=e=>{if(ws===socket)message(e.data)};
+ if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');
+ sessionId=session.session_id;roomRevision=0;
+ if(context.browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});
+ startMeter(session.sample_rate);await startCapture(socket,session);
+ return session;
+}
+async function lostConnection(event,epoch,context){
+ if(epoch!==connectEpoch||reconnecting)return;
+ ws=null;
+ window.roomTranscription?.stop();stopMeter();
+ cancelBrowserSpeech();userLive=botLive=false;pendingUser=null;pendingUserText='';pendingPhase='';renderHistory();
+ if(!shouldReconnect(event)){disconnect();setRoomError('La sala cerró la llamada.');return}
+ reconnecting=true;$('connect').classList.add('reconnecting');
+ try{
+  for(let attempt=0;attempt<RECONNECT_DELAYS_MS.length;attempt++){
+   $('live').textContent='Reconectando con la sala…'+(attempt?' ('+(attempt+1)+')':'');
+   await new Promise(resolve=>setTimeout(resolve,RECONNECT_DELAYS_MS[attempt]));
+   if(epoch!==connectEpoch)return;
+   try{
+    const session=await joinRoom(epoch,context);
+    if(epoch!==connectEpoch||!session)return;
+    await window.roomVoice.unlock();
+    rosterSignature='';live();await refresh();await refreshPeople();
+    setRoomError('');
+    return;
+   }catch(e){if(epoch!==connectEpoch)return;ws=null}
+  }
+  disconnect();setRoomError('La sala no volvió. Entra de nuevo cuando esté disponible.');
+ }finally{reconnecting=false;$('connect').classList.remove('reconnecting')}
+}
 function speedLimits(model){return providerFor(model)==='elevenlabs'?[.7,1.2]:[.5,2]}
 function effectiveSpeed(model,value){const [min,max]=speedLimits(model);return Math.max(min,Math.min(max,Number(value)||1))}
 function updateSpeedRange(){
