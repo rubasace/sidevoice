@@ -200,7 +200,7 @@ test('A clock that advances raises no alarm, and cancelling while the context is
  assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','resuming','stalls']);
 });
 
-test('A barge-in fades the voice out through its own gain instead of cutting the sink's last input dead',async()=>{
+test('A barge-in fades the voice out through its own gain instead of cutting the sink last input dead',async()=>{
  const s=setup();const {context}=mediaOutput(s);
  const connections=[];const gains=[];
  // No silent keep-alive on the sink: one was tried on 2026-09-19 and the phone's echo cancellation stopped
