@@ -6,7 +6,7 @@ import type { JoinStatusView } from "../../state/room-types";
 
 function renderJoin(join: JoinStatusView | null) {
   const store = createRoomStore();
-  store.setState({ join });
+  store.patch({joinStep:join?.step??null,joinProgress:join?.progress??null,joinFailure:join?.failed?join.text:''});
   installRoomBridge(store);
   render(
     <RoomStoreContext.Provider value={store}>
@@ -27,7 +27,7 @@ test("a step is one quiet line, and a failure takes its place as an alert", () =
   expect(document.getElementById("join-status")?.dataset.state).toBe("busy");
 
   act(() => {
-    window.sidevoiceUI?.setJoinStatus?.({ step: "failed", text: "El micrófono está bloqueado para esta página.", progress: null, failed: true });
+    window.sidevoiceUI?.store?.patch({joinFailure:"El micrófono está bloqueado para esta página."});
   });
   expect(screen.queryByRole("status")).toBeNull();
   expect(screen.getByRole("alert")).toHaveTextContent("El micrófono está bloqueado para esta página.");
@@ -36,6 +36,6 @@ test("a step is one quiet line, and a failure takes its place as an alert", () =
 
 test("the line goes away once the call is up", () => {
   const store = renderJoin({ step: "room", text: "Entrando en la sala", progress: null, failed: false });
-  act(() => store.setState({ join: null }));
+  act(() => store.patch({ joinStep: null }));
   expect(document.getElementById("join-status")).not.toBeVisible();
 });

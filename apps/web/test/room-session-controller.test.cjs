@@ -5,7 +5,13 @@ function setup({strictDOM=false}={}){
  const elements=new Map(),handlers={};
  if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout','default-model-info','stt-model-info'])elements.set(id,new Element())}
  const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,btoa:value=>Buffer.from(value,'binary').toString('base64'),sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
- const source=fs.readFileSync(sourceRoot+'/services/room-session-controller.js','utf8');vm.runInContext(source,context);
+ const dependency=fs.readFileSync(sourceRoot+'/state/room-session-state.js','utf8');
+ const exports=[...dependency.matchAll(/^export (?:function|const) (\w+)/gm)].map(m=>m[1]);
+ vm.runInContext('const SessionState=(()=>{'+dependency.replace(/^export /gm,'')+';return {'+exports.join(',')+'}})();',context);
+ const source=fs.readFileSync(sourceRoot+'/services/room-session-controller.js','utf8');
+ const loaded=source.replace(/^import \{(.*)\} from .*;\n/,(_,names)=>'const {'+names.replace('echoCoverage as deriveEchoCoverage','echoCoverage:deriveEchoCoverage')+'}=SessionState;\n');
+ vm.runInContext('"use strict";\n'+loaded,context);
+ for(const name of Object.keys(vm.runInContext('SessionState.initialSessionFacts()',context)))Object.defineProperty(context,name,{get:()=>vm.runInContext('state.'+name,context),set:value=>{context.__fact=value;vm.runInContext('state.'+name+'=__fact',context)},configurable:true});
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
 }
@@ -17,15 +23,15 @@ test('The controller publishes serializable snapshots through the React store br
   setLanguageModels:value=>snapshots.languageModels=value,
   setBootError:value=>snapshots.bootError=value
  };
- s.run("add('assistant','Hola','voice:1','a');renderHistory();people=[{thread_id:'a',title:'Agente',available:true}];rosterSignature='';renderPeople()");
+ s.run("add('assistant','Hola','voice:1','a');markHistorySeen();people=[{thread_id:'a',title:'Agente',available:true}];rosterSignature=''");
  assert.equal(snapshots.conversation.messages[0].text,'Hola');
  assert.equal(snapshots.conversation.messages[0].thread,'a');
  assert.equal(snapshots.participants[0].threadId,'a');
  assert.equal(snapshots.participants[0].selected,true);
  assert.match(snapshots.participants[0].activityNote,/No sabemos/,'an undeclared capability remains unknown');
- s.run("people=[{thread_id:'a',title:'Agente',available:true,capabilities:{working:'unsupported'}}];rosterSignature='';renderPeople()");
+ s.run("people=[{thread_id:'a',title:'Agente',available:true,capabilities:{working:'unsupported'}}];rosterSignature=''");
  assert.match(snapshots.participants[0].activityNote,/no informa/,'unsupported is explained explicitly');
- s.run("people=[{thread_id:'a',title:'Agente',available:true,capabilities:{working:'supported'}}];rosterSignature='';renderPeople()");
+ s.run("people=[{thread_id:'a',title:'Agente',available:true,capabilities:{working:'supported'}}];rosterSignature=''");
  assert.equal(snapshots.participants[0].activityNote,null,'supported activity needs no warning');
  assert.equal(s.run("setRoomError('fallo')"),undefined);
  assert.equal(snapshots.bootError,'fallo');
@@ -146,10 +152,10 @@ test('Joining with ElevenLabs reaches microphone capture without loading Kokoro'
 test('A queued assistant reply never hides the active user speech bubble',()=>{
  const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
  emit('voice-user-turn',{phase:'started',revision:1,thread_id:'a'});
- assert.equal(s.run("$('messages').children.at(-1).className"),'message user partial');
+ assert.equal(s.run('roomStore.getState().conversation.pendingPhase'),'listening');
  emit('bot-output',{text:'Respuesta pendiente',spoken:false,segment_id:'queued'});
- assert.equal(s.run("$('messages').children.at(-1).className"),'message user partial');
- assert.match(s.run("$('messages').children.at(-1).textContent"),/Escuchando/);
+ assert.equal(s.run('roomStore.getState().conversation.pendingPhase'),'listening');
+ assert.equal(s.run('roomStore.getState().conversation.pendingPhase'),'listening');
 });
 test('TTS announcement/completion is one row; intentional repetitions remain separate',()=>{
  const s=setup();
@@ -235,7 +241,7 @@ test('A receipt arriving before the final bubble is retained instead of disappea
  emit('voice-input-receipt',{revision:2,thread_id:'a',session_id:'s',status:'delivered'});
  emit('voice-user-turn',{phase:'finished',revision:2,thread_id:'a',session_id:'s',text:'Ya llegó'});
  assert.equal(s.run('history[0].delivery'),'delivered');
- assert.equal(s.run('inputReceipts.size'),0);
+ assert.equal(s.run('Object.keys(inputReceipts).length'),0);
 });
 test('A finished turn without a selected conversation is visibly not sent',()=>{
  const s=setup();const emit=(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`);
@@ -266,17 +272,17 @@ test('Preview resolves the same language voice and effective speed as the settin
 
 
 test('A delivery receipt never fabricates a typing or working indicator',()=>{
- const s=setup();s.run("add('user','Hola','user-turn:1','a');history[0].delivery='delivered';renderHistory()");
+ const s=setup();s.run("add('user','Hola','user-turn:1','a');history[0].delivery='delivered';markHistorySeen()");
  assert.equal(s.run("$('messages').children.some(x=>x.className==='waiting-response')"),false);
 });
 
 test('Background history arrives without changing focus and has an unread badge',async()=>{
  const s=setup();s.context.fetch=async()=>({ok:true,json:async()=>({messages:[{id:'old:voice:reply',thread:'b',role:'assistant',text:'Listo B',name:'B',time:1,seq:5,status:'text_only'}]})});
  await s.run('refreshHistory()');
- assert.equal(s.run('targetId()'),'a');assert.equal(s.run("unseen('b')"),1);
+ assert.equal(s.run('targetId()'),'a');assert.equal(s.run("SessionState.unreadCount(state,'b')"),1);
  assert.equal(s.run("history[0].text"),'Listo B');
- s.run("viewedThread='b';renderHistory()");
- assert.equal(s.run("unseen('b')"),0);
+ s.run("viewedThread='b';markHistorySeen()");
+ assert.equal(s.run("SessionState.unreadCount(state,'b')"),0);
  assert.equal(s.run('targetId()'),'a');
  await s.run('refreshHistory()');assert.equal(s.run('history.length'),1);
 });
@@ -284,17 +290,17 @@ test('Background history arrives without changing focus and has an unread badge'
 test('A composing message follows received replies and gets its final timestamp on send',()=>{
  const s=setup();
  s.run("history=[{thread:'a',role:'user',segment:'s:user-turn:1',text:'En curso',time:100,draft:true},{thread:'a',role:'assistant',text:'Respuesta recibida',time:200}]");
- assert.equal(s.run("orderedHistory('a')[0].role"),'assistant');
+ assert.equal(s.run("SessionState.orderedHistory(state,'a')[0].role"),'assistant');
  s.run("add('user','Ya terminado','user-turn:1','a',{draft:false,time:300})");
  assert.equal(s.run("history[0].time"),300);
- assert.equal(s.run("orderedHistory('a')[0].role"),'assistant');
- assert.equal(s.run("orderedHistory('a')[1].text"),'Ya terminado');
+ assert.equal(s.run("SessionState.orderedHistory(state,'a')[0].role"),'assistant');
+ assert.equal(s.run("SessionState.orderedHistory(state,'a')[1].text"),'Ya terminado');
 });
 
 test('Final messages use send timestamps, even when answering an older turn',()=>{
  const s=setup();
  s.run("history=[{thread:'a',role:'assistant',session:'s',revision:1,time:300,text:'Respuesta tardía'},{thread:'a',role:'user',session:'s',revision:2,time:200,text:'Nuevo mensaje'}]");
- assert.equal(s.run("orderedHistory('a')[0].text"),'Nuevo mensaje');
+ assert.equal(s.run("SessionState.orderedHistory(state,'a')[0].text"),'Nuevo mensaje');
 });
 
 test('The UI distinguishes audio suppression reasons without inferring unknown ones',()=>{
@@ -404,14 +410,14 @@ test('Cloud speech receipts track actual playout completion',async()=>{
  finish();await playing;
  assert.equal(s.run('botLive'),false);assert.deepEqual(receipts.map(r=>r.status),['playing','playback_finished']);
 });
-test('Cloud preview stays active and keeps the microphone muted until audio ends',async()=>{
+test('Cloud preview stays active and leaves the microphone enabled until audio ends',async()=>{
  const s=setup();let finish;s.context.AbortController=AbortController;
  s.context.fetch=async()=>({ok:true,json:async()=>({audio_base64:'SUQz'})});
  s.context.window.roomVoice={unlock:async()=>{},cancel(){},playEncoded(){return new Promise(resolve=>finish=resolve)}};
  s.run("voiceCatalog={languages:[{id:'es',sample:'Hola',voices:[]}]};$('language-form').reportValidity=()=>true;$('preview-audio').pause=()=>{};var track={enabled:true};stream={getAudioTracks:()=>[track]};$('model-es').value='inherit';$('default-model').value='eleven_v3';$('voice-es').value='inherit';$('default-voice').value='custom';$('speed-es').value='';$('tts-speed').value='1'");
  const preview=s.run("previewVoice('es')");
  await new Promise(resolve=>setImmediate(resolve));
- assert.equal(s.run('track.enabled'),false);assert.equal(s.run('previewJob!==null'),true);
+ assert.equal(s.run('track.enabled'),true);assert.equal(s.run('previewJob!==null'),true);
  finish();await preview;
  assert.equal(s.run('track.enabled'),true);assert.equal(s.run('previewJob'),null);
  assert.equal(s.run("$('preview-status').textContent"),'Prueba terminada');
@@ -566,23 +572,20 @@ test('Assistant text moves from pending to playing to complete with browser play
  s.context.fetch=async()=>({ok:true,json:async()=>({})});
  s.context.window.roomVoice={cancel(){},speak:(_d,_status,onPlaying)=>{playing=onPlaying;return new Promise(resolve=>finish=resolve)}};
  const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Hola mundo'})");
- assert.equal(s.run("karaokeNodes.get('s:voice:u').node.dataset.playback"),'pending');
+ assert.equal(s.run("roomStore.getState().conversation.messages[0].playback"),'pending');
  playing();
- assert.equal(s.run("karaokeNodes.get('s:voice:u').node.dataset.playback"),'playing');
+ assert.equal(s.run("roomStore.getState().conversation.messages[0].playback"),'playing');
  finish();await pending;
- assert.equal(s.run("karaokeNodes.get('s:voice:u').node.dataset.playback"),'complete');
+ assert.equal(s.run("roomStore.getState().conversation.messages[0].playback"),'complete');
 });
 test('Karaoke preserves full text, survives history redraw and clears when interrupted',()=>{
  const s=setup();
  s.run("var speech={session_id:'s',utterance_id:'u'};activeSpeech=speech;add('assistant','Hola <mundo>','voice:u','a');updateKaraoke(speech,{from:5,to:12,mode:'word'})");
- let saved=s.run("karaokeNodes.get('s:voice:u')");
- assert.equal(saved.node.children.map(n=>n.textContent).join(''),'Hola <mundo>');
- assert.equal(saved.node.children[0].textContent,'Hola <mundo>');
- assert.equal(saved.node.children[0].className,'karaoke-played');
- assert.equal(saved.node.children[1].className,'karaoke-upcoming');
- s.run('renderHistory()');
- saved=s.run("karaokeNodes.get('s:voice:u')");
- assert.equal(saved.node.children[0].textContent,'Hola <mundo>');
+ let saved=s.run('roomStore.getState().conversation.messages[0]');
+ assert.equal(saved.text,'Hola <mundo>');
+ assert.equal(saved.karaoke.to,12);
+ s.run('markHistorySeen()');
+ assert.equal(s.run('roomStore.getState().conversation.messages[0].karaoke.to'),12);
  s.run("window.roomVoice={cancel(){}};cancelBrowserSpeech()");
  assert.equal(s.run('karaokeState'),null);
  s.run("updateKaraoke(speech,{from:0,to:4,mode:'word'})");
@@ -865,7 +868,7 @@ test('The engine badge says what this call uses, in a few words',()=>{
  assert.equal(s.run("engineBadgeText({stt_provider:'openai',stt_model:'gpt-4o-transcribe',turn_end_mode:'smart_turn'},null)"),'OpenAI · gpt-4o-transcribe · smart-turn');
  assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-base',turn_end_mode:'timer',user_speech_timeout:2.5},{model:'onnx-community/whisper-base',device:'wasm'})"),'Whisper base · CPU · silencio 2,5 s');
  assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',turn_end_mode:'smart_turn'},{model:'onnx-community/whisper-tiny',device:'wasm',fallback_from:'webgpu'})"),'Whisper tiny · CPU (GPU falló) · smart-turn');
- s.run("showEngineBadge('x')");assert.equal(s.run("$('engine-badge').hidden"),false);s.run("showEngineBadge('')");assert.equal(s.run("$('engine-badge').hidden"),true);
+ s.run("roomStore.patch({engineReady:true,voicePreferences:{stt_provider:'openai',stt_model:'x'}})");assert.equal(s.run("$('engine-badge').hidden"),false);s.run("state.engineReady=false");assert.equal(s.run("$('engine-badge').hidden"),true);
 });
 
 test('One bubble per turn: bars while listening, slower while transcribing, kept through a merge, replaced by the text',()=>{
@@ -1050,7 +1053,7 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
  const pending=s.run('lostConnection')({code:1006},epoch,{browserStt:false,sttRuntime:null});
  await new Promise(resolve=>setTimeout(resolve,5));
  assert.equal(sockets.length,1,'a new socket is opened after the first delay');
- assert.deepEqual(joinLine,['Reconectando con la sala…'],'the reconnection uses the join line, not the transcript status');
+ assert.deepEqual(joinLine,[null,'Reconectando con la sala…'],'the reconnection uses the join line, not the transcript status');
  const socket=sockets[0];socket.readyState=1;socket.onopen();
  const hello=JSON.parse(socket.sent[0]);
  assert.equal(hello.type,'client-ready');assert.equal(hello.data.conversation,'t-1','the remembered conversation travels in the hello');
@@ -1070,15 +1073,15 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
 
 test('The engine badge carries the audio output health: recovering on a stall, failed on a refusal, clean once something plays',()=>{
  const s=setup();
- s.run("showEngineBadge('OpenAI · gpt-4o')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o');
+ s.run("roomStore.patch({engineReady:true,voicePreferences:{stt_provider:'openai',stt_model:'gpt-4o'}})");
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn');
  s.run("noteOutputHealth('stall')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · audio ↻');
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn · audio ↻');
  assert.equal(s.run("$('engine-badge').dataset.output"),'recovering');
  s.run("noteOutputHealth('complete')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o');
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn');
  s.run("noteOutputHealth('attach-refused')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · audio ✕');
+ assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn · audio ✕');
  s.run("noteOutputHealth('cancel')");
  assert.equal(s.run("$('engine-badge').dataset.output"),'failed','a cancel says nothing about health');
  s.run("noteOutputHealth('play-encoded')");
@@ -1136,7 +1139,7 @@ test('The join names each step it is on, from the tap until the conversation is 
  socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'call-1',sample_rate:16000,channels:1}})});
  await joined;
  assert.deepEqual(published,[
-  'Preparando audio',
+  null, 'Preparando audio',
   'Cargando Whisper','Cargando Whisper (17 %)',
   'Cargando el modelo de voz','Cargando el modelo de voz (42 %)',
   'Pidiendo el micrófono',
@@ -1182,87 +1185,6 @@ function presenceSetup(preferences="{presence_sound:'on'}"){
   flush(){for(const [id,timer] of [...timers]){timers.delete(id);timer.fn()}}};
 }
 const OWN_TURN={revision:1,thread_id:'a',session_id:'s'};
-test('The bed starts when the conversation reads this turn and ends at its first spoken reply',async()=>{
- const s=presenceSetup();
- s.emit('voice-user-turn',{...OWN_TURN,phase:'finished',text:'Hola'});
- s.emit('voice-input-receipt',{...OWN_TURN,status:'pending'});
- assert.deepEqual(s.calls,[],'queued is not in the conversation\'s hands yet');
- s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['start','read',0.1]]);
- assert.equal(s.run('presenceTurn'),'s:user-turn:1');
- let finish;s.context.window.roomVoice.playEncoded=()=>new Promise(resolve=>finish=resolve);
- const playing=s.run("receiveServerSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Ya',audio_base64:'SUQz'})");
- assert.deepEqual(s.calls.at(-1),['stop','reply'],'the voice never shares the output with the bed');
- assert.equal(s.run('presenceTurn'),null);
- finish();await playing;
-});
-test('Without a read receipt the bed waits a moment after delivery, and a read overtakes that wait',()=>{
- const s=presenceSetup();
- s.emit('voice-input-receipt',{...OWN_TURN,status:'unconfirmed'});
- assert.deepEqual(s.calls,[],'a harness that never reports reads still gets the bed, just not instantly');
- assert.deepEqual([...s.timers.values()].map(timer=>timer.ms),[1500]);
- s.flush();
- assert.deepEqual(s.calls,[['start','unconfirmed',0.1]]);
-
- const later=presenceSetup();
- later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'delivered'});
- later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'read'});
- assert.deepEqual(later.calls,[['start','read',0.1]]);
- later.flush();
- assert.deepEqual(later.calls,[['start','read',0.1]],'the armed wait cannot start it a second time');
-});
-test('A delivery that failed, a new turn, the user speaking and losing the room all end the bed',()=>{
- const failed=presenceSetup();
- failed.emit('voice-input-receipt',{...OWN_TURN,status:'delivered'});
- failed.emit('voice-input-receipt',{...OWN_TURN,status:'not_sent'});
- failed.flush();
- assert.deepEqual(failed.calls,[],'nothing to say while it is working is not the same as nothing working');
-
- for(const [label,event,reason] of [
-  ['another turn',['voice-user-turn',{...OWN_TURN,revision:2,phase:'started'}],'new_turn'],
-  ['the user speaking',['user-started-speaking',{}],'user_speaking'],
-  ['the audio being cancelled',['voice-cancel',{...OWN_TURN,revision:2}],'audio_cancelled'],
- ]){
-  const s=presenceSetup();
-  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
-  s.emit(...event);
-  assert.deepEqual(s.calls.at(-1),['stop',reason],label);
-  assert.equal(s.run('presenceTurn'),null,label);
- }
- const dropped=presenceSetup();
- dropped.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- dropped.run("stream={getTracks:()=>[],getAudioTracks:()=>[]};disconnect()");
- assert.ok(dropped.calls.some(call=>call[0]==='stop'&&call[1]==='disconnected'));
-});
-test('The bed belongs to the turn this browser sent to the conversation it is looking at',()=>{
- const s=presenceSetup();
- s.emit('voice-input-receipt',{...OWN_TURN,thread_id:'other',status:'read'});
- s.emit('voice-input-receipt',{...OWN_TURN,session_id:'another-browser',status:'read'});
- assert.deepEqual(s.calls,[],'another conversation, or another browser in the room, is not this bed');
- s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['start','read',0.1]]);
-});
-test('The bed is a device setting: off means silent, and the stored volume is what plays',()=>{
- const off=presenceSetup("{presence_sound:'off'}");
- off.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- off.flush();
- assert.deepEqual(off.calls,[],'off means silent');
- const byDefault=presenceSetup('{}');
- byDefault.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- byDefault.flush();
- assert.equal(byDefault.calls.length,1,'the bed is on by default now: the operator asked for it');
-  const loud=presenceSetup("{presence_sound:'on',presence_volume:8}");
- loud.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(loud.calls,[['start','read',0.1]],'one level: a stored volume from an older page is ignored');
-});
-test('Turning the bed off while it sounds silences it at once',async()=>{
- const s=presenceSetup();
- s.context.localStorage={getItem:()=>null,setItem(){},removeItem(){}};
- s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- s.run("ws=null;voiceCatalog={languages:[],models:[]};$('presence-sound').value='off';$('presence-volume').value='4';$('stt-device').value='auto'");
- await s.run("$('language-form').onsubmit({preventDefault(){}})");
- assert.deepEqual(s.calls.at(-1),['stop','setting_off']);
-});
 test('Saving the settings form stores every device setting, the ambient bed among them',async()=>{
  const s=setup();const stored=[];
  s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};
@@ -1281,55 +1203,6 @@ test('Saving the settings form stores every device setting, the ambient bed amon
  assert.equal('vad_start_secs' in saved,false,'the detector is tuned in the room, not here');
  assert.equal(saved.presence_sound,'on');
  assert.equal(saved.replay_on_return_seconds,300,'how far back to repeat is this device\'s, and a number');
-});
-
-test('The read receipt is announced: one short note, the dots, and the bed; the dots stay even with the sound off',()=>{
- const s=presenceSetup();
- s.emit('voice-user-turn',{...OWN_TURN,phase:'finished',text:'Hola'});
- assert.equal(s.run('workingOnTurn')(),false,'nothing is working on it until the conversation says so');
- s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['start','read',0.1]],'the note lands with the second tick, before the bed');
- assert.equal(s.run('workingOnTurn')(),true);
- assert.equal(s.context.__view.working,true,'the conversation side shows the three dots');
- s.run("stopPresence('reply')");
- assert.equal(s.run('workingOnTurn')(),false);
- assert.equal(s.context.__view.working,false);
- // With the sound turned off there is no note and no bed, and the dots still say what is happening.
- const silent=presenceSetup("{presence_sound:'off'}");
- silent.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(silent.calls,[],'nothing sounds when the bed is off');
- assert.equal(silent.run('workingOnTurn')(),true);
- assert.equal(silent.context.__view.working,true);
-});
-test('What silences the bed is not always what puts the dots out',()=>{
- // A new turn or the person speaking takes the audio out of the way and nothing else: the conversation
- // is still working on what it was given. Only a failed delivery says nobody is working on it.
- for(const [event,data,working] of [['voice-user-turn',{...OWN_TURN,revision:2,phase:'started'},true],
-                                    ['voice-input-receipt',{...OWN_TURN,status:'not_sent'},false]]){
-  const s=presenceSetup();
-  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
-  assert.equal(s.run('workingOnTurn')(),true,event);
-  s.emit(event,data);
-  assert.equal(s.run('workingOnTurn')(),working,event);
-  assert.equal(s.run('presenceTurn'),null,'the bed stops either way');
- }
-});
-
-test('The dots belong to the conversation, not to the microphone: only a final reply puts them out',()=>{
- const s=presenceSetup();
- s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.equal(s.run('workingOnTurn')(),true);
- // The person speaks again, and starts another turn: the conversation is still working on the first one.
- s.emit('user-started-speaking',{});
- s.emit('voice-cancel',{session_id:'s',revision:2});   // the room cancels the audio the instant a voice is heard
- s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
- assert.equal(s.run('workingOnTurn')(),true,'speaking does not make the conversation idle');
- assert.ok(s.calls.some(call=>call[0]==='stop'),'the bed does get out of the way');
- // An acknowledgement is not the end of the work.
- s.run("stopPresence('progress')");
- assert.equal(s.run('workingOnTurn')(),true,'a reply marked final:false leaves the dots on');
- s.run("stopPresence('reply')");
- assert.equal(s.run('workingOnTurn')(),false,'the final reply puts them out');
 });
 
 // ----- what the microphone kept hearing while the socket was down (#46) -----
@@ -1445,57 +1318,6 @@ test('A message the room recovered from the gap gets its own bubble, and takes n
  // Another browser's catch-up is not this one's.
  s.run("message(JSON.stringify({type:'voice-catchup-turn',data:{session_id:'other',history_id:'other:user-catchup:1',thread_id:'a',text:'no es mío'}}))");
  assert.equal(shown.at(-1).messages.some(m=>m.text==='no es mío'),false);
-});
-
-test('A final reply settles the turn it answers, not whatever the conversation is working on now',()=>{
- const s=presenceSetup();
- s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.equal(s.run('workingOnTurn')(),true);
- // The person speaks again while the conversation is still working; the new turn is read too.
- s.emit('voice-cancel',{session_id:'s',revision:2});
- s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
- s.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'read'});
- assert.equal(s.run('presenceTurn'),'s:user-turn:2','the dots moved to the turn now in hand');
- // The final reply to the first turn arrives late: it must not put out the dots of the second.
- s.run("stopPresence('reply','s:user-turn:1')");
- assert.equal(s.run('workingOnTurn')(),true,'an old turn closing says nothing about the new one');
- s.run("stopPresence('reply','s:user-turn:2')");
- assert.equal(s.run('workingOnTurn')(),false);
-});
-
-test('While the harness says it is working, nothing the conversation says puts the dots out',()=>{
- const s=presenceSetup();
- s.run("sessionId='s'");
- s.emit('voice-conversation',{thread_id:'a',working:true});
- assert.equal(s.run('workingOnTurn')(),true,'the dots go on before any receipt');
- // Replies, new turns and the person speaking all leave them alone now.
- s.run("stopPresence('reply','s:user-turn:1')");
- s.emit('voice-cancel',{session_id:'s',revision:2});
- s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
- assert.equal(s.run('workingOnTurn')(),true);
- // Only the harness going idle does.
- s.emit('voice-conversation',{thread_id:'a',working:false});
- assert.equal(s.run('workingOnTurn')(),false);
-});
-
-test('The bed belongs to the silence: it goes while anyone speaks and comes back when the room is quiet',()=>{
- const s=presenceSetup("{presence_sound:'on'}");
- s.run("sessionId='s'");
- s.emit('voice-conversation',{thread_id:'a',working:true});
- const last=()=>JSON.stringify(s.calls.at(-1));
- assert.equal(last(),JSON.stringify(['start','working',0.1]),'the harness said it is working; the room is quiet');
- s.emit('user-started-speaking',{});
- assert.equal(last(),JSON.stringify(['stop','user_speaking']),'and it gets out of the way at once');
- s.emit('user-stopped-speaking',{});
- assert.equal(last(),JSON.stringify(['start','quiet',0.1]),'back in the silence, while the dots are still on');
- assert.equal(s.run('workingOnTurn')(),true);
- // With the sound off there is nothing to hear, whatever happens.
- const silent=presenceSetup("{presence_sound:'off'}");
- silent.run("sessionId='s'");
- silent.emit('voice-conversation',{thread_id:'a',working:true});
- silent.emit('user-stopped-speaking',{});
- assert.equal(silent.calls.length,0);
- assert.equal(silent.run('workingOnTurn')(),true,'the dots do not depend on the sound');
 });
 
 /* The trace is the page's: the room announces a turn, this page opens the span and hands the room
@@ -1655,4 +1477,66 @@ test('The tab names the sessions it has used, so the room can answer what this b
  assert.equal(s.run('rememberedSessions')().length,s.run('REMEMBERED_SESSIONS'));
  store['sidevoice.sessions']='no es json';
  assert.equal(s.run('rememberedSessions')().length,0,'storage that is not a list of ids is no list of ids');
+});
+
+test('A cancelled playback cannot be revived by a late playing callback or completion',async()=>{
+ const s=presenceSetup();let onPlaying,finish;
+ s.context.window.roomVoice.speak=(_d,_status,playing)=>{onPlaying=playing;return new Promise(resolve=>finish=resolve)};
+ s.emit('voice-conversation',{thread_id:'a',working:true});
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'late',text:'Late',final:false})");
+ s.emit('user-started-speaking',{});
+ onPlaying();finish();await pending;
+ assert.equal(s.run('activeSpeech'),null);
+ assert.equal(s.run('botLive'),false);
+ assert.equal(s.run('roomStore.getState().session.speaker'),'user');
+ assert.equal(s.run('roomStore.getState().session.working'),true);
+ assert.equal(s.run('roomStore.getState().session.bed'),false);
+});
+test('Progress speech failure releases its output and the bed returns automatically',async()=>{
+ const s=presenceSetup();let onPlaying,fail;
+ s.context.window.roomVoice.speak=(_d,_status,playing)=>{onPlaying=playing;return new Promise((resolve,reject)=>fail=reject)};
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'fail',text:'Progress',final:false})");
+ onPlaying();fail(Error('device refused'));await pending;
+ assert.equal(s.run('activeSpeech'),null);
+ assert.equal(s.run('roomStore.getState().session.bed'),true);
+ assert.deepEqual(s.calls.at(-1),['start','working_quiet',.1]);
+});
+test('Ambient effects stop before speech, survive synchronous output reports, and resume once',async()=>{
+ const s=presenceSetup();let played,finish,starts=0;
+ s.context.window.roomVoice.startPresence=()=>{starts++;s.run('showEchoCover()');return true};
+ s.emit('voice-conversation',{thread_id:'a',working:true});
+ assert.equal(starts,1,'an output report during start cannot start the bed recursively');
+ s.context.window.roomVoice.speak=(_d,_status,onPlaying)=>{played=onPlaying;assert.equal(s.run('bedPlaying'),false);return new Promise(resolve=>finish=resolve)};
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Progress',final:false})");
+ played();finish();await pending;
+ assert.equal(starts,2);
+ assert.equal(s.run('roomStore.getState().session.bed'),true);
+});
+test('A stale audio epoch still settles the final reply it carries without playing it',async()=>{
+ const s=presenceSetup();let played=false;s.context.window.roomVoice.speak=()=>{played=true};
+ s.run("roomRevision=3;state.turns={'s:user-turn:1':{session:'s',thread:'a',status:'read'},'s:user-turn:3':{session:'s',thread:'a',status:'read'}}");
+ await s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'late-final',text:'Done'})");
+ assert.equal(played,false);assert.equal(s.run("state.turns['s:user-turn:1'].final"),true);
+ assert.equal(s.run('roomStore.getState().session.working'),true);
+});
+test('An audio cancellation in silence cannot contradict harness work or suppress the bed',()=>{
+ const s=presenceSetup();s.emit('voice-conversation',{thread_id:'a',working:true});
+ s.emit('voice-cancel',{session_id:'s',revision:1});
+ assert.equal(s.run('roomStore.getState().session.bed'),true);
+ assert.equal(s.calls.filter(c=>c[0]==='start').length,1);
+ s.emit('voice-conversation',{thread_id:'a',working:false});
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.equal(s.run('roomStore.getState().session.working'),false);
+});
+test('Typed-message receipts keep their bubble ID but final replies settle the session and revision turn',async()=>{
+ const s=presenceSetup();
+ s.run("add('user','Typed input',null,'a',{history_id:'s:user-text:message-id',session:'s',revision:7,delivery:'pending'})");
+ s.emit('voice-input-receipt',{session_id:'s',thread_id:'a',revision:7,history_id:'s:user-text:message-id',status:'read'});
+ assert.equal(s.run('roomStore.getState().session.working'),true);
+ assert.equal(s.run('roomStore.getState().conversation.messages[0].delivery'),'read');
+ s.context.window.roomVoice.speak=async()=>{};
+ await s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:7,reply_revision:7,utterance_id:'typed-reply',text:'Done',final:true})");
+ assert.equal(s.run('roomStore.getState().session.working'),false);
+ s.emit('voice-input-receipt',{session_id:'s',thread_id:'a',revision:7,history_id:'s:user-text:message-id',status:'read'});
+ assert.equal(s.run('roomStore.getState().session.working'),false,'a repeated receipt cannot reopen a final turn');
 });

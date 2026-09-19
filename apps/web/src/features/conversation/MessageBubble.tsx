@@ -2,16 +2,7 @@ import { Button } from "../../components/ui/Button";
 import type { ChatMessage } from "../../state/room-types";
 import { KaraokeText } from "./KaraokeText";
 
-const receiptSymbol: Record<string, string> = { pending: "◷", sending: "◷", delivered: "✓", unconfirmed: "✓", read: "✓✓", uncertain: "!", not_sent: "!" };
-const receiptLabel: Record<string, string> = {
-  pending: "Enviando",
-  sending: "Enviando",
-  delivered: "Entregado a la conversación; lectura sin confirmar",
-  unconfirmed: "Escrito en la conversación, sin acuse",
-  read: "Leído por la conversación",
-  uncertain: "Entrega sin confirmar",
-  not_sent: "No enviado",
-};
+import { receiptView } from "../../state/room-session-state.js";
 
 export function MessageBubble({ message, position, showName }: { message: ChatMessage; position: "only" | "first" | "middle" | "last"; showName: boolean }) {
   const delivery = message.role === "user" && message.delivery ? message.delivery : null;
@@ -22,7 +13,7 @@ export function MessageBubble({ message, position, showName }: { message: ChatMe
       {message.cancellable && <Button variant="ghost" size="compact" className="cancel-input" onClick={() => void window.sidevoiceActions?.cancelInput()}>Cancelar envío</Button>}
       <div className="chat-meta">
         {!message.draft && <time dateTime={new Date(message.time).toISOString()}>{new Date(message.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>}
-        {delivery && <span className="receipt delivery" data-state={delivery} title={receiptLabel[delivery]} aria-label={receiptLabel[delivery]}>{receiptSymbol[delivery]}</span>}
+        {delivery && <span className="receipt delivery" data-state={delivery} title={receiptView(delivery).label} aria-label={receiptView(delivery).label}>{receiptView(delivery).symbol}</span>}
       </div>
       {message.offlineNote && <span className="chat-audio-note">{message.offlineNote}</span>}
       {message.replayNote && <span className="chat-audio-note">{message.replayNote}</span>}

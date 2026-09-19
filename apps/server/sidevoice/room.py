@@ -19,6 +19,7 @@ from collections import deque
 from fastapi import HTTPException
 from pipecat.frames.frames import InterruptionFrame
 
+from .publication import PublicationClient, publication_decision
 from .latency import CallLatency
 from .pipeline_frames import PresentationBoundary, PresentationSpeech
 from .synthesis_cache import SynthesisCache
@@ -630,11 +631,19 @@ class Room:
         row_id = payload.session_id + ':voice:' + payload.utterance_id
         # Store the conversational text even if its audio epoch has expired.
         asker = self.clients.get(payload.session_id)
-        # The browser that asked may have been replaced while the conversation was thinking — a reconnection,
-        # a reload, a room restart. The reply is not stale: it answers a question this person asked minutes
-        # ago and is still waiting for. If someone is on that conversation now, they are who it is for.
-        if (asker is None or not asker.connected) and self.audience(payload.thread_id):
-            asker = self.audience(payload.thread_id)[-1]
+        def facts(client):
+            return PublicationClient(client.id, client.id in self.sessions, client.connected,
+                                     client.target.get('thread_id'), client.switching,
+                                     client.revision, client.turn_revision, client.speaking)
+
+        decision = publication_decision(payload.session_id, payload.revision, payload.thread_id,
+                                        facts(asker) if asker else None,
+                                        tuple(facts(c) for c in self.audience(payload.thread_id)),
+                                        session_exists=payload.session_id in self.sessions)
+        # Only replacement changes the journal identity. Waiting uses the current audio
+        # epoch below while preserving the original reply's journal revision.
+        if decision.session_id != payload.session_id:
+            asker = self.clients[decision.session_id]
             payload = payload.model_copy(update={'session_id': asker.id, 'revision': asker.revision})
             row_id = payload.session_id + ':voice:' + payload.utterance_id
         record = self.journal.binding_for_thread(payload.thread_id) if self.journal else None
@@ -649,25 +658,13 @@ class Room:
         for client in self.audience(payload.thread_id):
             client.latency.reply(payload.utterance_id, payload.thread_id, payload.revision)
             client.telemetry.reply_received(payload.utterance_id, payload.thread_id, payload.revision)
-        reason = None
-        if payload.session_id not in self.sessions:
-            reason = 'session_changed'
-        elif not asker or not asker.connected:
-            reason = 'call_ended'
-        elif asker.target.get('thread_id') != payload.thread_id or asker.switching:
-            reason = 'focus_changed'
-        elif payload.revision != asker.revision:
-            reason = 'newer_turn' if asker.turn_revision > payload.revision else 'focus_changed'
-        elif asker.speaking:
-            reason = 'user_speaking'
-        may_wait = reason in {'newer_turn', 'user_speaking'}
-        if reason and not may_wait:
-            self.journal.update(row_id, 'text_only', reason)
-            return {'status': 'text_only', 'text_saved': True, 'reason': reason}
+        if not decision.can_speak:
+            self.journal.update(row_id, 'text_only', decision.reason)
+            return {'status': 'text_only', 'text_saved': True, 'reason': decision.reason}
         try:
             result = await self.speak(payload.text, payload.utterance_id, payload.session_id,
-                                      asker.revision if may_wait else payload.revision, payload.language,
-                                      wait_for_quiet=may_wait, thread_id=payload.thread_id, row_id=row_id,
+                                      decision.revision, payload.language,
+                                      wait_for_quiet=decision.wait_for_quiet, thread_id=payload.thread_id, row_id=row_id,
                                       final=getattr(payload, 'final', True))
         except HTTPException as error:
             if error.status_code not in {409, 429}:

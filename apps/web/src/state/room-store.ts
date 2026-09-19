@@ -1,26 +1,12 @@
 import { createContext, useContext } from "react";
-import { createStore, type StoreApi } from "zustand/vanilla";
+import { createRoomSessionStore } from "./room-session-state.js";
 import { useStore } from "zustand";
-import type { ConversationView, JoinStatusView, LanguageModelView, ParticipantView } from "./room-types";
 
-export interface RoomViewState {
-  conversation: ConversationView;
-  participants: ParticipantView[];
-  languageModels: LanguageModelView[];
-  bootError: string | null;
-  join: JoinStatusView | null;
-}
-
-export type RoomStore = StoreApi<RoomViewState>;
+export type RoomViewState = import('./room-session-state.js').SessionSnapshot;
+export type RoomStore = import('./room-session-state.js').SessionStore;
 
 export function createRoomStore(): RoomStore {
-  return createStore<RoomViewState>(() => ({
-    conversation: { messages: [], pendingText: "", pendingCancellable: false },
-    participants: [],
-    languageModels: [],
-    bootError: null,
-    join: null,
-  }));
+  return createRoomSessionStore();
 }
 
 export const RoomStoreContext = createContext<RoomStore | null>(null);
@@ -33,12 +19,8 @@ export function useRoomStore<T>(selector: (state: RoomViewState) => T): T {
 
 export function installRoomBridge(store: RoomStore) {
   window.sidevoiceUI = {
-    setConversation: (conversation) => store.setState({ conversation }),
-    setParticipants: (participants) => store.setState({ participants }),
-    setLanguageModels: (languageModels) => store.setState({ languageModels }),
-    setBootError: (bootError) => store.setState({ bootError }),
-    setJoinStatus: (join) => store.setState({ join }),
-    // A playback cue changes one message's karaoke; nothing else in the list moves.
-    updateKaraoke: (segment, karaoke) => store.setState((state) => ({ conversation: { ...state.conversation, messages: state.conversation.messages.map((m) => (m.segment === segment ? { ...m, karaoke, playback: "playing" } : m)) } })),
+    store,
+    setLanguageModels: (languageModels) => store.patch({ languageModels }),
+    setBootError: (bootError) => store.patch({ bootError }),
   };
 }

@@ -1,6 +1,6 @@
 export {};
 
-import type { ConversationView, JoinStatusView, KaraokeRange, LanguageModelView, ParticipantView, SidevoiceActions } from "../state/room-types";
+import type { LanguageModelView, SidevoiceActions } from "../state/room-types";
 
 declare global {
   interface Window {
@@ -18,12 +18,9 @@ declare global {
     roomI18n?: { setLanguage(language: string): void };
     sidevoiceSessionId?: () => string | null;
     sidevoiceUI?: {
-      setConversation(value: ConversationView): void;
-      setParticipants(value: ParticipantView[]): void;
+      store?: import("../state/room-store").RoomStore;
       setLanguageModels(value: LanguageModelView[]): void;
       setBootError(value: string | null): void;
-      setJoinStatus?(value: JoinStatusView | null): void;
-      updateKaraoke?(segment: string, karaoke: KaraokeRange | null): void;
     };
     /** The meter's analyser, pulled per animation frame by the waveform bubble; null while no call captures. */
     sidevoiceAudio?: { readWaveform(): Float32Array | null };
