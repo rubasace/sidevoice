@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
 function setup({strictDOM=false}={}){
  const sourceRoot=__dirname+'/../src'; const uiSource=fs.readdirSync(sourceRoot,{recursive:true}).filter(file=>String(file).endsWith('.tsx')).map(file=>fs.readFileSync(sourceRoot+'/'+file,'utf8')).join('\n');
- class Element{constructor(){this.children=[];this.dataset={};this.style={};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
+ class Element{constructor(){this.children=[];this.dataset={};this.style={setProperty(){}};this.classList={add(){},remove(){}};this.parentElement=this;this.listeners={};this.attributes={}}addEventListener(name,fn){this.listeners[name]=fn}showModal(){this.open=true}close(){this.open=false;this.listeners.close?.()}contains(node){return node===this||this.children.includes(node)}removeAttribute(){}closest(){return null}querySelector(){return null}append(...children){this.children.push(...children)}replaceChildren(...children){this.children=[...children]}remove(){}setAttribute(name,value){this.attributes[name]=value}getAttribute(name){return this.attributes[name]}click(){this.onclick?.()}}
  const elements=new Map(),handlers={};
  if(strictDOM){for(const match of uiSource.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element());for(const id of ['connection-stats','stats-title','stats-close','language-settings','settings-title','settings-close','stats-endpoint','stats-response','stats-synthesis','stats-playout','default-model-info','stt-model-info'])elements.set(id,new Element())}
  const context=vm.createContext({Element,console,Date,JSON,Math,Uint8Array,AbortController,sessionStorage:{getItem:()=>null,setItem(){}},document:{getElementById:id=>{if(!elements.has(id)){if(strictDOM)return null;elements.set(id,new Element())}return elements.get(id)},createElement:()=>new Element(),addEventListener(){}},window:{addEventListener:(name,fn)=>handlers[name]=fn,roomTranscription:{capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-base']}),prepare:async({model})=>({model,device:'wasm'}),start(){},stop(){},ingest(){}}},fetch:()=>new Promise(()=>{}),setInterval(){},setTimeout,clearTimeout,cancelAnimationFrame(){},requestAnimationFrame(){},WebSocket:{OPEN:1},location:{protocol:'https:',host:'room.example'}});
@@ -1044,4 +1044,22 @@ test('A step that fails leaves its reason, and what to do, where the step was',a
  socket.onclose({code:1013});
  await joined;
  assert.equal(room.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.');
+});
+
+test('Saving the settings form stores every device setting instead of throwing first',async()=>{
+ const s=setup();const stored=[];
+ s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};
+ s.run("ws=null;voicePreferences={stt_provider:'openai',stt_device:'auto'};voiceCatalog={languages:[],models:[]}");
+ for(const [id,value] of [['stt-language','es'],['stt-device',''],['default-tts-language','es'],['tts-speed','1'],['ui-language','es'],
+  ['tts-device','auto'],['default-model','kokoro'],['default-voice','ef_dora'],['audio-grace-seconds','2'],
+  ['turn-end-mode','smart_turn'],['user-speech-timeout','2.5'],['smart-turn-min-silence','0.6'],['smart-turn-max-silence','3'],
+  ['vad-confidence','0.6'],['vad-min-volume','0.35'],['vad-start-secs','0.2']])
+  s.run(`$('${id}').value=${JSON.stringify(value)}`);
+ await s.run("$('language-form').onsubmit({preventDefault(){}})");
+ assert.ok(!s.run("$('settings-error').textContent"),'the form reached the end without throwing');
+ assert.match(s.run("$('live').textContent"),/Preferencias guardadas/);
+ const saved=stored.find(([key])=>key==='sidevoice.settings')?.[1];
+ assert.ok(saved,'something was stored at all');
+ assert.equal(saved.stt_device,'auto','a hidden select reading back empty keeps the last valid value');
+ assert.equal(saved.vad_start_secs,0.2);
 });
