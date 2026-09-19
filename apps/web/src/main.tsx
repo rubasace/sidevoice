@@ -15,6 +15,20 @@ import "./styles/tokens.css";
 import "./styles/room.css";
 import "./styles/react.css";
 
+// Uncaught errors are reported to the room before anything else is loaded: the controller owns the
+// socket, so until it exists the reports wait here (#58).
+window.sidevoiceClientErrors = [];
+function report(kind: string, message: string, stack?: string) {
+  const entry = { kind, message, stack: stack ?? "", component: "" };
+  if (window.sidevoiceReportError) window.sidevoiceReportError(entry);
+  else window.sidevoiceClientErrors?.push(entry);
+}
+window.addEventListener("error", (event) => report("uncaught", event.message, event.error?.stack));
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason as { message?: string; stack?: string } | undefined;
+  report("unhandled-rejection", String(reason?.message ?? event.reason), reason?.stack);
+});
+
 const root = createRoot(document.getElementById("root")!);
 
 declare const __BUILD_ID__: string;

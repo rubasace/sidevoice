@@ -24,6 +24,11 @@ declare global {
     };
     /** The meter's analyser, pulled per animation frame by the waveform bubble; null while no call captures. */
     sidevoiceAudio?: { readWaveform(): Float32Array | null };
+    /** One uncaught error in the interface, on its way to the room. Never any transcript text. */
+    sidevoiceReportError?: (report: { kind: string; message: string; stack?: string; component?: string }) => void;
+    /** Reports raised before the controller (and its socket) exist. */
+    sidevoiceClientErrors?: { kind: string; message: string; stack?: string; component?: string }[];
+    sidevoiceBuildId?: string;
     sidevoiceActions?: SidevoiceActions;
   }
 }

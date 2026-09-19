@@ -488,6 +488,24 @@ function reportAudioHealth(reason){
  try{state.ws.send(JSON.stringify({type:'voice-audio-health',data:{session_id:state.sessionId,reason,health}}))}catch{}
 }
 window.addEventListener('voice-output',event=>{const kind=event.detail?.kind;if(REPORTED_OUTPUT_EVENTS.has(kind))reportAudioHealth(kind)});
+
+// ----- uncaught errors: nobody can read a phone's console while driving (#58) -----
+// An uncaught error in the interface unmounts React and leaves a blank room, and the person it
+// happens to is the one who cannot look. The room keeps the last few reports next to the audio ones,
+// so the reason is read from the server. Never any transcript text: the message and the stack only.
+function reportClientError(report){
+ const entry={kind:String(report?.kind||'error').slice(0,40),message:String(report?.message||'').slice(0,400),
+  stack:String(report?.stack||'').slice(0,2000),component:String(report?.component||'').slice(0,1000),
+  build:String(window.sidevoiceBuildId||'').slice(0,40)};
+ if(state.ws?.readyState===WebSocket.OPEN&&state.sessionId){
+  try{state.ws.send(JSON.stringify({type:'voice-client-error',data:{session_id:state.sessionId,...entry}}));return}catch{}
+ }
+ // Before the call exists, or once its socket is gone, the beacon still reaches the room.
+ try{navigator.sendBeacon?.('/api/presentation/client-error',new Blob([JSON.stringify(entry)],{type:'application/json'}))}catch{}
+}
+window.sidevoiceReportError=reportClientError;
+for(const queued of window.sidevoiceClientErrors||[])reportClientError(queued);
+window.sidevoiceClientErrors=[];
 function forgetThread(threadId){state.history=state.history.filter(r=>r.thread!==threadId);save();if(state.viewedThread===threadId)state.viewedThread=null;markHistorySeen()}
 function versionFacts(){
  const page=window.sidevoiceBuildId||'dev',served=state.roomInfo?.web_build||null;
@@ -1436,7 +1454,10 @@ function publishSessionView(view = roomStore.getState()) {
         $('echo-cover-text').textContent = echo.state ? 'Eco: ' + echo.note : '';
     if ($('echo-note'))
         $('echo-note').textContent = echo.note;
-    $('live').textContent = view.live;
+    // Every node here belongs to the React shell: when a render fails the shell is gone, and the
+    // runtime must keep the call alive rather than throw inside an audio callback (#58).
+    if ($('live'))
+        $('live').textContent = view.live;
     updateComposer();
 }
 roomStore.subscribe(reconcileSession);

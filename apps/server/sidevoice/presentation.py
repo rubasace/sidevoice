@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from .room_history import RoomHistory
 from .paths import BROWSER_AUDIO_DIST, BROWSER_AUDIO_ROOT, RUNTIME_ROOT, WEB_DIST
 from .pipeline_frames import PresentationBoundary, PresentationSpeech
-from .room import Room, RoomClient  # noqa: F401 — RoomClient is re-exported for app.py
+from .room import Room, RoomClient, client_error_report  # noqa: F401 — RoomClient is re-exported for app.py
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -356,6 +356,14 @@ def mount_presentation(app):
         require_same_origin(request)
         return await hub.send_text(payload.text, payload.session_id, payload.thread_id,
                                    payload.binding_id, str(payload.message_id))
+
+    @app.post('/api/presentation/client-error')
+    async def client_error(payload: dict, request: Request):
+        require_same_origin(request)
+        # A page whose call is gone (or was never joined) still has a beacon. Nothing in the room moves
+        # because of this: it is a note for whoever reads the room afterwards.
+        hub.client_errors.append(client_error_report(payload))
+        return {'status': 'recorded'}
 
     @app.post('/api/presentation/browser-receipt')
     async def browser_receipt(payload: dict, request: Request):

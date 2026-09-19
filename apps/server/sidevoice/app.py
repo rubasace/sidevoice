@@ -10,6 +10,7 @@ from loguru import logger
 from fastapi import HTTPException, WebSocket
 
 from . import transcription
+from .room import client_error_report
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -160,7 +161,8 @@ class VoiceCall:
         recognised on its own and never reaches this pipeline's detector.
         """
         if not isinstance(message, dict) or message.get('type') not in {
-                'voice-stt-ready', 'voice-settings', 'voice-audio-health', 'voice-catchup', 'voice-turn-trace'}:
+                'voice-stt-ready', 'voice-settings', 'voice-audio-health', 'voice-catchup', 'voice-turn-trace',
+                'voice-client-error'}:
             return
         data = message.get('data') if isinstance(message.get('data'), dict) else {}
         if data.get('session_id') != self.call.id:
@@ -171,6 +173,14 @@ class VoiceCall:
             # The browser opened the root span for the turn the room just announced, and says so with a
             # W3C traceparent. Everything the room measures of that turn hangs from it.
             self.call.telemetry.turn_context(data.get('thread_id'), data.get('revision'), data.get('traceparent'))
+            return
+        if message['type'] == 'voice-client-error':
+            # An uncaught error in the interface. React unmounts on one, so the room goes blank exactly when
+            # the person it happens to cannot look at the screen: the room keeps the last few instead.
+            if self.call.room is not None:
+                self.call.room.client_errors.append(client_error_report(data, self.call.id))
+            logger.warning('Call {}: interface error · {} · {}', self.call.id[:8],
+                           str(data.get('kind') or '')[:40], str(data.get('message') or '')[:200])
             return
         if message['type'] == 'voice-audio-health':
             # What the browser's output did lately (stalls, cancels, refusals), so a stuck phone can be read from the room.

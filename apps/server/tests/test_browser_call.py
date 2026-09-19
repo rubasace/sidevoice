@@ -290,6 +290,21 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         voice.browser_message({**report, 'data': {**report['data'], 'session_id': 'someone-else', 'reason': 'fail'}})
         self.assertEqual(client.snapshot()['audio_health']['reason'], 'stall')
 
+    async def test_an_uncaught_interface_error_is_kept_by_the_room_and_carries_no_transcript(self):
+        voice, client, sent = self.voice([])
+        voice.browser_message({'type': 'voice-client-error', 'data': {
+            'session_id': client.id, 'kind': 'render:transcript', 'message': "null is not an object",
+            'stack': 'at reconcileSession', 'component': 'at MessageList', 'build': 'mu8y5e4k'}})
+        kept = self.hub.snapshot()['room']['client_errors'][-1]
+        self.assertEqual((kept['session_id'], kept['kind'], kept['message']),
+                         (client.id, 'render:transcript', 'null is not an object'))
+        self.assertEqual((kept['component'], kept['build']), ('at MessageList', 'mu8y5e4k'))
+        self.assertTrue(kept['at'] > 0)
+        self.assertNotIn('text', kept, 'an error report never carries what anyone said')
+        # Another call's report is not this call's business, like every other browser message.
+        voice.browser_message({'type': 'voice-client-error', 'data': {'session_id': 'someone-else', 'message': 'otro'}})
+        self.assertEqual(len(self.hub.snapshot()['room']['client_errors']), 1)
+
     async def test_a_finished_turn_is_transcribed_once_and_delivered(self):
         from sidevoice.transcribers import Transcript
         voice, client, sent = self.voice([Transcript('Hola desde el navegador', metrics={'audio_ms': 850, 'recognition_ms': 120})])

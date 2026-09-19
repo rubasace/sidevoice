@@ -1,4 +1,5 @@
 import { RoomProvider } from "./RoomProvider";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { RoomHeader } from "../features/room/RoomHeader";
 import { ParticipantSidebar } from "../features/room/ParticipantSidebar";
 import { TranscriptPanel } from "../features/conversation/TranscriptPanel";
@@ -14,10 +15,10 @@ export function App() {
       <TooltipProvider>
         <RoomHeader />
         <main>
-          <ParticipantSidebar />
-          <TranscriptPanel />
+          <ErrorBoundary area="participants"><ParticipantSidebar /></ErrorBoundary>
+          <ErrorBoundary area="transcript"><TranscriptPanel /></ErrorBoundary>
         </main>
-        <CallToolbar />
+        <ErrorBoundary area="toolbar"><CallToolbar /></ErrorBoundary>
         <ConnectionStatsDialog />
         <SettingsDialog />
         <PreparationDialog />

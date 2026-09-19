@@ -472,6 +472,28 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.hub.journal.pending()[0]['text'], 'Send next')
 
 
+class ClientErrorBeaconTests(IsolatedAsyncioTestCase):
+    async def test_a_page_with_no_call_can_still_tell_the_room_why_it_went_blank(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        import sidevoice.presentation as presentation
+        app = FastAPI()
+        presentation.mount_presentation(app)
+        before = len(presentation.hub.client_errors)
+        with TestClient(app) as client:
+            answer = client.post('/api/presentation/client-error',
+                                 json={'kind': 'uncaught', 'message': 'name.trim is not a function',
+                                       'stack': 'at initials', 'build': 'mu8y5e4k'},
+                                 headers={'Origin': 'http://testserver'})
+            self.assertEqual(answer.status_code, 200)
+            self.assertEqual(answer.json(), {'status': 'recorded'})
+        kept = list(presentation.hub.client_errors)[-1]
+        self.assertEqual(len(presentation.hub.client_errors), before + 1)
+        self.assertEqual((kept['kind'], kept['message'], kept['build']),
+                         ('uncaught', 'name.trim is not a function', 'mu8y5e4k'))
+        self.assertIsNone(kept['session_id'], 'a beacon comes from a page that has no call')
+
+
 class CachePolicyTests(IsolatedAsyncioTestCase):
     async def test_the_audio_engine_and_page_shell_are_never_cached_while_hashed_assets_are_immutable(self):
         import tempfile

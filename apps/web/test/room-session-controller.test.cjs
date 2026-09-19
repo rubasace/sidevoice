@@ -13,8 +13,15 @@ function setup({strictDOM=false}={}){
  vm.runInContext('"use strict";\n'+loaded,context);
  for(const name of Object.keys(vm.runInContext('SessionState.initialSessionFacts()',context)))Object.defineProperty(context,name,{get:()=>vm.runInContext('state.'+name,context),set:value=>{context.__fact=value;vm.runInContext('state.'+name+'=__fact',context)},configurable:true});
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
- return {context,handlers,Element,run:code=>vm.runInContext(code,context)};
+ return {context,handlers,Element,elements,run:code=>vm.runInContext(code,context)};
 }
+test('A page whose interface is gone still runs the call',()=>{
+ // React unmounts its whole root when a render throws. The runtime writes into nodes React owns, so
+ // after that every one of them is null: the call must survive it, because the audio callbacks run here.
+ const s=setup({strictDOM:true});
+ s.elements.delete('live');s.elements.delete('join-status');s.elements.delete('engine-badge');
+ assert.doesNotThrow(()=>s.run('publishSessionView()'),'a missing interface is not a reason to stop the call');
+});
 test('The controller publishes serializable snapshots through the React store bridge',()=>{
  const s=setup({strictDOM:true}),snapshots={};
  s.context.window.sidevoiceUI={

@@ -406,6 +406,22 @@ class RoomClient:
             'timings_ms': audio['timings_ms'] if fresh else {}, 'shared': not fresh}})
 
 
+def client_error_report(data, session_id=None):
+    """One uncaught error in the interface, trimmed to what can be read from the room.
+
+    The shape is owned here because two doors lead to it: a live call's socket and the beacon a page
+    sends when it has no call. Never any transcript text — the message, its stack and which part of
+    the page raised it."""
+    data = data if isinstance(data, dict) else {}
+    return {'session_id': session_id or (str(data.get('session_id'))[:64] or None if data.get('session_id') else None),
+            'at': time.time(),
+            'kind': str(data.get('kind') or '')[:40],
+            'message': str(data.get('message') or '')[:400],
+            'stack': str(data.get('stack') or '')[:2000],
+            'component': str(data.get('component') or '')[:1000],
+            'build': str(data.get('build') or '')[:40]}
+
+
 def _build_info():
     from .paths import build_info
     return build_info()
@@ -428,6 +444,7 @@ class Room:
         self.sessions = deque(maxlen=64)   # ids we have known, so an older reply can be told apart
         self.utterances = {}
         self.audio_reports = deque(maxlen=30)   # browsers' reports about their audio output, kept past their leaving
+        self.client_errors = deque(maxlen=20)   # uncaught errors in the interface: a phone has no console anyone can read
         self.journal = journal
         self.assets = assets if assets is not None else SynthesisCache()
         self.activation_lock = asyncio.Lock()
@@ -812,6 +829,7 @@ class Room:
                          'clients': len(self.clients), 'audio': self.assets.stats(),
                          'utterances': [u.snapshot() for u in self.utterances.values()],
                          'audio_reports': list(self.audio_reports)[-10:],
+                         'client_errors': list(self.client_errors)[-10:],
                          **_build_info()},
                 'clients': [c.identity() for c in self.clients.values()],
                 'call': client.snapshot() if client else None}
