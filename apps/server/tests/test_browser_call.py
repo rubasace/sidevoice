@@ -118,7 +118,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(session['mic_settings']['turn_end_mode'], 'timer')
         self.assertEqual(session['mic_settings']['user_speech_timeout'], 1.0)
         self.assertEqual(session['mic_settings']['vad_confidence'], 0.6)
-        self.assertEqual(session['mic_settings']['vad_start_secs'], 0.5, "the onset is the room's, half a second")
+        self.assertEqual(session['mic_settings']['vad_start_secs'], 0.4, "the onset is the room's, four tenths")
         self.assertEqual((session['transcription']['provider'], session['transcription']['model'],
                           session['transcription']['device']), ('browser', 'onnx-community/whisper-tiny', 'wasm'))
         self.assertEqual(session['mic']['transport'], 'pcm')
@@ -151,8 +151,8 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(strategy._turn_analyzer.params.stop_secs, 3.0)
         from sidevoice.app import vad_analyzer
         self.assertEqual(vad_analyzer(mic, {}).params.stop_secs, 0.6)
-        self.assertEqual(vad_analyzer(mic, {}).params.start_secs, 0.5)
-        self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.05})[0], {}).params.start_secs, 0.5,
+        self.assertEqual(vad_analyzer(mic, {}).params.start_secs, 0.4)
+        self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.05})[0], {}).params.start_secs, 0.4,
                          'a device cannot tune the detector: that is the room\'s, fixed in one place for everyone')
         floor, _ = mic_settings(LanguageSettings(), {'smart_turn_min_silence': 1.2})
         self.assertEqual(vad_analyzer(floor, {}).params.stop_secs, 1.2)
@@ -208,7 +208,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(client.mic_settings['turn_end_mode'], 'timer')
         self.assertEqual(client.mic_settings['user_speech_timeout'], 1.0)
         self.assertEqual(client.mic_settings['vad_confidence'], 0.6)
-        self.assertEqual(client.mic_settings['vad_start_secs'], 0.5)
+        self.assertEqual(client.mic_settings['vad_start_secs'], 0.4)
         await self.leave(socket, task)
 
     async def test_a_gpu_fallback_reported_by_the_browser_is_kept_with_its_reason(self):
