@@ -484,19 +484,27 @@ function presenceOptions(){
  if((preferences.presence_sound??'off')!=='on')return null;
  return {volume:presenceVolumePercent(preferences)/100};
 }
+// The dots and the bed are not the same thing. The bed is audio and gets out of the way of anything the
+// person does; the dots are a fact about the conversation, and the person speaking again does not make it
+// idle. Only these reasons mean nobody is working on this browser's turn any more.
+const NOT_WORKING_ANY_MORE=new Set(['reply','cancelled','not_sent','channel_closed','focus_changed','connection_lost','disconnected']);
 function stopPresence(reason){
- clearTimeout(presenceTimer);presenceTimer=null;presenceArmed=null;
- const wasWorking=!!workingTurn;workingTurn=null;
+ clearTimeout(presenceTimer);presenceTimer=null;
+ if(NOT_WORKING_ANY_MORE.has(reason))presenceArmed=null;
+ const wasWorking=!!workingTurn;
+ if(NOT_WORKING_ANY_MORE.has(reason))workingTurn=null;
  if(presenceTurn){presenceTurn=null;window.roomVoice?.stopPresence?.(reason)}
- if(wasWorking)renderHistory();
+ if(wasWorking&&!workingTurn)renderHistory();
 }
 function startPresence(id,reason){
  clearTimeout(presenceTimer);presenceTimer=null;presenceArmed=null;
  // No socket means nothing is working on that turn any more.
  if(!ws)return;
  if(workingTurn!==id){workingTurn=id;renderHistory()}
- // The second tick, made audible: one short note the moment the conversation picks the message up.
- if(reason==='read')window.roomVoice?.chime?.('read',{volume:.05});
+ // No sound of our own here. A note on the second tick was tried on 2026-09-19 and the room started
+ // interrupting itself again within minutes: anything this app plays can come back through a phone
+ // speaker, and the silence it leaves behind has twice cost us the echo reference. The three dots say
+ // the same thing without a sound. `RoomVoice.chime` stays, unused, for a device test.
  const options=presenceOptions();
  if(!options||!window.roomVoice?.startPresence)return;
  presenceTurn=id;window.roomVoice.startPresence({...options,reason});
@@ -851,7 +859,7 @@ function populateVoiceSettings(p){
 $('reset-languages').onclick=()=>{stopPreview();voiceDraft={};renderLanguageRows();$('preview-status').textContent='Todos los idiomas usan los valores por defecto. Pulsa Guardar cambios para aplicarlo.'};
 $('prepare-model').onclick=async()=>{if(activeSpeech||previewJob){$('model-status').textContent='Espera a que termine la voz.';return}const button=$('prepare-model');button.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.prepare({device:$('tts-device').value},text=>$('model-status').textContent=text)}catch(e){$('model-status').textContent=e.message}finally{button.disabled=false}};
 function cancelBrowserSpeech(){if(!activeSpeech)return;const speech=activeSpeech;clearKaraoke(speech);activeSpeech=null;window.roomVoice?.cancel();post('/api/presentation/browser-receipt',{session_id:speech.session_id,revision:speech.revision,utterance_id:speech.utterance_id,status:speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});const row=history.find(r=>r.segment===speechSegment(speech));if(row){row.interrupted=!!speech.started;save();renderHistory()}botLive=false;live()}
-async function receiveBrowserSpeech(d,cloud=false){const receivedAt=latencyNow();if(d.session_id!==sessionId)return;if(d.thread_id!==targetId())await refresh();if(d.session_id!==sessionId||d.thread_id!==targetId()||d.revision<roomRevision)return;roomRevision=d.revision;stopPresence('reply');stopPreview();cancelBrowserSpeech();activeSpeech=d;add('assistant',d.text,'voice:'+d.utterance_id,d.thread_id,{history_id:d.history_id,session:d.session_id,revision:d.revision});const receipt=status=>post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status,...(status==='playing'?{timings_ms:browserLatency(d,receivedAt)}:{})});try{await window.roomVoice[cloud?'playEncoded':'speak'](d,text=>$('live').textContent=text,()=>{d.started=true;botLive=true;renderHistory();live();receipt('playing').catch(()=>{})},range=>updateKaraoke(d,range));if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();await receipt('playback_finished')}catch(e){if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();if(e.name!=='AbortError'){setRoomError((cloud?'Audio de ElevenLabs: ':'Voz del navegador: ')+e.message);receipt('failed').catch(()=>{})}}}
+async function receiveBrowserSpeech(d,cloud=false){const receivedAt=latencyNow();if(d.session_id!==sessionId)return;if(d.thread_id!==targetId())await refresh();if(d.session_id!==sessionId||d.thread_id!==targetId()||d.revision<roomRevision)return;roomRevision=d.revision;stopPresence(d.final===false?'progress':'reply');stopPreview();cancelBrowserSpeech();activeSpeech=d;add('assistant',d.text,'voice:'+d.utterance_id,d.thread_id,{history_id:d.history_id,session:d.session_id,revision:d.revision});const receipt=status=>post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status,...(status==='playing'?{timings_ms:browserLatency(d,receivedAt)}:{})});try{await window.roomVoice[cloud?'playEncoded':'speak'](d,text=>$('live').textContent=text,()=>{d.started=true;botLive=true;renderHistory();live();receipt('playing').catch(()=>{})},range=>updateKaraoke(d,range));if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();await receipt('playback_finished')}catch(e){if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();if(e.name!=='AbortError'){setRoomError((cloud?'Audio de ElevenLabs: ':'Voz del navegador: ')+e.message);receipt('failed').catch(()=>{})}}}
 function receiveServerSpeech(d){return receiveBrowserSpeech(d,true)}
 
 $('settings-open').onclick=async()=>{try{

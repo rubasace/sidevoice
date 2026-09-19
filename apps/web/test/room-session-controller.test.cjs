@@ -1183,7 +1183,7 @@ test('The bed starts when the conversation reads this turn and ends at its first
  s.emit('voice-input-receipt',{...OWN_TURN,status:'pending'});
  assert.deepEqual(s.calls,[],'queued is not in the conversation\'s hands yet');
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['chime','read'],['start','read',0.035]]);
+ assert.deepEqual(s.calls,[['start','read',0.035]]);
  assert.equal(s.run('presenceTurn'),'s:user-turn:1');
  let finish;s.context.window.roomVoice.playEncoded=()=>new Promise(resolve=>finish=resolve);
  const playing=s.run("receiveServerSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Ya',audio_base64:'SUQz'})");
@@ -1202,9 +1202,9 @@ test('Without a read receipt the bed waits a moment after delivery, and a read o
  const later=presenceSetup();
  later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'delivered'});
  later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'read'});
- assert.deepEqual(later.calls,[['chime','read'],['start','read',0.035]]);
+ assert.deepEqual(later.calls,[['start','read',0.035]]);
  later.flush();
- assert.deepEqual(later.calls,[['chime','read'],['start','read',0.035]],'the armed wait cannot start it a second time');
+ assert.deepEqual(later.calls,[['start','read',0.035]],'the armed wait cannot start it a second time');
 });
 test('A delivery that failed, a new turn, the user speaking and losing the room all end the bed',()=>{
  const failed=presenceSetup();
@@ -1235,23 +1235,23 @@ test('The bed belongs to the turn this browser sent to the conversation it is lo
  s.emit('voice-input-receipt',{...OWN_TURN,session_id:'another-browser',status:'read'});
  assert.deepEqual(s.calls,[],'another conversation, or another browser in the room, is not this bed');
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['chime','read'],['start','read',0.035]]);
+ assert.deepEqual(s.calls,[['start','read',0.035]]);
 });
 test('The bed is a device setting: off means silent, and the stored volume is what plays',()=>{
  const off=presenceSetup("{presence_sound:'off'}");
  off.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  off.flush();
- assert.deepEqual(off.calls,[['chime','read']],'off silences the bed, not the note on the second tick');
+ assert.deepEqual(off.calls,[],'off means silent');
  const byDefault=presenceSetup('{}');
  byDefault.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  byDefault.flush();
- assert.deepEqual(byDefault.calls,[['chime','read']],'the looping bed is opt-in until it has earned its place');
+ assert.deepEqual(byDefault.calls,[],'the looping bed is opt-in until it has earned its place');
  const loud=presenceSetup("{presence_sound:'on',presence_volume:8}");
  loud.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(loud.calls,[['chime','read'],['start','read',0.08]],'the stored percentage is a peak amplitude');
+ assert.deepEqual(loud.calls,[['start','read',0.08]],'the stored percentage is a peak amplitude');
  const absurd=presenceSetup("{presence_sound:'on',presence_volume:400}");
  absurd.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(absurd.calls,[['chime','read'],['start','read',0.12]],'and it is bounded here as well as in the player');
+ assert.deepEqual(absurd.calls,[['start','read',0.12]],'and it is bounded here as well as in the player');
 });
 test('Turning the bed off while it sounds silences it at once',async()=>{
  const s=presenceSetup();
@@ -1286,7 +1286,7 @@ test('The read receipt is announced: one short note, the dots, and the bed; the 
  s.emit('voice-user-turn',{...OWN_TURN,phase:'finished',text:'Hola'});
  assert.equal(s.run('workingOnTurn')(),false,'nothing is working on it until the conversation says so');
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(s.calls,[['chime','read'],['start','read',0.035]],'the note lands with the second tick, before the bed');
+ assert.deepEqual(s.calls,[['start','read',0.035]],'the note lands with the second tick, before the bed');
  assert.equal(s.run('workingOnTurn')(),true);
  assert.equal(s.context.__view.working,true,'the conversation side shows the three dots');
  s.run("stopPresence('reply')");
@@ -1295,17 +1295,36 @@ test('The read receipt is announced: one short note, the dots, and the bed; the 
  // With the sound turned off there is no note and no bed, and the dots still say what is happening.
  const silent=presenceSetup("{presence_sound:'off'}");
  silent.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(silent.calls,[['chime','read']],'the note is not the bed: it stays when the bed is off');
+ assert.deepEqual(silent.calls,[],'nothing sounds when the bed is off');
  assert.equal(silent.run('workingOnTurn')(),true);
  assert.equal(silent.context.__view.working,true);
 });
-test('Everything that ends the bed also takes the dots away',()=>{
- for(const [event,data] of [['voice-user-turn',{...OWN_TURN,revision:2,phase:'started'}],
-                            ['voice-input-receipt',{...OWN_TURN,status:'not_sent'}]]){
+test('What silences the bed is not always what puts the dots out',()=>{
+ // A new turn or the person speaking takes the audio out of the way and nothing else: the conversation
+ // is still working on what it was given. Only a failed delivery says nobody is working on it.
+ for(const [event,data,working] of [['voice-user-turn',{...OWN_TURN,revision:2,phase:'started'},true],
+                                    ['voice-input-receipt',{...OWN_TURN,status:'not_sent'},false]]){
   const s=presenceSetup();
   s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
   assert.equal(s.run('workingOnTurn')(),true,event);
   s.emit(event,data);
-  assert.equal(s.run('workingOnTurn')(),false,event);
+  assert.equal(s.run('workingOnTurn')(),working,event);
+  assert.equal(s.run('presenceTurn'),null,'the bed stops either way');
  }
+});
+
+test('The dots belong to the conversation, not to the microphone: only a final reply puts them out',()=>{
+ const s=presenceSetup();
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.equal(s.run('workingOnTurn')(),true);
+ // The person speaks again, and starts another turn: the conversation is still working on the first one.
+ s.emit('user-started-speaking',{});
+ s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
+ assert.equal(s.run('workingOnTurn')(),true,'speaking does not make the conversation idle');
+ assert.ok(s.calls.some(call=>call[0]==='stop'),'the bed does get out of the way');
+ // An acknowledgement is not the end of the work.
+ s.run("stopPresence('progress')");
+ assert.equal(s.run('workingOnTurn')(),true,'a reply marked final:false leaves the dots on');
+ s.run("stopPresence('reply')");
+ assert.equal(s.run('workingOnTurn')(),false,'the final reply puts them out');
 });

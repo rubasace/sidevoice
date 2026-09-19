@@ -331,7 +331,8 @@ class RoomClient:
         reply_revision = trace['reply_revision'] if trace else rev
         common = {'session_id': self.id, 'revision': rev, 'utterance_id': uid,
                   'reply_revision': reply_revision, 'thread_id': self.target.get('thread_id'),
-                  'text': utterance.text, 'history_id': utterance.row_id}
+                  'text': utterance.text, 'history_id': utterance.row_id,
+                  'final': getattr(utterance, 'final', True)}
         if choice['provider'] == 'kokoro':
             self.latency.mark(uid, 'audio_dispatched')
             self.on_browser_event({'type': 'voice-speech', 'data': {**common, **choice}})
@@ -458,7 +459,7 @@ class Room:
     # ----- what the agent publishes -----
 
     async def speak(self, text, utterance_id, session_id, revision, language=None,
-                    wait_for_quiet=False, thread_id=None, row_id=None):
+                    wait_for_quiet=False, thread_id=None, row_id=None, final=True):
         previous = self.utterances.get(utterance_id)
         if previous:
             if (previous.text, previous.revision, previous.language) != (text, revision, language):
@@ -481,6 +482,7 @@ class Room:
             raise HTTPException(429, 'Cola o historial de locuciones lleno.')
         utterance = Utterance(utterance_id, text, language=language, thread_id=thread_id, revision=revision,
                               row_id=row_id or (session_id + ':voice:' + utterance_id))
+        utterance.final = final
         for client in listeners:
             utterance.clients[client.id] = {
                 'status': 'waiting_for_turn' if client.speaking else 'queued',
@@ -525,7 +527,8 @@ class Room:
         try:
             result = await self.speak(payload.text, payload.utterance_id, payload.session_id,
                                       asker.revision if may_wait else payload.revision, payload.language,
-                                      wait_for_quiet=may_wait, thread_id=payload.thread_id, row_id=row_id)
+                                      wait_for_quiet=may_wait, thread_id=payload.thread_id, row_id=row_id,
+                                      final=getattr(payload, 'final', True))
         except HTTPException as error:
             if error.status_code not in {409, 429}:
                 raise

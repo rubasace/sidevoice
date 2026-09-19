@@ -199,7 +199,8 @@ class ConnectorControl:
         try:
             speech = Speech(thread_id=binding['thread'], session_id=str(message.get('session_id') or ''),
                             revision=int(message.get('revision') or 0), text=str(message.get('text') or ''),
-                            utterance_id=str(message.get('utterance_id') or uuid.uuid4()), language=message.get('language'))
+                            utterance_id=str(message.get('utterance_id') or uuid.uuid4()), language=message.get('language'),
+                            final=message.get('final') is not False)
             result = await self.hub.publish(speech)
             await socket.send_json({**reply, **result})
         except HTTPException as error:

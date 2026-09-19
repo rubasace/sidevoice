@@ -212,7 +212,8 @@ class RoomVoice {
    const buffer=this.context.createBuffer(1,length,rate);buffer.copyToChannel(samples,0);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
    source.start(this.context.currentTime+.01);
-   source.onended=()=>{if(!this.presence&&!this.job)this.tail('chime-tail')};
+   // No silent tail after it: on 2026-09-19 silence left behind by our own sounds twice took the media
+   // element out of the phone's echo reference. A one-shot this short leaves the sink as it found it.
    this.note('chime',kind);
    return true;
   }catch(error){this.note('chime-failed',error?.message||'chime');return false}
