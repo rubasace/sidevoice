@@ -211,6 +211,11 @@ class VoiceCall:
                 call.latency.input(target.get('thread_id'), revision, metrics)
             call.input_stats['turns'] += 1
             current = revision == call.turn_revision
+            # The decision that makes a resumed sentence one message or two, on the record (a live case on
+            # 2026-09-19 resumed 75 ms after the cut and was still delivered as two).
+            logger.info('Call {}: turn {} transcribed in {} ms · open turn {} · {} · held before {}', call.id[:8], revision,
+                        round((transcript_at - stopped_at) * 1000), call.turn_revision,
+                        'current' if current else 'user resumed: holding', bool(self.held))
             if call.cancelled_turn == revision:
                 # Cancelling the draft cancels what was being held for it too.
                 self.held = None
