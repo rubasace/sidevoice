@@ -1046,12 +1046,105 @@ test('A step that fails leaves its reason, and what to do, where the step was',a
  assert.equal(room.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.');
 });
 
-test('Saving the settings form stores every device setting instead of throwing first',async()=>{
+// ----- the ambient bed while the conversation works on this browser's turn (#42) -----
+function presenceSetup(preferences='{}'){
+ const s=setup(),calls=[],timers=new Map();let serial=0;
+ s.context.setTimeout=(fn,ms)=>{const id=++serial;timers.set(id,{fn,ms});return id};
+ s.context.clearTimeout=id=>timers.delete(id);
+ s.context.fetch=async()=>({ok:true,json:async()=>({})});
+ s.context.window.roomVoice={cancel(){},startPresence(options){calls.push(['start',options.reason,options.volume]);return true},stopPresence(reason){calls.push(['stop',reason]);return true}};
+ s.run("ws={readyState:1,close(){}};voicePreferences="+preferences);
+ return {...s,calls,timers,
+  emit:(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`),
+  flush(){for(const [id,timer] of [...timers]){timers.delete(id);timer.fn()}}};
+}
+const OWN_TURN={revision:1,thread_id:'a',session_id:'s'};
+test('The bed starts when the conversation reads this turn and ends at its first spoken reply',async()=>{
+ const s=presenceSetup();
+ s.emit('voice-user-turn',{...OWN_TURN,phase:'finished',text:'Hola'});
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'pending'});
+ assert.deepEqual(s.calls,[],'queued is not in the conversation\'s hands yet');
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.deepEqual(s.calls,[['start','read',0.035]]);
+ assert.equal(s.run('presenceTurn'),'s:user-turn:1');
+ let finish;s.context.window.roomVoice.playEncoded=()=>new Promise(resolve=>finish=resolve);
+ const playing=s.run("receiveServerSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Ya',audio_base64:'SUQz'})");
+ assert.deepEqual(s.calls.at(-1),['stop','reply'],'the voice never shares the output with the bed');
+ assert.equal(s.run('presenceTurn'),null);
+ finish();await playing;
+});
+test('Without a read receipt the bed waits a moment after delivery, and a read overtakes that wait',()=>{
+ const s=presenceSetup();
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'unconfirmed'});
+ assert.deepEqual(s.calls,[],'a harness that never reports reads still gets the bed, just not instantly');
+ assert.deepEqual([...s.timers.values()].map(timer=>timer.ms),[1500]);
+ s.flush();
+ assert.deepEqual(s.calls,[['start','unconfirmed',0.035]]);
+
+ const later=presenceSetup();
+ later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'delivered'});
+ later.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'read'});
+ assert.deepEqual(later.calls,[['start','read',0.035]]);
+ later.flush();
+ assert.deepEqual(later.calls,[['start','read',0.035]],'the armed wait cannot start it a second time');
+});
+test('A delivery that failed, a new turn, the user speaking and losing the room all end the bed',()=>{
+ const failed=presenceSetup();
+ failed.emit('voice-input-receipt',{...OWN_TURN,status:'delivered'});
+ failed.emit('voice-input-receipt',{...OWN_TURN,status:'not_sent'});
+ failed.flush();
+ assert.deepEqual(failed.calls,[],'nothing to say while it is working is not the same as nothing working');
+
+ for(const [label,event,reason] of [
+  ['another turn',['voice-user-turn',{...OWN_TURN,revision:2,phase:'started'}],'new_turn'],
+  ['the user speaking',['user-started-speaking',{}],'user_speaking'],
+  ['a cancelled turn',['voice-cancel',{...OWN_TURN,revision:2}],'cancelled'],
+ ]){
+  const s=presenceSetup();
+  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+  s.emit(...event);
+  assert.deepEqual(s.calls.at(-1),['stop',reason],label);
+  assert.equal(s.run('presenceTurn'),null,label);
+ }
+ const dropped=presenceSetup();
+ dropped.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ dropped.run("stream={getTracks:()=>[],getAudioTracks:()=>[]};disconnect()");
+ assert.ok(dropped.calls.some(call=>call[0]==='stop'&&call[1]==='disconnected'));
+});
+test('The bed belongs to the turn this browser sent to the conversation it is looking at',()=>{
+ const s=presenceSetup();
+ s.emit('voice-input-receipt',{...OWN_TURN,thread_id:'other',status:'read'});
+ s.emit('voice-input-receipt',{...OWN_TURN,session_id:'another-browser',status:'read'});
+ assert.deepEqual(s.calls,[],'another conversation, or another browser in the room, is not this bed');
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.deepEqual(s.calls,[['start','read',0.035]]);
+});
+test('The bed is a device setting: off means silent, and the stored volume is what plays',()=>{
+ const off=presenceSetup("{presence_sound:'off'}");
+ off.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ off.flush();
+ assert.deepEqual(off.calls,[]);
+ const loud=presenceSetup("{presence_volume:8}");
+ loud.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.deepEqual(loud.calls,[['start','read',0.08]],'the stored percentage is a peak amplitude');
+ const absurd=presenceSetup("{presence_volume:400}");
+ absurd.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.deepEqual(absurd.calls,[['start','read',0.12]],'and it is bounded here as well as in the player');
+});
+test('Turning the bed off while it sounds silences it at once',async()=>{
+ const s=presenceSetup();
+ s.context.localStorage={getItem:()=>null,setItem(){},removeItem(){}};
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ s.run("ws=null;voiceCatalog={languages:[],models:[]};$('presence-sound').value='off';$('presence-volume').value='4';$('stt-device').value='auto'");
+ await s.run("$('language-form').onsubmit({preventDefault(){}})");
+ assert.deepEqual(s.calls.at(-1),['stop','setting_off']);
+});
+test('Saving the settings form stores every device setting, the ambient bed among them',async()=>{
  const s=setup();const stored=[];
  s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};
  s.run("ws=null;voicePreferences={stt_provider:'openai',stt_device:'auto'};voiceCatalog={languages:[],models:[]}");
  for(const [id,value] of [['stt-language','es'],['stt-device',''],['default-tts-language','es'],['tts-speed','1'],['ui-language','es'],
-  ['tts-device','auto'],['default-model','kokoro'],['default-voice','ef_dora'],['audio-grace-seconds','2'],
+  ['tts-device','auto'],['default-model','kokoro'],['default-voice','ef_dora'],['audio-grace-seconds','2'],['presence-sound','on'],['presence-volume','5'],
   ['turn-end-mode','smart_turn'],['user-speech-timeout','2.5'],['smart-turn-min-silence','0.6'],['smart-turn-max-silence','3'],
   ['vad-confidence','0.6'],['vad-min-volume','0.35'],['vad-start-secs','0.2']])
   s.run(`$('${id}').value=${JSON.stringify(value)}`);
@@ -1062,4 +1155,6 @@ test('Saving the settings form stores every device setting instead of throwing f
  assert.ok(saved,'something was stored at all');
  assert.equal(saved.stt_device,'auto','a hidden select reading back empty keeps the last valid value');
  assert.equal(saved.vad_start_secs,0.2);
+ assert.equal(saved.presence_sound,'on');
+ assert.equal(saved.presence_volume,5);
 });
