@@ -682,7 +682,7 @@ test('Changing only the local Whisper model swaps it on the socket the call alre
  assert.equal(s.run('actions.length'),3);
  // What the room does own is a new pipeline every time, and the local model alone never is.
  assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),false);
- for(const change of [{stt_provider:'openai'},{stt_language:'auto'},{stt_context:'Sidevoice'},{turn_end_mode:'timer'},{vad_confidence:0.8},{user_speech_timeout:4}])
+ for(const change of [{stt_provider:'openai'},{stt_language:'auto'},{stt_context:'Sidevoice'},{turn_end_mode:'timer'},{smart_turn_min_silence:1.2},{user_speech_timeout:4}])
   assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify({...previous,...change})+')'),true,JSON.stringify(change));
  // Voices, speed and grace travel live over the socket: they must never open a second one.
  for(const change of [{default_model:'eleven_flash_v2_5'},{spanish_voice:'em_alex'},{tts_speed:1.2},{audio_grace_seconds:4}]){
@@ -754,13 +754,13 @@ test('Changing the transcription provider swaps sessions without ending the call
 
 test('A microphone threshold rebuilds the pipeline the same way, loading the local model before the swap',async()=>{
  const {s,sockets,old,status}=switching();
- const pending=apply(s,{...OLD_SETTINGS,vad_confidence:0.8,user_speech_timeout:4});
+ const pending=apply(s,{...OLD_SETTINGS,smart_turn_min_silence:1.2,user_speech_timeout:4});
  await new Promise(resolve=>setTimeout(resolve,5));
  assert.equal(s.run('JSON.stringify(prepared)'),'["onnx-community/whisper-tiny"]','the runtime is ready before the socket is swapped');
  assert.match(status.at(-1).text,/micrófono/);
  assert.equal(s.run('ws'),old,'the call runs on the old pipeline while the new one is prepared');
  const next=sockets[1];next.readyState=1;next.onopen();
- assert.equal(JSON.parse(next.sent[0]).data.settings.vad_confidence,0.8);
+ assert.equal(JSON.parse(next.sent[0]).data.settings.smart_turn_min_silence,1.2);
  next.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'new-session',sample_rate:16000,channels:1}})});
  assert.equal(await pending,'switched');
  assert.equal(s.run('ws'),next);
@@ -1276,7 +1276,7 @@ test('Saving the settings form stores every device setting, the ambient bed amon
  const saved=stored.find(([key])=>key==='sidevoice.settings')?.[1];
  assert.ok(saved,'something was stored at all');
  assert.equal(saved.stt_device,'auto','a hidden select reading back empty keeps the last valid value');
- assert.equal(saved.vad_start_secs,0.2);
+ assert.equal('vad_start_secs' in saved,false,'the detector is tuned in the room, not here');
  assert.equal(saved.presence_sound,'on');
  assert.equal(saved.presence_volume,5);
 });
@@ -1474,4 +1474,24 @@ test('While the harness says it is working, nothing the conversation says puts t
  // Only the harness going idle does.
  s.emit('voice-conversation',{thread_id:'a',working:false});
  assert.equal(s.run('workingOnTurn')(),false);
+});
+
+test('The bed belongs to the silence: it goes while anyone speaks and comes back when the room is quiet',()=>{
+ const s=presenceSetup("{presence_sound:'on'}");
+ s.run("sessionId='s'");
+ s.emit('voice-conversation',{thread_id:'a',working:true});
+ const last=()=>JSON.stringify(s.calls.at(-1));
+ assert.equal(last(),JSON.stringify(['start','working',0.035]),'the harness said it is working; the room is quiet');
+ s.emit('user-started-speaking',{});
+ assert.equal(last(),JSON.stringify(['stop','user_speaking']),'and it gets out of the way at once');
+ s.emit('user-stopped-speaking',{});
+ assert.equal(last(),JSON.stringify(['start','quiet',0.035]),'back in the silence, while the dots are still on');
+ assert.equal(s.run('workingOnTurn')(),true);
+ // With the sound off there is nothing to hear, whatever happens.
+ const silent=presenceSetup("{presence_sound:'off'}");
+ silent.run("sessionId='s'");
+ silent.emit('voice-conversation',{thread_id:'a',working:true});
+ silent.emit('user-stopped-speaking',{});
+ assert.equal(silent.calls.length,0);
+ assert.equal(silent.run('workingOnTurn')(),true,'the dots do not depend on the sound');
 });

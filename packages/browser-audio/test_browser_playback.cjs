@@ -267,9 +267,9 @@ test('A fresh output is greeted once: audible notes first, then silence long eno
  assert.equal(made.length,1,'one greeting per output');
  assert.equal(made[0].target,s.voice.output.sink);
  assert.equal(written.length,Math.round(48000*1.8),'notes plus a silent tail in one buffer');
- const notes=Array.from(written.slice(0,Math.round(48000*.26))),tail=Array.from(written.slice(Math.round(48000*.3)));
+ const notes=Array.from(written.slice(0,Math.round(48000*.4))),tail=Array.from(written.slice(Math.round(48000*.45)));
  const peak=Math.max(...notes.map(Math.abs));
- assert.ok(peak>.1&&peak<=.25,'audible on a phone speaker but soft: '+peak);
+ assert.ok(peak>.3&&peak<=.45,'loud enough for a phone speaker in a car: '+peak);
  assert.equal(written[0],0,'starts from zero, no click');
  assert.equal(tail.every(v=>v===0),true,'silence keeps the sink fed after the notes');
  assert.equal(s.voice.health().events.at(-1).kind,'chime');
@@ -304,16 +304,16 @@ test('The bed loops, fades in and out over at least 200 ms and leaves the sink f
  assert.equal(s.sources.length,1);
  const [bed]=s.sources,[gain]=s.gains;
  assert.equal(bed.loop,true);
- assert.deepEqual(gain.ramps,[['set',0,0],['ramp',.035,.25]]);
+ assert.deepEqual(gain.ramps,[['set',0,0],['ramp',.035,s.voice.presenceFadeSeconds]]);
  assert.ok(s.voice.presenceFadeSeconds>=.2,'a bed that appears abruptly is worse than no bed');
  assert.equal(gain.connectedTo,s.voice.destination,'through the same output as the voice');
  assert.equal(s.voice.health().presence,.035);
 
  s.voice.context.currentTime=10;
  assert.equal(s.voice.stopPresence('reply'),true);
- assert.deepEqual(gain.ramps.slice(-2),[['set',.035,10],['ramp',0,10.25]]);
+ assert.deepEqual(gain.ramps.slice(-2),[['set',.035,10],['ramp',0,10+s.voice.presenceFadeSeconds]]);
  assert.equal(bed.stopped,true);
- assert.ok(bed.stoppedAt>10.25,'the source outlives its own fade');
+ assert.ok(bed.stoppedAt>10+s.voice.presenceFadeSeconds,'the source outlives its own fade');
  assert.equal(s.sources.length,2);
  assert.equal(s.voice.events.at(-1).kind,'presence-tail','a sink left with nothing loops its last instant on iOS');
  assert.equal(s.voice.health().presence,null);
@@ -335,39 +335,30 @@ test('The bed refuses a volume of nothing and bounds one that is too much',async
  assert.equal(s.voice.startPresence({volume:5}),true);
  assert.equal(s.voice.presence.volume,s.voice.presenceMaxVolume);
 });
-test('The loop is a pulse, not a noise bed: two beats that decay to silence, normalized so its gain is its peak',()=>{
+test('The bed is a slow breath: two swells per loop, quietest at the seam, normalized so its gain is its peak',()=>{
  const s=setup();s.voice.context=new s.context.AudioContext();
  const buffer=s.voice.presenceBuffer(),rate=48000,data=buffer.data;
- assert.equal(buffer.duration,2.4,'two beats of 1.2 s');
+ assert.equal(buffer.duration,7.2,'two breaths of 3.6 s: slow enough not to read as a signal');
  let peak=0;for(const value of data)peak=Math.max(peak,Math.abs(value));
  assert.ok(Math.abs(peak-1)<1e-9,'peak 1, so the gain asked for is the peak amplitude in full scale');
  const rms=(from,to)=>{from=Math.round(from);to=Math.round(to);let squares=0;for(let i=from;i<to;i++)squares+=data[i]*data[i];return Math.sqrt(squares/(to-from))};
- // Each beat is loud at its onset and gone before the next one: that gap is what a bed of noise never had.
- const firstBeat=rms(0,rate*.2),firstGap=rms(rate*.95,rate*1.15);
- const secondBeat=rms(rate*1.2,rate*1.4),secondGap=rms(rate*2.2,rate*2.4);
- assert.ok(firstBeat>20*firstGap,'it beats and then lets go: '+firstBeat+' vs '+firstGap);
- assert.ok(secondBeat>20*secondGap,'twice per loop, not once');
- assert.ok(secondGap<.01,'the seam is silence, so the loop cannot click');
- assert.equal(data[0],0,'and it starts from zero');
+ const swell=rms(rate*1.6,rate*2),seam=rms(0,rate*.15),join=rms(rate*3.5,rate*3.7);
+ assert.ok(swell>8*seam,'it swells and recedes: '+swell+' vs '+seam);
+ assert.ok(swell>8*join,'twice per loop, and quiet where the breaths meet');
+ assert.ok(Math.abs(data[0])<.01&&Math.abs(data[data.length-1])<.01,'the loop joins itself without a step');
 });
-test('The read chime is one short soft note through the same sink, and only once the output is rendering',()=>{
+
+test('Hanging up has its own descending pair, and it too leaves the element with something to render',()=>{
  const s=setup();const {context}=mediaOutput(s);
  const made=[];let written=null;
  context.createBuffer=(channels,frames,rate)=>({duration:frames/rate,frames,rate,copyToChannel(data){written=data}});
- context.createBufferSource=()=>{const src={connect(target){src.target=target},start(){},stop(){}};made.push(src);return src};
+ context.createBufferSource=()=>{const src={connect(target){src.target=target},start(when){src.startedAt=when},stop(){}};made.push(src);return src};
  context.sampleRate=48000;
  s.voice.output={sink:{stream:{}},element:{paused:false}};
- assert.equal(s.voice.chime('read'),false,'a fresh output has not rendered voice yet');
- assert.equal(s.voice.health().events.at(-1).kind,'chime-refused');
- s.voice.note('complete');
- assert.equal(s.voice.chime('read',{volume:.05}),true);
- assert.equal(made.at(-1).target,s.voice.output.sink,'through the media-element sink, like everything else');
- assert.equal(written.length,Math.round(48000*.12),'shorter than the detector onset (200 ms), so it cannot open a turn');
- let peak=0;for(const value of written)peak=Math.max(peak,Math.abs(value));
- assert.ok(Math.abs(peak-.05)<1e-6,'asked for 0.05 peak, got '+peak);
- assert.equal(written[0],0,'starts from zero, no click');
- assert.equal(s.voice.health().events.at(-1).kind,'chime');
- // Never over speech: an utterance in flight owns the output.
- s.voice.job={};
- assert.equal(s.voice.chime('read'),false);
+ assert.equal(s.voice.signal('hangup'),true);
+ assert.equal(made.at(-1).target,s.voice.output.sink);
+ assert.equal(written.length,Math.round(48000*1.2));
+ const tail=Array.from(written.slice(Math.round(48000*.5)));
+ assert.equal(tail.every(v=>v===0),true,'silence after the notes, in the same buffer');
+ assert.equal(s.voice.health().events.at(-1).kind,'hangup');
 });

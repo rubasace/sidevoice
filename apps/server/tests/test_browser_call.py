@@ -118,7 +118,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(session['mic_settings']['turn_end_mode'], 'timer')
         self.assertEqual(session['mic_settings']['user_speech_timeout'], 1.0)
         self.assertEqual(session['mic_settings']['vad_confidence'], 0.6)
-        self.assertEqual(session['mic_settings']['vad_start_secs'], 0.2, 'the onset is the device\'s, 200 ms by default')
+        self.assertEqual(session['mic_settings']['vad_start_secs'], 0.5, "the onset is the room's, half a second")
         self.assertEqual((session['transcription']['provider'], session['transcription']['model'],
                           session['transcription']['device']), ('browser', 'onnx-community/whisper-tiny', 'wasm'))
         self.assertEqual(session['mic']['transport'], 'pcm')
@@ -151,8 +151,9 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(strategy._turn_analyzer.params.stop_secs, 3.0)
         from sidevoice.app import vad_analyzer
         self.assertEqual(vad_analyzer(mic, {}).params.stop_secs, 0.6)
-        self.assertEqual(vad_analyzer(mic, {}).params.start_secs, 0.2)
-        self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.35})[0], {}).params.start_secs, 0.35, 'the onset comes from the device')
+        self.assertEqual(vad_analyzer(mic, {}).params.start_secs, 0.5)
+        self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.05})[0], {}).params.start_secs, 0.5,
+                         'a device cannot tune the detector: that is the room\'s, fixed in one place for everyone')
         floor, _ = mic_settings(LanguageSettings(), {'smart_turn_min_silence': 1.2})
         self.assertEqual(vad_analyzer(floor, {}).params.stop_secs, 1.2)
         timer, _ = mic_settings(LanguageSettings(), {'turn_end_mode': 'timer', 'user_speech_timeout': 4})
@@ -191,11 +192,23 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
 
     async def test_invalid_device_settings_fall_back_to_the_room_defaults(self):
         socket = FakeWebSocket()
-        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'vad_confidence': 5}})
+        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 99}})
         error = await self.received(socket, 'error')
         self.assertIn('Ajustes de micrófono no válidos', error['data']['message'])
-        self.assertEqual(client.mic_settings['vad_confidence'], 0.6)
+        self.assertEqual(client.mic_settings['user_speech_timeout'], 2.5)
         self.assertEqual(client.mic_settings['turn_end_mode'], 'smart_turn')
+        await self.leave(socket, task)
+
+    async def test_a_device_cannot_tune_the_detector_and_is_not_told_off_for_trying(self):
+        # The detector's tuning is the room's: a browser that still sends it (an old page, a curious user)
+        # is ignored on those fields and accepted on the rest, rather than losing every setting it sent.
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 1.0,
+                                                        'vad_confidence': 5, 'vad_start_secs': 0.05}})
+        self.assertEqual(client.mic_settings['turn_end_mode'], 'timer')
+        self.assertEqual(client.mic_settings['user_speech_timeout'], 1.0)
+        self.assertEqual(client.mic_settings['vad_confidence'], 0.6)
+        self.assertEqual(client.mic_settings['vad_start_secs'], 0.5)
         await self.leave(socket, task)
 
     async def test_a_gpu_fallback_reported_by_the_browser_is_kept_with_its_reason(self):

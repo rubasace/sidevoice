@@ -51,7 +51,7 @@ class LanguageSettings(BaseModel):
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
     # How long the detector must hear voice before it opens a turn (and interrupts a reply). 80 ms opened turns
     # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
-    vad_start_secs: float = Field(default=0.2, ge=0.05, le=1)
+    vad_start_secs: float = Field(default=0.5, ge=0.05, le=1)
 
 
     @model_validator(mode='after')
@@ -124,9 +124,13 @@ class MicSettings(BaseModel):
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
     # How long the detector must hear voice before it opens a turn (and interrupts a reply). 80 ms opened turns
     # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
-    vad_start_secs: float = Field(default=0.2, ge=0.05, le=1)
+    vad_start_secs: float = Field(default=0.5, ge=0.05, le=1)
 
-    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence', 'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume', 'vad_start_secs')
+    # What a browser may override. The detector's fine tuning is deliberately not here: nobody can hear the
+    # difference between 0.2 s and 0.5 s of onset, but getting it wrong makes the room interrupt itself, and
+    # the fix has to reach every device at once. What a person perceives and chooses stays with the device.
+    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence', 'smart_turn_max_silence')
+    ROOM_ONLY: ClassVar[tuple[str, ...]] = ('vad_confidence', 'vad_min_volume', 'vad_start_secs')
 
 
 def mic_settings(settings, overrides=None):
@@ -136,7 +140,7 @@ def mic_settings(settings, overrides=None):
     defaults and says why, so a browser never silently gets a pipeline it did
     not ask for.
     """
-    base = MicSettings(**{key: getattr(settings, key) for key in MicSettings.FIELDS})
+    base = MicSettings(**{key: getattr(settings, key) for key in MicSettings.FIELDS + MicSettings.ROOM_ONLY})
     if not isinstance(overrides, dict) or not overrides:
         return base, None
     merged = {**base.model_dump(), **{key: value for key, value in overrides.items() if key in MicSettings.FIELDS}}
