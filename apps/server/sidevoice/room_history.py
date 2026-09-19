@@ -19,7 +19,8 @@ from pathlib import Path
 
 # Seconds before the next delivery attempt after the n-th failure; the last value repeats.
 RETRY_BACKOFF = (2, 5, 15, 60)
-HISTORY_KEYS = ('seq', 'id', 'thread', 'role', 'text', 'name', 'session', 'revision', 'time', 'status', 'audio_reason')
+HISTORY_KEYS = ('seq', 'id', 'thread', 'role', 'text', 'name', 'session', 'revision', 'time', 'status',
+                'audio_reason', 'offline')
 
 
 def _hash(token):
@@ -79,7 +80,10 @@ class RoomHistory:
 
     # ----- transcript and outbox (memory only) -----
 
-    def put(self, *, id, thread, role, text, name, session, revision, status, language=None, payload=None):
+    def put(self, *, id, thread, role, text, name, session, revision, status, language=None, payload=None,
+            offline=None, at=None):
+        """`at` is the clock of whoever produced the message, used for input the room did not hear as it
+        happened; `offline` says that it reached the room after the fact, so the transcript can say so too."""
         previous = self.messages.get(id)
         if previous:
             if (previous['thread'], previous['text'], previous['revision'], previous['language']) != (thread, text, revision, language):
@@ -87,7 +91,8 @@ class RoomHistory:
             return {**previous, '_existing': True}
         self.seq += 1
         row = {'seq': self.seq, 'id': id, 'thread': thread, 'role': role, 'text': text, 'name': name, 'session': session,
-               'revision': revision, 'time': int(time.time() * 1000), 'status': status, 'language': language,
+               'revision': revision, 'time': int(at) if at else int(time.time() * 1000), 'status': status,
+               'language': language, 'offline': offline,
                'payload': json.dumps(payload) if payload else None, 'audio_reason': None, 'attempts': 0, 'next_attempt': 0}
         self.messages[id] = row
         while len(self.messages) > self.MAX_MESSAGES:

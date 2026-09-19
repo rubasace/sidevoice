@@ -42,7 +42,7 @@ only signal; visible text and accessible names use the copy below.
 | Idle / ready | The call is connected, the selected conversation is available, the microphone is live, and nobody is currently speaking. Red button hangs up. | Status: **“Puedes hablar”**. Button: **“Salir de la sala”**. |
 | Listening | Voice activity for this tab has opened a user turn. The live waveform is the draft bubble, not another toolbar animation. | Status and bubble: **“Escuchando…”**. Button remains **“Salir de la sala”**; bubble action is **“Cancelar envío”**. |
 | Speaking | Reply audio is playing. The microphone stays open, so the person can interrupt naturally. | Status: **“La conversación está hablando · Puedes interrumpir”**. |
-| Reconnecting | The call remains conceptually active. Keep the media stream, unlocked output, mute state, and remembered conversation while reopening the socket. Red still hangs up. | Status: **“Reconectando con la sala… Espera para hablar.”** On success, briefly **“Conexión recuperada”**, then return to the activity state. |
+| Reconnecting | The call remains conceptually active. Keep the media stream, unlocked output, mute state, and remembered conversation while reopening the socket. The microphone is not paused and what it hears is buffered, bounded, for the session that comes back (#46). Red still hangs up. | Status: **“Reconectando con la sala…”**. The line promises nothing about speech in either direction: what survives the gap is bounded and the bubble says what did. |
 | Switching model | The current pipeline keeps the call usable while the replacement prepares. Show this only when a change needs loading or a new socket; ordinary live voice changes need no state. | **“Cambiando la transcripción…”**, or **“Cargando {modelo} (42 %)…”**. On failure: **“No se pudo cambiar el modelo · Sigues usando {modelo anterior}”**. |
 | Muted | The call and playback continue, but this tab sends no microphone audio. The dedicated mic control, not the red button, owns this state. | Status: **“Micrófono silenciado”**. Mic action: **“Activar micrófono”**. |
 
@@ -125,9 +125,12 @@ closes an agent connector binding.
 | Room unavailable or handshake timeout | **“No se pudo entrar en la sala. Comprueba la conexión y vuelve a intentarlo.”** |
 
 A policy refusal (`1008`) uses the reason supplied by the room when it is safe to
-show; it is terminal, not an automatic reconnect. During a later socket drop,
-speech is not guaranteed to survive yet, hence **“Espera para hablar”**. Buffering
-speech across the gap is separate work.
+show; it is terminal, not an automatic reconnect. A later socket drop no longer
+loses what was said: the microphone keeps running and the page hands the new
+session the last 30 seconds as one catch-up turn, marked as captured offline in
+the bubble ([the room's audio](audio-call-behavior.md#lo-que-se-dijo-mientras-no-había-conexión)).
+What is bounded is said, not hidden: a longer gap loses its beginning and the
+bubble says so.
 
 ## Leaving, muting, and selection ownership
 
@@ -191,7 +194,7 @@ receipts and working feedback stay with the transcript/audio where they belong.
 - **#42, #45, #28:** add the ambient working sound, replace listening bars with the
   waveform bubble, and retain the already-landed read receipts in that bubble's
   lifecycle. These do not add toolbar states.
-- **New issue:** split “buffer microphone speech during a reconnect and submit it
-  safely after the new session” out of #46. It needs its own protocol/epoch design,
-  bounded-buffer policy, failure copy, and tests; the join/leave UI should not imply
-  that this audio is preserved until that work lands.
+- **#46, second part (landed):** the microphone keeps being captured while the socket
+  is down and the page hands the new session what it heard, as one catch-up turn that
+  never opens a turn from stale detector state. Protocol, bounds and failure copy are
+  in [the room's audio](audio-call-behavior.md#lo-que-se-dijo-mientras-no-había-conexión).

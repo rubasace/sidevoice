@@ -80,7 +80,7 @@ let ws=null,stream=null,sessionId=null,connecting=false,connectEpoch=0,micEnable
 let openingSocket=null,switchingSession=false,switchEpoch=0;
 window.sidevoiceSessionId=()=>sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false,userLive=false,botLive=false,pendingUser=null,pendingUserText='';
-let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0;
+let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0,captureRate=16000;
 let screenWakeLock=null,wakeRequest=null,wakeEpoch=0,wakeRetries=0;
 const waveLevels=Array(3).fill(0);
 function micTrack(){return stream?.getAudioTracks?.()[0]||null}
@@ -222,6 +222,14 @@ function orderedHistory(id){
  return history.filter(r=>r.thread===id).slice().sort((a,b)=>
   Number(!!a.draft)-Number(!!b.draft)||a.time-b.time||(a.seq||0)-(b.seq||0));
 }
+/* What the microphone heard while the room was unreachable, said plainly. The person spoke to
+ * nobody for a moment, and how much of it survived is a fact they are entitled to read. */
+function offlineNote(r){
+ if(r.role!=='user'||!r.offline)return '';
+ return r.offline==='truncated'
+  ?'Capturado sin conexión · solo se guardaron los últimos '+GAP_BUFFER_SECONDS+' s'
+  :'Capturado sin conexión';
+}
 function audioNote(r){
  const reasons={newer_turn:'Empezaste otra intervención',user_speaking:'Estabas hablando',focus_changed:'Cambiaste de conversación',call_ended:'Llamada desconectada',session_changed:'La llamada había cambiado',expired_audio_turn:'El turno de audio había caducado',queue_full:'Cola de audio llena',user_interrupted:'Interrumpiste el audio',playback_failed:'Falló la reproducción',service_restarted:'Se reinició el servicio',channel_closed:'Canal de voz cerrado'};
  const reason=reasons[r.audio_reason];
@@ -270,8 +278,8 @@ function updateKaraoke(speech,range){
  if(window.sidevoiceUI){if(window.sidevoiceUI.updateKaraoke)window.sidevoiceUI.updateKaraoke(segment,{...range});else renderHistory();return}
  const saved=karaokeNodes.get(segment);if(saved)paintKaraoke(saved.node,saved.text,range,'playing');
 }
-function renderHistory(){karaokeNodes.clear();const id=historyThreadId();roomSeen[id]=Math.max(roomSeen[id]||0,...history.filter(r=>r.thread===id).map(r=>r.seq||0));try{sessionStorage.setItem('voice-room-seen',JSON.stringify(roomSeen))}catch{};const records=orderedHistory(historyThreadId());if(window.sidevoiceUI){const activeDraft=userTurn&&userTurn.thread===id?sessionId+':'+userTurn.key:null;window.sidevoiceUI.setConversation({messages:records.map(r=>({...r,cancellable:!!activeDraft&&!cancelledInput&&r.draft===true&&r.segment===activeDraft,audioNote:audioNote(r),playback:playbackState(r),karaoke:karaokeState?.segment===r.segment?karaokeState:null})),pendingText:userTurn?.thread===id?pendingUserText:'',pendingPhase:userTurn?.thread===id&&!cancelledInput?pendingPhase:'',pendingCancellable:!!userTurn&&!cancelledInput,working:workingOnTurn()});return}if(!records.length&&!pendingUserText&&!pendingPhase){$('messages').innerHTML='<div class="empty"><b>Hablemos de lo que sigue.</b><span>Tu voz y la respuesta aparecerán aquí.<br>El historial de la sala se conserva al reconectar.</span></div>';return}const box=$('messages');box.replaceChildren();for(const [i,r] of records.entries()){const row=document.createElement('div');row.className='message '+r.role+(i===records.length-1?' latest':'')+(r.interrupted?' interrupted':'');const label=document.createElement('span');label.className='who';label.textContent=r.name;const text=document.createElement('span');karaokeNodes.set(r.segment,{node:text,text:r.text});paintKaraoke(text,r.text,karaokeState?.segment===r.segment?karaokeState:null,playbackState(r));row.append(label,text);const metadata=document.createElement('div');metadata.className='message-meta';if(!r.draft){const time=document.createElement('time');time.className='message-time';time.textContent=new Date(r.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});metadata.append(time)}else if(userTurn&&!cancelledInput){row.append(cancelInputButton())}if(r.role==='user'&&r.delivery){const receipt=document.createElement('span');receipt.className='receipt delivery'+(r.delivery==='unconfirmed'?' unconfirmed':'');receipt.textContent=({pending:'◷',sending:'◷',delivered:'✓',unconfirmed:'✓',read:'✓✓',uncertain:'!',not_sent:'!'})[r.delivery]||'';receipt.title=({pending:'Enviando',sending:'Enviando',delivered:'Entregado a la conversación; lectura sin confirmar',unconfirmed:'Escrito en la conversación, sin acuse: este harness no confirma la entrega',read:'Leído por la conversación',uncertain:'Entrega sin confirmar',not_sent:'No enviado'})[r.delivery]||'';receipt.setAttribute('aria-label',receipt.title);metadata.append(receipt)}if(metadata.children.length)row.append(metadata);const explanation=audioNote(r);if(explanation){const note=document.createElement('span');note.className='receipt';note.textContent=explanation;row.append(note)}box.append(row)}renderPendingUser();box.scrollTop=box.scrollHeight}
-function add(role,text,segment,thread=targetId(),metadata={}){if(!text?.trim())return;const key=metadata.history_id||(segment==null?null:sessionId+':'+segment);const existing=key&&history.find(r=>r.segment===key);if(existing){Object.assign(existing,{text},metadata);save();renderHistory();return}history.push({segment:key,thread,role,text,session:sessionId,revision:segment?.toString().startsWith('user-turn:')?Number(segment.slice(10)):undefined,...metadata,name:role==='user'?'Tú':people.find(p=>p.thread_id===thread)?.title||roomBinding?.title||'Conversación',time:Date.now()});history=history.slice(-1000);save();renderHistory()}
+function renderHistory(){karaokeNodes.clear();const id=historyThreadId();roomSeen[id]=Math.max(roomSeen[id]||0,...history.filter(r=>r.thread===id).map(r=>r.seq||0));try{sessionStorage.setItem('voice-room-seen',JSON.stringify(roomSeen))}catch{};const records=orderedHistory(historyThreadId());if(window.sidevoiceUI){const activeDraft=userTurn&&userTurn.thread===id?sessionId+':'+userTurn.key:null;window.sidevoiceUI.setConversation({messages:records.map(r=>({...r,cancellable:!!activeDraft&&!cancelledInput&&r.draft===true&&r.segment===activeDraft,audioNote:audioNote(r),offlineNote:offlineNote(r),playback:playbackState(r),karaoke:karaokeState?.segment===r.segment?karaokeState:null})),pendingText:userTurn?.thread===id?pendingUserText:'',pendingPhase:userTurn?.thread===id&&!cancelledInput?pendingPhase:'',pendingCancellable:!!userTurn&&!cancelledInput,working:workingOnTurn()});return}if(!records.length&&!pendingUserText&&!pendingPhase){$('messages').innerHTML='<div class="empty"><b>Hablemos de lo que sigue.</b><span>Tu voz y la respuesta aparecerán aquí.<br>El historial de la sala se conserva al reconectar.</span></div>';return}const box=$('messages');box.replaceChildren();for(const [i,r] of records.entries()){const row=document.createElement('div');row.className='message '+r.role+(i===records.length-1?' latest':'')+(r.interrupted?' interrupted':'');const label=document.createElement('span');label.className='who';label.textContent=r.name;const text=document.createElement('span');karaokeNodes.set(r.segment,{node:text,text:r.text});paintKaraoke(text,r.text,karaokeState?.segment===r.segment?karaokeState:null,playbackState(r));row.append(label,text);const metadata=document.createElement('div');metadata.className='message-meta';if(!r.draft){const time=document.createElement('time');time.className='message-time';time.textContent=new Date(r.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});metadata.append(time)}else if(userTurn&&!cancelledInput){row.append(cancelInputButton())}if(r.role==='user'&&r.delivery){const receipt=document.createElement('span');receipt.className='receipt delivery'+(r.delivery==='unconfirmed'?' unconfirmed':'');receipt.textContent=({pending:'◷',sending:'◷',delivered:'✓',unconfirmed:'✓',read:'✓✓',uncertain:'!',not_sent:'!'})[r.delivery]||'';receipt.title=({pending:'Enviando',sending:'Enviando',delivered:'Entregado a la conversación; lectura sin confirmar',unconfirmed:'Escrito en la conversación, sin acuse: este harness no confirma la entrega',read:'Leído por la conversación',uncertain:'Entrega sin confirmar',not_sent:'No enviado'})[r.delivery]||'';receipt.setAttribute('aria-label',receipt.title);metadata.append(receipt)}if(metadata.children.length)row.append(metadata);for(const explanation of [offlineNote(r),audioNote(r)]){if(!explanation)continue;const note=document.createElement('span');note.className='receipt';note.textContent=explanation;row.append(note)}box.append(row)}renderPendingUser();box.scrollTop=box.scrollHeight}
+function add(role,text,segment,thread=targetId(),metadata={}){if(!text?.trim())return;const key=metadata.history_id||(segment==null?null:sessionId+':'+segment);const existing=key&&history.find(r=>r.segment===key);if(existing){Object.assign(existing,{text},metadata);save();renderHistory();return}history.push({segment:key,thread,role,text,session:sessionId,revision:segment?.toString().startsWith('user-turn:')?Number(segment.slice(10)):undefined,...metadata,name:role==='user'?'Tú':people.find(p=>p.thread_id===thread)?.title||roomBinding?.title||'Conversación',time:metadata.time||Date.now()});history=history.slice(-1000);save();renderHistory()}
 async function cancelCurrentInput(){if(!userTurn||cancelledInput)return;const revision=Number(userTurn.key.slice(10));try{await post("/api/presentation/cancel-input",{session_id:sessionId,revision});cancelDraft(revision)}catch(e){setRoomError(e.message);throw e}}
 function cancelInputButton(){const btn=document.createElement("button");btn.className="cancel-input";btn.textContent="Cancelar envío";btn.onclick=async()=>{btn.disabled=true;try{await cancelCurrentInput()}catch{btn.disabled=false}};return btn}
 function cancelDraft(revision){cancelledInput=true;history=history.filter(r=>r.segment!==sessionId+':user-turn:'+revision);save();partial('');renderHistory()}
@@ -306,7 +314,7 @@ async function refresh(){try{
  $('transcript-title').textContent=people.find(p=>p.thread_id===historyThreadId())?.title||roomBinding?.title||'Conversación en directo';
  const call=d.call?.id===sessionId?d.call:null;if(call?.error)setRoomError(call.error);
 }catch{$('live').textContent='Servidor no disponible'}}
-async function refreshHistory(){try{const data=await api('/api/presentation/history');let changed=false;for(const r of data.messages){const marker=':voice:',suffix=r.role==='assistant'&&r.id.includes(marker)?r.id.slice(r.id.lastIndexOf(marker)):null;let row=history.find(h=>h.segment===r.id);const aliases=suffix?history.filter(h=>h!==row&&h.role==='assistant'&&h.segment?.endsWith(suffix)&&h.thread===r.thread&&h.text===r.text):[];if(!row&&aliases.length){row=aliases.shift();changed=true}if(aliases.length){history=history.filter(h=>!aliases.includes(h));changed=true}const patch={segment:r.id,thread:r.thread,role:r.role,text:r.text,name:r.role==='user'?'Tú':people.find(p=>p.thread_id===r.thread)?.title||r.name,time:r.time,seq:r.seq,session:r.session,revision:r.revision,audio_reason:r.audio_reason,interrupted:['interrupted','disconnected'].includes(r.status),draft:false,delivery:r.role==='user'?r.status:undefined,audio:r.role==='assistant'?r.status:undefined};if(!row){history.push(patch);changed=true}else if(JSON.stringify({...row,...patch})!==JSON.stringify(row)){Object.assign(row,patch);changed=true}}if(changed){history=history.slice(-1000);save();renderHistory();renderPeople()}if(presenceTurn){const tracked=history.find(r=>r.segment===presenceTurn);if(tracked&&PRESENCE_FAILED_STATUSES.has(tracked.delivery))stopPresence(tracked.delivery)}}catch{}}
+async function refreshHistory(){try{const data=await api('/api/presentation/history');let changed=false;for(const r of data.messages){const marker=':voice:',suffix=r.role==='assistant'&&r.id.includes(marker)?r.id.slice(r.id.lastIndexOf(marker)):null;let row=history.find(h=>h.segment===r.id);const aliases=suffix?history.filter(h=>h!==row&&h.role==='assistant'&&h.segment?.endsWith(suffix)&&h.thread===r.thread&&h.text===r.text):[];if(!row&&aliases.length){row=aliases.shift();changed=true}if(aliases.length){history=history.filter(h=>!aliases.includes(h));changed=true}const patch={segment:r.id,thread:r.thread,role:r.role,text:r.text,name:r.role==='user'?'Tú':people.find(p=>p.thread_id===r.thread)?.title||r.name,time:r.time,seq:r.seq,session:r.session,revision:r.revision,audio_reason:r.audio_reason,offline:r.offline,interrupted:['interrupted','disconnected'].includes(r.status),draft:false,delivery:r.role==='user'?r.status:undefined,audio:r.role==='assistant'?r.status:undefined};if(!row){history.push(patch);changed=true}else if(JSON.stringify({...row,...patch})!==JSON.stringify(row)){Object.assign(row,patch);changed=true}}if(changed){history=history.slice(-1000);save();renderHistory();renderPeople()}if(presenceTurn){const tracked=history.find(r=>r.segment===presenceTurn);if(tracked&&PRESENCE_FAILED_STATUSES.has(tracked.delivery))stopPresence(tracked.delivery)}}catch{}}
 $('pair-connector').onclick=async()=>{try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;$('pair-code').hidden=false;$('pair-help').hidden=false}catch(e){setRoomError(e.message||'No se pudo generar el código')}}
 async function selectOnlyListeningConversation(){
  if(targetId()||switching||!ws)return false;
@@ -658,7 +666,9 @@ function browserLatency(d,received){
  }
  return Object.fromEntries(Object.entries(durations).filter(([,v])=>Number.isFinite(v)&&v>=0&&v<=3600000));
 }
-function message(raw){let m;try{m=JSON.parse(raw)}catch{return}const t=m.type,d=m.data||{};observeLatencyEvent(t,d);if(t==='voice-transcribe'){if(d.session_id===sessionId)window.roomTranscription.transcribe(d);return}if(t==='voice-speech'){receiveBrowserSpeech(d);return}if(t==='voice-speech-audio'){receiveServerSpeech(d);return}if(t==='voice-cancel'&&d.session_id===sessionId){roomRevision=Math.max(roomRevision,d.revision);stopPresence('cancelled');cancelBrowserSpeech();return}if(t==='voice-user-turn'&&d.phase==='started'){roomRevision=Math.max(roomRevision,d.revision);stopPresence('new_turn');cancelBrowserSpeech()}if(t==='voice-input-receipt'){const receiptId=d.history_id||(d.session_id||sessionId)+':user-turn:'+d.revision;const row=history.find(r=>r.thread===d.thread_id&&r.segment===receiptId);if(row){row.delivery=d.status;save();renderHistory()}else inputReceipts.set(receiptId,d.status);if((d.session_id||sessionId)===sessionId&&d.thread_id===targetId())presenceReceipt(receiptId,d.status)}if(t==='voice-user-turn'){const key='user-turn:'+d.revision,receiptId=(d.session_id||sessionId)+':'+key;if(d.phase==='started'){cancelledInput=false;userTurn={key,text:'',thread:d.thread_id};pendingPhase='listening';partial('')}else if(d.phase==='cancelled'){inputReceipts.delete(receiptId);if(d.merged){/* the room held this text for the turn now open: same bubble, nothing to remove */history=history.filter(r=>r.segment!==sessionId+':user-turn:'+d.revision);renderHistory()}else{pendingPhase='';cancelDraft(d.revision)}}else if(d.phase==='finished'){pendingPhase='';partial('');add('user',d.text,key,d.thread_id,{draft:false,time:Date.now(),delivery:d.thread_id?(inputReceipts.get(receiptId)||'pending'):'not_sent'});inputReceipts.delete(receiptId);userTurn=null}}if(t==='user-transcription'&&!cancelledInput){if(d.final){partial('');if(userTurn){userTurn.text=[userTurn.text,d.text].filter(Boolean).join(' ');add('user',userTurn.text,userTurn.key,userTurn.thread,{draft:true})}}else if(!userTurn||userTurn.thread===historyThreadId())partial(d.text)}if(t==='bot-output'&&!['word','token'].includes(d.aggregated_by)){const completed=d.spoken===true||d.spoken_status==='completed';const index=completed?pendingBotText.indexOf(d.text):-1;if(index>=0){pendingBotText.splice(index,1)}else{add('assistant',d.text,d.segment_id);if(d.spoken===false||d.spoken_status==='new')pendingBotText.push(d.text)}}if(t==='bot-started-speaking'){stopPreview();botLive=true;live()}if(t==='bot-stopped-speaking'){botLive=false;live()}if(t==='user-started-speaking'){if(userTurn){pendingPhase='listening';renderHistory()}stopPresence('user_speaking');cancelBrowserSpeech();userLive=true;if(botLive){const last=[...history].reverse().find(r=>r.thread===targetId()&&r.role==='assistant');if(last){last.interrupted=true;save();renderHistory()}}botLive=false;live()}if(t==='user-stopped-speaking'){if(userTurn&&pendingPhase==='listening'){pendingPhase='transcribing';renderHistory()}userLive=false;$('live').textContent='Procesando tu intervención…'}if(t==='error')setRoomError(d.message||d.error||'Error de conexión')}
+function message(raw){let m;try{m=JSON.parse(raw)}catch{return}const t=m.type,d=m.data||{};observeLatencyEvent(t,d);if(t==='voice-transcribe'){if(d.session_id===sessionId)window.roomTranscription.transcribe(d);return}if(t==='voice-speech'){receiveBrowserSpeech(d);return}if(t==='voice-speech-audio'){receiveServerSpeech(d);return}if(t==='voice-cancel'&&d.session_id===sessionId){roomRevision=Math.max(roomRevision,d.revision);stopPresence('cancelled');cancelBrowserSpeech();return}if(t==='voice-user-turn'&&d.phase==='started'){roomRevision=Math.max(roomRevision,d.revision);stopPresence('new_turn');cancelBrowserSpeech()}if(t==='voice-catchup-turn'&&d.session_id===sessionId){/* a message from the gap: its own bubble, with this browser's own clock, and nothing of the turn that may be open now */
+ add('user',d.text,null,d.thread_id,{history_id:d.history_id,draft:false,offline:d.offline,time:d.time||Date.now(),delivery:d.thread_id?(inputReceipts.get(d.history_id)||'pending'):'not_sent'});inputReceipts.delete(d.history_id);return}
+if(t==='voice-input-receipt'){const receiptId=d.history_id||(d.session_id||sessionId)+':user-turn:'+d.revision;const row=history.find(r=>r.thread===d.thread_id&&r.segment===receiptId);if(row){row.delivery=d.status;save();renderHistory()}else inputReceipts.set(receiptId,d.status);if((d.session_id||sessionId)===sessionId&&d.thread_id===targetId())presenceReceipt(receiptId,d.status)}if(t==='voice-user-turn'){const key='user-turn:'+d.revision,receiptId=(d.session_id||sessionId)+':'+key;if(d.phase==='started'){cancelledInput=false;userTurn={key,text:'',thread:d.thread_id};pendingPhase='listening';partial('')}else if(d.phase==='cancelled'){inputReceipts.delete(receiptId);if(d.merged){/* the room held this text for the turn now open: same bubble, nothing to remove */history=history.filter(r=>r.segment!==sessionId+':user-turn:'+d.revision);renderHistory()}else{pendingPhase='';cancelDraft(d.revision)}}else if(d.phase==='finished'){pendingPhase='';partial('');add('user',d.text,key,d.thread_id,{draft:false,time:Date.now(),delivery:d.thread_id?(inputReceipts.get(receiptId)||'pending'):'not_sent'});inputReceipts.delete(receiptId);userTurn=null}}if(t==='user-transcription'&&!cancelledInput){if(d.final){partial('');if(userTurn){userTurn.text=[userTurn.text,d.text].filter(Boolean).join(' ');add('user',userTurn.text,userTurn.key,userTurn.thread,{draft:true})}}else if(!userTurn||userTurn.thread===historyThreadId())partial(d.text)}if(t==='bot-output'&&!['word','token'].includes(d.aggregated_by)){const completed=d.spoken===true||d.spoken_status==='completed';const index=completed?pendingBotText.indexOf(d.text):-1;if(index>=0){pendingBotText.splice(index,1)}else{add('assistant',d.text,d.segment_id);if(d.spoken===false||d.spoken_status==='new')pendingBotText.push(d.text)}}if(t==='bot-started-speaking'){stopPreview();botLive=true;live()}if(t==='bot-stopped-speaking'){botLive=false;live()}if(t==='user-started-speaking'){if(userTurn){pendingPhase='listening';renderHistory()}stopPresence('user_speaking');cancelBrowserSpeech();userLive=true;if(botLive){const last=[...history].reverse().find(r=>r.thread===targetId()&&r.role==='assistant');if(last){last.interrupted=true;save();renderHistory()}}botLive=false;live()}if(t==='user-stopped-speaking'){if(userTurn&&pendingPhase==='listening'){pendingPhase='transcribing';renderHistory()}userLive=false;$('live').textContent='Procesando tu intervención…'}if(t==='error')setRoomError(d.message||d.error||'Error de conexión')}
 function stopMeter(){cancelAnimationFrame(meterFrame);meterFrame=null;captureNode?.disconnect();captureNode=null;micSource?.disconnect();analyser?.disconnect();if(audioContext&&audioContext!==window.roomVoice?.context)audioContext.close().catch(()=>{});audioContext=null;analyser=null;micSource=null;$('mute').style.setProperty('--mic-fill','0%');$('mic-control').dataset.signal='quiet';$('mic-level-meter').setAttribute('aria-valuenow','0');waveLevels.fill(0);updateWave(0)}
 /* The bubble of the turn being recorded draws this microphone: the waveform pulls the samples the meter's
  * own analyser already holds, once per animation frame and from the canvas itself. No second audio graph, no
@@ -690,13 +700,19 @@ async function startCapture(socket,session){if(!micSource)throw Error('No se pud
  const context=audioContext,source=micSource,epoch=connectEpoch;
  await context.audioWorklet.addModule('/voice/mic_capture.js?v='+encodeURIComponent(window.sidevoiceBuildId||'dev'));
  if(ws!==socket||audioContext!==context||epoch!==connectEpoch)return;
- const node=new AudioWorkletNode(context,'mic-capture',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit',processorOptions:{sampleRate:session.sample_rate}});captureNode=node;node.port.onmessage=e=>{if(captureNode===node&&ws===socket&&socket.readyState===WebSocket.OPEN&&micTrack()?.enabled)socket.send(e.data)};source.connect(node);node.connect(context.destination)/* reachable from the destination so it keeps running; its output stays silent */}
+ captureRate=session.sample_rate;
+ const node=new AudioWorkletNode(context,'mic-capture',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit',processorOptions:{sampleRate:session.sample_rate}});captureNode=node;node.port.onmessage=e=>{
+  if(captureNode!==node||!micTrack()?.enabled)return;
+  // The socket is gone but the call is not: this is what the gap buffer exists for.
+  if(ws===socket&&socket.readyState===WebSocket.OPEN)socket.send(e.data);else bufferGapAudio(e.data);
+ };source.connect(node);node.connect(context.destination)/* reachable from the destination so it keeps running; its output stays silent */}
 function disconnect(){
  latencyTurns.clear();latencyActiveTurn=null;
  ++connectEpoch;connecting=false;
  releaseScreenWakeLock();audioSession(false);++deviceEpoch;
  stopPresence('disconnected');window.roomVoice?.cancel();window.roomTranscription?.stop();if($('voice-loading').open)$('voice-loading').close();clearJoinStatus();
  cancelBrowserSpeech();stopPreview();
+ disarmGapBuffer();
  ++switchEpoch;switchingSession=false;const socket=ws,opening=openingSocket;ws=openingSocket=null;socket?.close();opening?.close();showEngineBadge('');showEchoCover();
  stream?.getTracks().forEach(t=>t.stop());stream=null;
  stopMeter();sessionId=null;userLive=botLive=holding=spaceDown=false;userTurn=null;pendingPhase='';pendingBotText=[];partial('');
@@ -750,10 +766,13 @@ async function joinRoom(epoch,context){
 async function lostConnection(event,epoch,context){
  if(epoch!==connectEpoch||reconnecting)return;
  ws=null;
- window.roomTranscription?.stop();stopMeter();stopPresence('connection_lost');
+ // The meter and the capture stay up on purpose: the microphone was never paused, and what it hears
+ // while the socket is down is what the gap buffer keeps. Only the room's own transcription stops.
+ window.roomTranscription?.stop();stopPresence('connection_lost');
  cancelBrowserSpeech();userLive=botLive=false;pendingUser=null;pendingUserText='';pendingPhase='';renderHistory();
  if(!shouldReconnect(event)){disconnect();failJoin('La sala cerró la llamada. Vuelve a pulsar para entrar cuando esté disponible.');return}
  reconnecting=true;$('connect').classList.add('reconnecting');
+ armGapBuffer(captureRate);
  try{
   for(let attempt=0;attempt<RECONNECT_DELAYS_MS.length;attempt++){
    joinStatus('reconnect',{detail:attempt?String(attempt+1):''});
@@ -764,12 +783,77 @@ async function lostConnection(event,epoch,context){
     if(epoch!==connectEpoch||!session)return;
     await window.roomVoice.unlock();
     rosterSignature='';live();await refresh();await refreshPeople();
+    // Once the room has said which conversation this browser is on, what it missed can go to it. It
+    // arrives after any turn already finished here, which is the order the room delivers turns in.
+    sendGapAudio(ws);
     setRoomError('');clearJoinStatus();
     return;
    }catch(e){if(epoch!==connectEpoch)return;ws=null}
   }
   disconnect();failJoin('La sala no volvió. Entra de nuevo cuando esté disponible.');
- }finally{reconnecting=false;$('connect').classList.remove('reconnecting')}
+ }finally{reconnecting=false;disarmGapBuffer();$('connect').classList.remove('reconnecting')}
+}
+/* ----- what the microphone kept hearing while the socket was down -----
+ * The microphone is never paused, so while the call is reconnecting the page holds on to the PCM it
+ * would have streamed and hands it to the new session as one catch-up turn. The buffer is bounded on
+ * purpose: a room that never comes back must not grow this page's memory, so the oldest audio is
+ * dropped and the bubble says so rather than the page quietly shortening what was said. */
+const GAP_BUFFER_SECONDS=30,GAP_FRAME_MS=20,GAP_VOICE_PEAK=.02,GAP_MARGIN_MS=250,GAP_SLICE_SAMPLES=32768;
+const gap={armed:false,rate:16000,chunks:[],samples:0,dropped:false,startedAt:0};
+function armGapBuffer(rate){Object.assign(gap,{armed:true,rate:rate||16000,chunks:[],samples:0,dropped:false,startedAt:0})}
+function disarmGapBuffer(){Object.assign(gap,{armed:false,chunks:[],samples:0,dropped:false,startedAt:0})}
+function bufferGapAudio(data){
+ if(!gap.armed)return;
+ const chunk=new Int16Array(data);if(!chunk.length)return;
+ const now=Date.now();
+ if(!gap.chunks.length)gap.startedAt=now-Math.round(chunk.length/gap.rate*1000);
+ gap.chunks.push(chunk);gap.samples+=chunk.length;
+ const limit=gap.rate*GAP_BUFFER_SECONDS;
+ while(gap.samples>limit){
+  const oldest=gap.chunks.shift();gap.samples-=oldest.length;gap.dropped=true;
+  gap.startedAt+=Math.round(oldest.length/gap.rate*1000);
+ }
+}
+/* What of the gap is worth sending: the voiced span, with a margin so no word loses its edges.
+ * Silence is not a message — a gap that only held room noise is sent as nothing at all. */
+function gapSpeech(){
+ if(!gap.samples)return null;
+ const frame=Math.max(1,Math.round(gap.rate*GAP_FRAME_MS/1000)),pcm=new Int16Array(gap.samples);
+ let offset=0;for(const chunk of gap.chunks){pcm.set(chunk,offset);offset+=chunk.length}
+ let first=-1,last=-1;
+ for(let start=0;start<pcm.length;start+=frame){
+  let peak=0;for(let i=start;i<Math.min(start+frame,pcm.length);i++)peak=Math.max(peak,Math.abs(pcm[i])/32768);
+  if(peak<GAP_VOICE_PEAK)continue;
+  if(first<0)first=start;
+  last=Math.min(start+frame,pcm.length);
+ }
+ if(first<0)return null;
+ const margin=Math.round(gap.rate*GAP_MARGIN_MS/1000);
+ const from=Math.max(0,first-margin),to=Math.min(pcm.length,last+margin);
+ return {samples:pcm.subarray(from,to),
+  // The oldest audio was already speech when it was dropped: how much came before is unknowable.
+  truncated:gap.dropped&&first===0,
+  startedAt:gap.startedAt+Math.round(from/gap.rate*1000)};
+}
+function base64Pcm(samples){
+ const bytes=new Uint8Array(samples.buffer,samples.byteOffset,samples.byteLength);
+ let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));
+ return btoa(binary);
+}
+/* One catch-up, in slices small enough that no frame limit between here and the room can drop it.
+ * It goes as text and never as the binary microphone frames: this audio belongs to a session that
+ * is gone, and the room must not be able to mistake it for someone speaking now. */
+function sendGapAudio(socket){
+ const speech=gapSpeech(),rate=gap.rate;
+ disarmGapBuffer();
+ if(!speech||!socket||socket.readyState!==WebSocket.OPEN||!sessionId)return 0;
+ const total=Math.ceil(speech.samples.length/GAP_SLICE_SAMPLES)||1;
+ for(let index=0;index<total;index++){
+  const slice=speech.samples.subarray(index*GAP_SLICE_SAMPLES,(index+1)*GAP_SLICE_SAMPLES);
+  socket.send(JSON.stringify({type:'voice-catchup',data:{session_id:sessionId,sample_rate:rate,seq:index,
+   audio_base64:base64Pcm(slice),final:index===total-1,truncated:speech.truncated,started_at:speech.startedAt}}));
+ }
+ return total;
 }
 function speedLimits(model){return providerFor(model)==='elevenlabs'?[.7,1.2]:[.5,2]}
 function effectiveSpeed(model,value){const [min,max]=speedLimits(model);return Math.max(min,Math.min(max,Number(value)||1))}

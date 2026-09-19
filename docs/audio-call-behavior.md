@@ -76,6 +76,44 @@ sesión, 2026-09-19).
 Es un ajuste **de este dispositivo**: activado o desactivado, y un volumen de 1 a 12 % en
 «Avanzado». La sala no recibe ni guarda ninguno de los dos.
 
+## Lo que se dijo mientras no había conexión (issue #46)
+
+La reconexión automática mantiene la llamada cuando se cae el socket, pero el micrófono nunca se
+para: durante ese hueco la persona sigue hablando y, hasta ahora, a nadie. La página se queda con
+ese audio y se lo da a la sesión siguiente.
+
+**En el navegador.** Mientras `lostConnection` reintenta, el worklet de captura sigue vivo — no se
+para el medidor ni se suelta el contexto — y cada trama de 20 ms que no se puede enviar entra en un
+anillo acotado a los **últimos 30 s**; lo más viejo se cae. Al volver la sala se recorta el tramo
+con voz (pico por trama por encima de −34 dBFS, con 250 ms de margen a cada lado): si el hueco solo
+tuvo ruido de sala, **no se envía nada**. Si al caer lo más viejo ya había voz, no se puede saber
+cuánto se perdió, y eso se dice — no se acorta la frase en silencio.
+
+**Cómo viaja.** Rodajas base64 en tramas de texto `voice-catchup` (`seq`, `final`, `sample_rate`,
+`truncated`, `started_at`), nunca como las tramas binarias del micrófono. Las binarias son audio en
+directo y van al detector; esto se dijo a una sesión que ya no existe y **no puede** abrir una
+intervención aquí — lo impide la forma del mensaje, no el cuidado de quien lo lee. Las rodajas
+además dejan cada trama pequeña: ningún límite de tamaño por el camino puede tirar justo lo que
+esta función existe para salvar. Una rodaja fuera de orden tira la grabación entera antes que
+transcribir una frase con un agujero, y por encima de 35 s la sala la rechaza y lo dice.
+
+**En la sala.** `VoiceCall.catch_up` la reconoce por su cuenta, con el mismo *speech gate*, el mismo
+proveedor y los mismos filtros que un turno, y bajo el mismo *lock*, así que no se entrelaza con una
+intervención en curso. No toca el detector, ni la época del navegador (queda en la revisión 0, la de
+antes de su primer turno), ni el texto que la sesión tenga retenido. Si hay texto, es **un** mensaje
+en el diario, con el reloj del propio navegador y marcado `offline` (`buffered` o `truncated`); si no
+lo hay, no es un mensaje ni una incidencia y no se envía nada. El PCM se suelta en cuanto se ha
+reconocido: la sala no guarda nada de él, ni en disco ni en el diario, y la telemetría no ve audio ni
+texto, solo duraciones y la decisión.
+
+**En la burbuja.** El mensaje aparece donde le toca por la hora en que se dijo, no por la hora en que
+la sala se enteró, con «Capturado sin conexión» debajo, o «Capturado sin conexión · solo se guardaron
+los últimos 30 s» cuando el anillo desbordó. Su acuse de entrega es el de cualquier otro mensaje.
+
+Queda por comprobar en un dispositivo: hablar durante un reinicio real de la sala en el iPhone y
+confirmar que la frase llega entera, que no abre una intervención al volver, y que un hueco de más de
+30 s dice que se cortó.
+
 ## Verificación y prueba manual pendiente
 
 Las pruebas automatizadas cubren micro abierto durante TTS e interrupción por voz,
@@ -94,6 +132,9 @@ Para validar físicamente:
    subirlo en Avanzado y anotar el valor que sí funciona, en lugar de suponerlo.
 7. Comprobar con él sonando que no abre ninguna intervención (ni con el detector a 0,35 de
    volumen mínimo, ni en manos libres) y que no se oye a sí mismo por el micrófono.
+8. Reiniciar la sala mientras se habla y comprobar que lo dicho en el hueco llega como un mensaje
+   marcado «Capturado sin conexión», que no abre una intervención al reconectar, y que un hueco
+   de más de 30 s avisa de que se cortó.
 
 ## Missing microphone packets versus silence
 

@@ -19,6 +19,9 @@ export interface ChatMessage {
   delivery?: string;
   audio?: string;
   audioNote?: string;
+  /** How the room got this message when it did not hear it happen: `buffered`, or `truncated`. */
+  offline?: string | null;
+  offlineNote?: string;
   karaoke?: KaraokeRange | null;
   playback?: "pending" | "playing" | "complete";
 }
