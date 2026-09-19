@@ -211,7 +211,7 @@ test('A barge-in fades the voice out through its own gain instead of cutting the
  const stops=[];context.createBufferSource=()=>{const src={connect(target){connections.push(['source',target])},start(){},stop(when){stops.push(when);src.stopped=true}};s.sources.push(src);return src};
  await s.voice.unlock();
  assert.equal(s.voice.output.keepalive,undefined);
- assert.deepEqual(connections,[],'nothing reaches the sink before the first voice');
+ assert.deepEqual(connections,[['source',s.voice.output.sink]],'the greeting is the first thing through the sink');connections.length=0;
  const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
  await new Promise(resolve=>setImmediate(resolve));
  assert.deepEqual(connections,[['gain',s.voice.output.sink],['source',gains[0]]],'the voice goes through its own gain into the sink');
@@ -256,11 +256,20 @@ test('Cutting a voice mid-utterance leaves half a second of silence in the sink,
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
 });
 
-test('A fresh output plays nothing before the first utterance: neither silence nor a chime',async()=>{
- // Silence took the element out of the phone's echo reference; a chime looped its last instant (2026-09-19).
+test('A fresh output is greeted once: audible notes first, then silence long enough for the element to start',async()=>{
  const s=setup();const {context}=mediaOutput(s);
- const made=[];context.createBufferSource=()=>{const src={connect(){},start(){},stop(){}};made.push(src);return src};
+ const made=[];let written=null;
+ context.createBuffer=(channels,frames,rate)=>({duration:frames/rate,frames,rate,copyToChannel(data){written=data}});
+ context.createBufferSource=()=>{const src={connect(target){src.target=target},start(when){src.startedAt=when},stop(){}};made.push(src);return src};
+ context.sampleRate=48000;
  await s.voice.unlock();await s.voice.unlock();
- assert.equal(made.length,0);
- assert.equal(s.voice.health().events.some(e=>['prime','chime'].includes(e.kind)),false);
+ assert.equal(made.length,1,'one greeting per output');
+ assert.equal(made[0].target,s.voice.output.sink);
+ assert.equal(written.length,Math.round(48000*1.8),'notes plus a silent tail in one buffer');
+ const notes=Array.from(written.slice(0,Math.round(48000*.26))),tail=Array.from(written.slice(Math.round(48000*.3)));
+ const peak=Math.max(...notes.map(Math.abs));
+ assert.ok(peak>.05&&peak<=.13,'audible but soft: '+peak);
+ assert.equal(written[0],0,'starts from zero, no click');
+ assert.equal(tail.every(v=>v===0),true,'silence keeps the sink fed after the notes');
+ assert.equal(s.voice.health().events.at(-1).kind,'chime');
 });

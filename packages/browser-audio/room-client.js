@@ -40,12 +40,25 @@ class RoomVoice {
    playing:!!this.job?.playing,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
  }
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
- async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput()}
- /* Nothing is played into a fresh output before the first utterance. Two warm-ups were tried on 2026-09-19
-  * and both failed on iPhone Safari: half a second of silence took the media element out of the echo
-  * reference for the session (the room's own voice opened user turns), and a short audible chime looped
-  * its last instant once it ended, the sink having no other input yet. The first utterance's slow start
-  * is the watchdog's to recover (stall → attach → complete), and it does. */
+ async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput();this.greet()}
+ /* A fresh output is greeted once: two soft notes, then a second and a half of silence, in one buffer.
+  * The notes tell the person they are in and, being audible, keep the media element in the phone's echo
+  * reference (half a second of silence alone took it out for the whole session, 2026-09-19). The silence
+  * after them keeps the sink fed until the element has actually started: a bare quarter-second chime ended
+  * before that and the element looped its last instant, the same failure as a cut without a tail. */
+ greet(){
+  if(!this.context||!this.output||this.greeted||typeof this.context.createBufferSource!=='function')return;
+  this.greeted=true;
+  try{
+   const rate=this.context.sampleRate||48000,notes=[[660,0,.11],[880,.12,.13]],length=Math.round(rate*(this.greetSeconds||1.8));
+   const buffer=this.context.createBuffer(1,length,rate),samples=new Float32Array(length);
+   for(const [hz,at,dur] of notes){const from=Math.round(at*rate),n=Math.round(dur*rate);
+    for(let i=0;i<n&&from+i<length;i++){const env=.5-.5*Math.cos(2*Math.PI*i/n);samples[from+i]+=.12*env*Math.sin(2*Math.PI*hz*i/rate)}}
+   buffer.copyToChannel(samples,0);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
+   source.start(this.context.currentTime+.02);this.note('chime');
+  }catch(error){this.note('chime-failed',error?.message||'chime')}
+ }
  /* The room's voice leaves through a media element, not the context's own output: on iOS Safari only
   * media-element playback is part of the echo-cancellation reference, so this is what lets the
   * microphone subtract our own voice instead of opening a turn with it. Falls back to the context. */
