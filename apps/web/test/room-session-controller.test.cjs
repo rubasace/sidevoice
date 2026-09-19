@@ -1460,3 +1460,18 @@ test('A final reply settles the turn it answers, not whatever the conversation i
  s.run("stopPresence('reply','s:user-turn:2')");
  assert.equal(s.run('workingOnTurn')(),false);
 });
+
+test('While the harness says it is working, nothing the conversation says puts the dots out',()=>{
+ const s=presenceSetup();
+ s.run("sessionId='s'");
+ s.emit('voice-conversation',{thread_id:'a',working:true});
+ assert.equal(s.run('workingOnTurn')(),true,'the dots go on before any receipt');
+ // Replies, new turns and the person speaking all leave them alone now.
+ s.run("stopPresence('reply','s:user-turn:1')");
+ s.emit('voice-cancel',{session_id:'s',revision:2});
+ s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
+ assert.equal(s.run('workingOnTurn')(),true);
+ // Only the harness going idle does.
+ s.emit('voice-conversation',{thread_id:'a',working:false});
+ assert.equal(s.run('workingOnTurn')(),false);
+});
