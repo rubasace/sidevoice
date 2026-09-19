@@ -362,6 +362,7 @@ class Room:
         self.clients = {}
         self.sessions = deque(maxlen=64)   # ids we have known, so an older reply can be told apart
         self.utterances = {}
+        self.audio_reports = deque(maxlen=30)   # browsers' reports about their audio output, kept past their leaving
         self.journal = journal
         self.assets = assets if assets is not None else SynthesisCache()
         self.activation_lock = asyncio.Lock()
@@ -646,7 +647,8 @@ class Room:
                 'room': {'revision': client.revision if client else 0, 'speaking': client.speaking if client else self.speaking,
                          'switching': client.switching if client else False,
                          'clients': len(self.clients), 'audio': self.assets.stats(),
-                         'utterances': [u.snapshot() for u in self.utterances.values()]},
+                         'utterances': [u.snapshot() for u in self.utterances.values()],
+                         'audio_reports': list(self.audio_reports)[-10:]},
                 'clients': [c.identity() for c in self.clients.values()],
                 'call': client.snapshot() if client else None}
 

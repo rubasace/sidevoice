@@ -141,6 +141,12 @@ class VoiceCall:
             self.call.audio_health = {'reason': str(data.get('reason') or '')[:40], 'at': time.time(),
                                       **{key: health.get(key) for key in ('context', 'clock', 'output', 'element', 'playing', 'stalls', 'resuming')},
                                       'events': [event for event in (health.get('events') or []) if isinstance(event, dict)][-24:]}
+            # The browser that reports a stuck output is usually reloaded seconds later: the report outlives it.
+            if self.call.room is not None:
+                self.call.room.audio_reports.append({'session_id': self.call.id, **self.call.audio_health})
+            logger.info('Call {}: audio output {} · {} · clock {} · stalls {} · {}', self.call.id[:8], self.call.audio_health['reason'],
+                        self.call.audio_health.get('context'), self.call.audio_health.get('clock'), self.call.audio_health.get('stalls'),
+                        ' | '.join(f"{e.get('kind')}{(' ' + str(e.get('detail'))) if e.get('detail') else ''}" for e in self.call.audio_health['events'][-8:]))
             return
         if message['type'] == 'voice-settings':
             from .language_settings import settings_from

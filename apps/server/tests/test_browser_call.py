@@ -235,6 +235,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual((shown['reason'], shown['stalls'], shown['context'], shown['output']), ('stall', 1, 'running', 'element'))
         self.assertEqual(shown['events'], [{'at': 1, 'kind': 'stall', 'detail': 'running · element playing · 1'}])
         self.assertTrue(shown['at'] > 0)
+        self.assertEqual(self.hub.snapshot()['room']['audio_reports'][-1]['session_id'], client.id, 'the report outlives the browser')
         # Another call's report never lands here.
         voice.browser_message({**report, 'data': {**report['data'], 'session_id': 'someone-else', 'reason': 'fail'}})
         self.assertEqual(client.snapshot()['audio_health']['reason'], 'stall')
