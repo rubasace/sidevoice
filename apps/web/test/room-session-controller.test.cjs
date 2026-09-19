@@ -1444,3 +1444,19 @@ test('A message the room recovered from the gap gets its own bubble, and takes n
  s.run("message(JSON.stringify({type:'voice-catchup-turn',data:{session_id:'other',history_id:'other:user-catchup:1',thread_id:'a',text:'no es mío'}}))");
  assert.equal(shown.at(-1).messages.some(m=>m.text==='no es mío'),false);
 });
+
+test('A final reply settles the turn it answers, not whatever the conversation is working on now',()=>{
+ const s=presenceSetup();
+ s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ assert.equal(s.run('workingOnTurn')(),true);
+ // The person speaks again while the conversation is still working; the new turn is read too.
+ s.emit('voice-cancel',{session_id:'s',revision:2});
+ s.emit('voice-user-turn',{...OWN_TURN,revision:2,phase:'started'});
+ s.emit('voice-input-receipt',{...OWN_TURN,revision:2,status:'read'});
+ assert.equal(s.run('presenceTurn'),'s:user-turn:2','the dots moved to the turn now in hand');
+ // The final reply to the first turn arrives late: it must not put out the dots of the second.
+ s.run("stopPresence('reply','s:user-turn:1')");
+ assert.equal(s.run('workingOnTurn')(),true,'an old turn closing says nothing about the new one');
+ s.run("stopPresence('reply','s:user-turn:2')");
+ assert.equal(s.run('workingOnTurn')(),false);
+});
