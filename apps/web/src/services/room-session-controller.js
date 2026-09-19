@@ -303,6 +303,13 @@ function renderLatencyStages(reply){
  for(const [label,value] of values){const item=document.createElement('li');const name=document.createElement('span');name.textContent=label;const bar=document.createElement('i');if(statsNumber(value))bar.style.width=Math.max(1,Math.round(value/max*100))+'%';else bar.hidden=true;const amount=document.createElement('b');amount.textContent=statsDuration(value);item.append(name,bar,amount);list.append(item)}
  $('stats-stages-note').textContent='Turno '+reply.reply_revision+' · el tramo más largo marca la escala.';
 }
+// The output's notable moments go to the room, so a phone that gets stuck can be read from the other end.
+const REPORTED_OUTPUT_EVENTS=new Set(['cancel','stall','fail','complete','attach-refused','resume-refused','element-refused','audio-while-stopped','unlock-refused']);
+function reportAudioHealth(reason){
+ if(!ws||ws.readyState!==1||!sessionId||!window.roomVoice?.health)return;
+ try{ws.send(JSON.stringify({type:'voice-audio-health',data:{session_id:sessionId,reason,health:window.roomVoice.health()}}))}catch{}
+}
+window.addEventListener('voice-output',event=>{const kind=event.detail?.kind;if(REPORTED_OUTPUT_EVENTS.has(kind))reportAudioHealth(kind)});
 function audioOutputFacts(health){
  if(!health)return [];
  const states={running:'activo',suspended:'suspendido',interrupted:'interrumpido',closed:'cerrado',none:'sin iniciar'};

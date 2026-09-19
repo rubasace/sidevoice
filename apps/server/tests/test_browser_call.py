@@ -225,6 +225,20 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
                           runtime={'model': 'onnx-community/whisper-tiny', 'device': 'webgpu'})
         return voice, client, sent
 
+    async def test_the_browser_can_report_its_audio_output_and_the_room_shows_it_for_that_call(self):
+        voice, client, sent = self.voice([])
+        report = {'type': 'voice-audio-health', 'data': {'session_id': client.id, 'reason': 'stall', 'health': {
+            'context': 'running', 'clock': 12.5, 'output': 'element', 'element': {'paused': False, 'readyState': 4},
+            'playing': True, 'stalls': 1, 'resuming': True, 'events': [{'at': 1, 'kind': 'stall', 'detail': 'running · element playing · 1'}, 'junk']}}}
+        voice.browser_message(report)
+        shown = client.snapshot()['audio_health']
+        self.assertEqual((shown['reason'], shown['stalls'], shown['context'], shown['output']), ('stall', 1, 'running', 'element'))
+        self.assertEqual(shown['events'], [{'at': 1, 'kind': 'stall', 'detail': 'running · element playing · 1'}])
+        self.assertTrue(shown['at'] > 0)
+        # Another call's report never lands here.
+        voice.browser_message({**report, 'data': {**report['data'], 'session_id': 'someone-else', 'reason': 'fail'}})
+        self.assertEqual(client.snapshot()['audio_health']['reason'], 'stall')
+
     async def test_a_finished_turn_is_transcribed_once_and_delivered(self):
         from sidevoice.transcribers import Transcript
         voice, client, sent = self.voice([Transcript('Hola desde el navegador', metrics={'audio_ms': 850, 'recognition_ms': 120})])

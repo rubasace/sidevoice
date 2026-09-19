@@ -28,8 +28,9 @@ function chunkTextRange(text,chunk,from=0){
 class RoomVoice {
  constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null;
   // What the output did lately, for the stats dialog: a stuck buzz on a phone is otherwise invisible from here.
-  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3}
- note(kind,detail){this.events.push({at:Date.now(),kind,...(detail?{detail}:{})});if(this.events.length>24)this.events.shift()}
+  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=.5}
+ note(kind,detail){const event={at:Date.now(),kind,...(detail?{detail}:{})};this.events.push(event);if(this.events.length>24)this.events.shift();
+  if(typeof window!=='undefined'&&window.dispatchEvent&&typeof CustomEvent==='function'){try{window.dispatchEvent(new CustomEvent('voice-output',{detail:event}))}catch{}}}
  /* The output as it is right now, and what happened to it lately. */
  health(){
   const element=this.output?.element;
@@ -96,6 +97,15 @@ class RoomVoice {
   if(typeof this.context.createGain==='function'){try{job.gain=this.context.createGain();job.gain.connect(this.destination)}catch{job.gain=null}}
   return job.gain||this.destination;
  }
+ /* The media element is handed its stream again: the same repair the page applies after an iOS
+  * interruption. Used after a voice is cut mid-utterance, when the graph goes on and the element does not. */
+ reattachOutput(reason){
+  const output=this.output;
+  if(!output)return Promise.resolve();
+  this.note('reattach',reason);
+  try{output.element.pause()}catch{}
+  return this.attachOutput();
+ }
  /* Stop a job's sources softly: gain to zero over 30 ms, sources stopped just after, the gain released later. */
  silence(job){
   const now=this.context?.currentTime||0,gain=job.gain;
@@ -105,6 +115,19 @@ class RoomVoice {
    setTimeout(()=>{try{gain.disconnect()}catch{}},200);
   }else for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}
   job.sources.clear();
+  if(job.playing)this.tail();
+ }
+ /* Seen on iPhone Safari (2026-09-19): a voice cut mid-utterance left the media element stuck on its last
+  * instant while the graph went on, and the next utterance's first source unstuck it. So a cut is followed
+  * by what the next utterance would do: half a second of silence into the same sink. (A permanent silent
+  * source was tried first and the phone's echo cancellation stopped covering the voice while it ran.) */
+ tail(){
+  if(!this.context||typeof this.context.createBufferSource!=='function')return;
+  try{
+   const rate=this.context.sampleRate||48000,buffer=this.context.createBuffer(1,Math.round(rate*this.tailSeconds),rate);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
+   source.start(this.context.currentTime+.05);this.note('tail');
+  }catch(error){this.note('tail-failed',error?.message||'tail')}
  }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
  async setOutputDevice(id){
@@ -157,7 +180,9 @@ class RoomVoice {
  }
  stopClock(job){if(job.clock?.timer)clearTimeout(job.clock.timer);if(job.clock)job.clock.timer=null}
  cancel(){this.announce('','hidden');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;this.note('cancel',job.playing?'playing':'pending');this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);this.silence(job);
-  // A cancel that lands while the context is stopped would leave the element looping its last instant.
+  // Seen on iPhone Safari (2026-09-19): after a voice is cut mid-utterance the graph keeps running and
+  // reporting playback, while what leaves the element is stuck. The element gets its stream back once
+  // the fade is over; a cancel while the context is stopped pauses it at once so it cannot loop.
   if(this.output?.element&&this.context?.state!=='running'){try{this.output.element.pause()}catch{}}
   job.reject(new DOMException('Audio cancelado','AbortError'))}
  ensure(device){if(this.worker&&this.device===device)return;this.worker?.terminate();this.ready=false;this.device=device;this.worker=new Worker('/voice-browser/worker.js',{type:'module'});this.worker.onmessage=({data})=>this.receive(data);this.worker.onerror=e=>this.fail(Error(e.message||'No se pudo iniciar el motor de voz'))}
@@ -180,7 +205,7 @@ class RoomVoice {
   }
   if(d.type==='done'){clearTimeout(job.timer);job.done=true;if(!job.sources.size)this.complete(job)}
  }
- complete(job){if(this.job!==job)return;this.stopProgress(job);this.stopClock(job);this.announce('','hidden');clearTimeout(job.timer);this.job=null;if(job.gain){const gain=job.gain;setTimeout(()=>{try{gain.disconnect()}catch{}},200)}this.note('complete');job.resolve()}
+ complete(job){if(this.job!==job)return;this.stopProgress(job);this.stopClock(job);this.note('complete');this.announce('','hidden');clearTimeout(job.timer);this.job=null;if(job.gain){const gain=job.gain;setTimeout(()=>{try{gain.disconnect()}catch{}},200)}job.resolve()}
  run(type,options={},status=()=>{},onPlaying=()=>{},onProgress){
   this.cancel();const device=options.device||'auto';this.ensure(device);const message=type==='load'?'Cargando modelo…':'Preparando voz…';status(message);if(!this.ready)this.announce(message);
   return new Promise((resolve,reject)=>{const id=++this.serial;this.job={id,resolve,reject,status,onPlaying,onProgress,text:options.text||'',textCursor:0,cues:[],load:type==='load',sources:new Set(),end:0,done:false};this.job.timer=setTimeout(()=>this.fail(Error('No se pudo preparar el modelo a tiempo.')),180000);this.worker.postMessage({type,id,...options,device})})

@@ -3,7 +3,7 @@ function setup(){const workers=[],sources=[],events=[];class Worker{constructor(
 class AudioContext{constructor(){this.currentTime=0;this.state='running'}async resume(){}async decodeAudioData(){return {duration:1}}createBuffer(c,n,r){return {duration:n/r,copyToChannel(){}}}createBufferSource(){const s={connect(){},start(){},stop(){this.stopped=true}};sources.push(s);return s}}
 const context=vm.createContext({window:{dispatchEvent:e=>events.push(e.detail)},CustomEvent:class{constructor(name,options){this.detail=options.detail}},Worker,AudioContext,DOMException,Uint8Array,atob,setTimeout,clearTimeout,Error,Set,Math});vm.runInContext(fs.readFileSync(__dirname+'/room-client.js','utf8'),context);return {voice:context.window.roomVoice,workers,sources,events,context}}
 test('Completion waits for the last audio source, not synthesis done',async()=>{const s=setup();await s.voice.unlock();let finished=false;const p=s.voice.speak({text:'hello'}).then(()=>finished=true);const w=s.workers[0],id=w.last.id;w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});w.onmessage({data:{type:'done',id}});await Promise.resolve();assert.equal(finished,false);s.sources[0].onended();await p;assert.equal(finished,true)});
-test('Cancellation stops scheduled sources and ignores late worker results',async()=>{const s=setup();await s.voice.unlock();const p=s.voice.speak({text:'hello'});const rejection=assert.rejects(p,{name:'AbortError'});const w=s.workers[0],id=w.last.id;w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});s.voice.cancel();await rejection;assert.equal(s.sources[0].stopped,true);w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});assert.equal(s.sources.length,1)});
+test('Cancellation stops scheduled sources and ignores late worker results',async()=>{const s=setup();await s.voice.unlock();const p=s.voice.speak({text:'hello'});const rejection=assert.rejects(p,{name:'AbortError'});const w=s.workers[0],id=w.last.id;w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});s.voice.cancel();await rejection;assert.equal(s.sources[0].stopped,true);const afterCancel=s.sources.length;/* the voice source plus the silent tail that follows a cut */assert.equal(afterCancel,2);w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});assert.equal(s.sources.length,afterCancel,'late worker audio schedules nothing')});
 
 test('Output selection delegates to AudioContext when supported',async()=>{const s=setup();await s.voice.unlock();let sink;s.voice.context.setSinkId=async id=>{sink=id};await s.voice.setOutputDevice('headset');assert.equal(sink,'headset');assert.equal(s.voice.outputDeviceId,'headset')});
 test('Preparation reports progress and closes automatically on readiness',async()=>{const s=setup();const ready=s.voice.prepare({device:'auto'});const w=s.workers[0],id=w.last.id;assert.equal(s.events.at(-1).phase,'loading');w.onmessage({data:{type:'progress',id,progress:{file:'model.onnx',progress:42}}});assert.equal(s.events.at(-1).progress,42);w.onmessage({data:{type:'ready',id,device:'webgpu'}});await ready;assert.equal(s.events.at(-1).phase,'hidden')});
@@ -181,7 +181,7 @@ test('A frozen audio clock during playout asks the output back, and one that sta
  assert.equal(s.voice.health().events.some(e=>e.kind==='stall'),true);
  await rejected;
  assert.equal(s.voice.job,null);
- assert.equal(s.voice.health().events.at(-1).kind,'fail');
+ assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['fail','tail']),'a failed voice is followed by the same silent tail as a cut one');
  assert.ok(s.voice.health().stalls>=3);
 });
 test('A clock that advances raises no alarm, and cancelling while the context is stopped pauses the element',async()=>{
@@ -195,7 +195,7 @@ test('A clock that advances raises no alarm, and cancelling while the context is
  context.state='interrupted';const pausedBefore=counters.paused;
  s.voice.cancel();await rejected;
  assert.equal(counters.paused,pausedBefore+1,'a cancel while the context is stopped pauses the element so it cannot loop');
- assert.equal(s.voice.health().events.at(-1).kind,'cancel');
+ assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
  const health=s.voice.health();
  assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','resuming','stalls']);
 });
@@ -219,4 +219,38 @@ test('A barge-in fades the voice out through its own gain instead of cutting the
  assert.deepEqual(gains[0].ramps,[['set',1,2],['ramp',0,2.03]],'a cancel fades the gain to zero over 30 ms');
  assert.deepEqual(stops,[2.04],'the source stops just after the fade');
  assert.equal(s.voice.health().events.at(-1).kind,'cancel');
+});
+
+test('Every noted output event is announced on the window, so the page can report it to the room',async()=>{
+ const s=setup();const announced=[];
+ s.context.window.dispatchEvent=e=>{if(e.detail?.kind)announced.push(e.detail.kind);else s.events.push(e.detail)};
+ await s.voice.unlock();
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
+ await new Promise(resolve=>setImmediate(resolve));
+ s.voice.cancel();await rejected;
+ assert.deepEqual(announced.filter(k=>['play-encoded','cancel'].includes(k)),['play-encoded','cancel']);
+});
+
+test('Cutting a voice mid-utterance leaves half a second of silence in the sink, as the next utterance would; an unplayed cancel does not',async()=>{
+ const s=setup();const {context,counters}=mediaOutput(s);await s.voice.unlock();
+ const made=[];context.createBufferSource=()=>{const src={connect(target){src.target=target},start(when){src.startedAt=when},stop(){src.stopped=true}};made.push(src);s.sources.push(src);return src};
+ context.createBuffer=(channels,frames,rate)=>({duration:frames/rate,channels,frames,rate,copyToChannel(){}});
+ context.sampleRate=48000;
+ // Cancelled before it played: nothing to repair, no tail.
+ const pending=s.voice.playEncoded({audio_base64:'SUQz'});const rejectedPending=assert.rejects(pending,{name:'AbortError'});
+ s.voice.cancel();await rejectedPending;await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(made.length,0);
+ // Cancelled while playing (a barge-in): the voice source stops and a silent one follows it into the sink.
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(made.length,1);assert.equal(s.voice.job.playing,true);
+ context.currentTime=3;
+ s.voice.cancel();await rejected;
+ assert.equal(made.length,2,'a silent tail follows the cut');
+ const tail=made[1];
+ assert.equal(tail.target,s.voice.output.sink);
+ assert.equal(tail.buffer.duration,.5);assert.equal(tail.buffer.frames,24000);
+ assert.equal(tail.startedAt,3.05);
+ assert.equal(counters.paused,0,'the element is left alone while the context runs');
+ assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
 });

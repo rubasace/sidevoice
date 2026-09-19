@@ -130,10 +130,17 @@ class VoiceCall:
         apply to this call at once for what needs no pipeline (voice, speed, grace),
         while transcription and microphone changes wait for the next connection.
         """
-        if not isinstance(message, dict) or message.get('type') not in {'voice-stt-ready', 'voice-settings'}:
+        if not isinstance(message, dict) or message.get('type') not in {'voice-stt-ready', 'voice-settings', 'voice-audio-health'}:
             return
         data = message.get('data') if isinstance(message.get('data'), dict) else {}
         if data.get('session_id') != self.call.id:
+            return
+        if message['type'] == 'voice-audio-health':
+            # What the browser's output did lately (stalls, cancels, refusals), so a stuck phone can be read from the room.
+            health = data.get('health') if isinstance(data.get('health'), dict) else {}
+            self.call.audio_health = {'reason': str(data.get('reason') or '')[:40], 'at': time.time(),
+                                      **{key: health.get(key) for key in ('context', 'clock', 'output', 'element', 'playing', 'stalls', 'resuming')},
+                                      'events': [event for event in (health.get('events') or []) if isinstance(event, dict)][-24:]}
             return
         if message['type'] == 'voice-settings':
             from .language_settings import settings_from

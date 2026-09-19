@@ -106,6 +106,7 @@ class RoomClient:
         self.mic_settings = None   # how this device's turns are detected
         self.voice = None          # the call flow driving this client's turns, when a pipeline owns it
         self.settings = None       # what this device configured; the room keeps no copy of its own
+        self.audio_health = None   # the browser's last report about its audio output
         self.latency = CallLatency(self.id)
         if room is not None:
             room.join(self)
@@ -155,6 +156,7 @@ class RoomClient:
                 } if self.mic else {}) | (self.input_stats or {}) or None,
                 'mic_settings': self.mic_settings,
                 'transcription': self.transcription,
+                'audio_health': self.audio_health,
                 'speech_filter': getattr(self.stt, 'filter_stats', {})}
 
     # ----- input this browser produced -----
