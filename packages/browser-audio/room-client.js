@@ -187,20 +187,23 @@ class RoomVoice {
  }
  /* One short, soft note, for the moment a message is read by the conversation: the second tick, made
   * audible. It is a one-shot through the same sink as everything else, never over speech, and it leaves
-  * the usual silent tail behind so the sink is not emptied when it ends. */
+  * the usual silent tail behind so the sink is not emptied when it ends. It is deliberately shorter than
+  * the detector's onset (`vad_start_secs`, 200 ms by default): a sound of this app's own that lasts
+  * longer than that can be heard back through a phone speaker and open a turn, which on 2026-09-19 is
+  * exactly how the room started interrupting itself. */
  chime(kind='read',{volume=.05}={}){
   if(!this.context||this.context.state!=='running'||this.job)return false;
   if(typeof this.context.createBufferSource!=='function')return false;
   if(!this.presenceReady()){this.note('chime-refused','output not yet rendering');return false}
   try{
-   const rate=this.context.sampleRate||48000,seconds=.22,length=Math.round(rate*seconds);
+   const rate=this.context.sampleRate||48000,seconds=.12,length=Math.round(rate*seconds);
    const samples=new Float32Array(length),level=Math.min(.12,Math.max(0,Number(volume)||0));
-   const notes=kind==='read'?[[587.33,0],[880,.055]]:[[440,0]];
+   const notes=kind==='read'?[[587.33,0],[880,.04]]:[[440,0]];
    for(const [hz,at] of notes){
     const from=Math.round(at*rate);
     for(let i=0;from+i<length;i++){
-     const t=i/rate,envelope=t<.008?t/.008:Math.exp(-(t-.008)*16);
-     if(t>.008&&envelope<1e-4)break;   // only the decay ends the note; the attack starts at zero by design
+     const t=i/rate,envelope=t<.006?t/.006:Math.exp(-(t-.006)*34);
+     if(t>.006&&envelope<1e-4)break;   // only the decay ends the note; the attack starts at zero by design
      samples[from+i]+=envelope*Math.sin(2*Math.PI*hz*t);
     }
    }

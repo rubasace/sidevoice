@@ -362,7 +362,7 @@ test('The read chime is one short soft note through the same sink, and only once
  s.voice.note('complete');
  assert.equal(s.voice.chime('read',{volume:.05}),true);
  assert.equal(made.at(-1).target,s.voice.output.sink,'through the media-element sink, like everything else');
- assert.ok(written.length===Math.round(48000*.22),'a fifth of a second, no more');
+ assert.equal(written.length,Math.round(48000*.12),'shorter than the detector onset (200 ms), so it cannot open a turn');
  let peak=0;for(const value of written)peak=Math.max(peak,Math.abs(value));
  assert.ok(Math.abs(peak-.05)<1e-6,'asked for 0.05 peak, got '+peak);
  assert.equal(written[0],0,'starts from zero, no click');
