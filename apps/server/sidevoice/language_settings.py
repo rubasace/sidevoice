@@ -77,6 +77,10 @@ def settings_from(data):
     """A device's settings as it sent them, or the defaults and the reason they were not accepted."""
     if not isinstance(data, dict) or not data:
         return LanguageSettings(), None
+    # With OpenAI transcription the local runtime fields mean nothing; a page whose device select was hidden
+    # sent '' for stt_device (2026-09-19) and lost every setting to the defaults, and its turns with them.
+    if data.get('stt_provider') == 'openai' and data.get('stt_device') not in ('auto', 'webgpu', 'wasm'):
+        data = {**data, 'stt_device': 'auto'}
     try:
         return LanguageSettings.model_validate(data), None
     except ValidationError as error:

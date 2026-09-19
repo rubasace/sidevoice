@@ -110,3 +110,14 @@ class ElevenLabsVoiceCatalogTest(unittest.TestCase):
             ],
         })
         self.assertEqual(voice['languages'], ['de', 'en'])
+
+
+class CloudTranscriptionSettingsTests(unittest.TestCase):
+    def test_openai_transcription_does_not_fail_validation_on_a_meaningless_local_device(self):
+        from sidevoice.language_settings import settings_from
+        settings, problem = settings_from({'stt_provider': 'openai', 'stt_model': 'gpt-4o-transcribe', 'stt_device': ''})
+        self.assertIsNone(problem)
+        self.assertEqual((settings.stt_provider, settings.stt_device), ('openai', 'auto'))
+        # A local provider still has to name a real runtime.
+        _, problem = settings_from({'stt_provider': 'browser', 'stt_device': ''})
+        self.assertIn('stt_device', problem or '')
