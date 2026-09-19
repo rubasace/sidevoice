@@ -218,7 +218,7 @@ test('A barge-in fades the voice out through its own gain instead of cutting the
  s.voice.cancel();await rejected;
  assert.deepEqual(gains[0].ramps,[['set',1,2],['ramp',0,2.03]],'a cancel fades the gain to zero over 30 ms');
  assert.deepEqual(stops,[2.04],'the source stops just after the fade');
- assert.equal(s.voice.health().events.at(-1).kind,'cancel');
+ assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
 });
 
 test('Every noted output event is announced on the window, so the page can report it to the room',async()=>{
