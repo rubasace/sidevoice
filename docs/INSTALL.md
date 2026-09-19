@@ -135,6 +135,29 @@ Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt 
 drop the nudge. A machine-wide hook changes how that harness runs every session on the
 machine: ask before adding it to someone's settings.
 
+## The room: observability (optional)
+
+This section is about the machine that runs the **room**, not about a harness. Nothing
+here is needed to use Sidevoice, and with none of it set the room behaves exactly as it
+did before: no provider is started, no batch is posted, and the page never downloads the
+OpenTelemetry SDK.
+
+Set these in `.env.voice` (or the room process's environment) to send one trace per turn
+and one histogram per stage to a collector:
+
+| Variable | What it does |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL of an OTLP/HTTP collector, with no `/v1/...` path — for example `http://127.0.0.1:4318`. The room appends `/v1/traces` and `/v1/metrics`, and relays the browser's own spans to the same place. **Unset means telemetry is entirely off.** |
+| `OTEL_SERVICE_NAME` | What the room calls itself in the collector. Defaults to `sidevoice-room`; the page always reports itself as `sidevoice-web`. |
+
+The browser posts its spans to the room (`POST /api/telemetry`) and never to a collector,
+so a collector on a private network needs no exposure and the page needs no second origin.
+Like the room's other browser endpoints, `/api/telemetry` has no authentication beyond the
+same-origin check: do not expose the prototype to untrusted users.
+
+What is and is not in a span — and why no transcript, reply or credential can be — is in
+[the latency measurement document](latency-measurement.md).
+
 ## Uninstall
 
 Remove the MCP server entry from your harness, the skill directory, and

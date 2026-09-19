@@ -15,6 +15,8 @@ from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from .telemetry import redelivered
+
 PROTOCOL = 1
 HEARTBEAT_SECONDS = 15.0
 HEARTBEAT_MISSES = 2
@@ -106,6 +108,7 @@ class ConnectorControl:
             except Exception:
                 self.inflight.pop(binding['id'], None)
                 self.journal.defer(row['id'], immediate=True)
+                redelivered(row['thread'], binding.get('harness'))
 
     async def acknowledge(self, connector_id, message):
         event_id, status = message.get('event_id'), message.get('status')
@@ -131,6 +134,7 @@ class ConnectorControl:
             else:
                 self.journal.defer(event_id)
                 self.hub.delivery_status(event_id, 'pending')
+                redelivered((row or {}).get('thread'), (self.journal.binding(binding_id) or {}).get('harness'))
             return
 
     async def read(self, connector_id, message):

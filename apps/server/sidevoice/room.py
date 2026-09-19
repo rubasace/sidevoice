@@ -21,6 +21,7 @@ from pipecat.frames.frames import InterruptionFrame
 from .latency import CallLatency
 from .pipeline_frames import PresentationBoundary, PresentationSpeech
 from .synthesis_cache import SynthesisCache
+from .telemetry import CallTelemetry
 
 # A client's own playback verdict, past which no later event of its own may move it.
 CLIENT_TERMINAL = {'interrupted', 'failed', 'disconnected', 'playback_finished'}
@@ -108,6 +109,8 @@ class RoomClient:
         self.settings = None       # what this device configured; the room keeps no copy of its own
         self.audio_health = None   # the browser's last report about its audio output
         self.latency = CallLatency(self.id)
+        # The same marks, said in OpenTelemetry. It reads this trace; it keeps no copy of it.
+        self.telemetry = CallTelemetry(self.id, self.latency)
         if room is not None:
             room.join(self)
 
@@ -129,6 +132,7 @@ class RoomClient:
                 self.latency.turn(payload['thread_id'], payload['revision'], 'delivery_accepted')
             elif status == 'read':
                 self.latency.turn(payload['thread_id'], payload['revision'], 'read')
+            self.telemetry.receipt(payload['thread_id'], payload['revision'], status)
         if self.on_input_receipt:
             self.on_input_receipt({'revision': payload['revision'], 'history_id': payload.get('history_id'),
                                    'thread_id': payload['thread_id'],
@@ -230,7 +234,7 @@ class RoomClient:
             self.dispatch_timer = None
         if announce and self.on_browser_event:
             self.on_browser_event({'type': 'voice-cancel', 'data': {'session_id': self.id, 'revision': self.revision}})
-        waiting = []
+        waiting, dropped = [], 0
         for uid, utterance in self.utterances.items():
             entry = utterance.clients.get(self.id)
             if not entry:
@@ -243,12 +247,19 @@ class RoomClient:
                 self.transition(uid, 'waiting_for_turn', 'user_speaking')
                 waiting.append(uid)
             else:
+                dropped += entry['status'] not in CLIENT_TERMINAL
                 self.transition(uid, status, reason)
+        # A turn that interrupted nothing is not a cancellation: most halts find nothing to drop,
+        # and counting them would make every turn look like one.
+        if dropped:
+            self.telemetry.cancelled(reason=reason or status, thread_id=self.target.get('thread_id'),
+                                     revision=self.revision)
         self.pending.clear()
         self.pending.extend(waiting)
         self.active = None
 
     def disconnect(self):
+        self.telemetry.call_ended('disconnected')
         if self.room:
             self.room.leave(self)
         else:
@@ -340,6 +351,7 @@ class RoomClient:
                   'final': getattr(utterance, 'final', True)}
         if choice['provider'] == 'kokoro':
             self.latency.mark(uid, 'audio_dispatched')
+            self.telemetry.synthesis(uid, provider=choice['provider'], model=choice.get('model'))
             self.on_browser_event({'type': 'voice-speech', 'data': {**common, **choice}})
             return
         try:
@@ -352,6 +364,8 @@ class RoomClient:
         # recording that request as its own would be a measurement it never made.
         self.latency.provider(uid, audio['timings_ms'] if fresh else {})
         self.latency.mark(uid, 'audio_dispatched')
+        self.telemetry.synthesis(uid, provider=choice['provider'], model=choice.get('model'),
+                                 shared=not fresh, provider_ms=audio['timings_ms'])
         self.on_browser_event({'type': 'voice-speech-audio', 'data': {
             **common, **choice, **audio,
             'timings_ms': audio['timings_ms'] if fresh else {}, 'shared': not fresh}})
@@ -521,6 +535,7 @@ class Room:
         # Every browser on that conversation traces the same reply on its own clock.
         for client in self.audience(payload.thread_id):
             client.latency.reply(payload.utterance_id, payload.thread_id, payload.revision)
+            client.telemetry.reply_received(payload.utterance_id, payload.thread_id, payload.revision)
         reason = None
         if payload.session_id not in self.sessions:
             reason = 'session_changed'

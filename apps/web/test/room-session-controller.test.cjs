@@ -1495,3 +1495,73 @@ test('The bed belongs to the silence: it goes while anyone speaks and comes back
  assert.equal(silent.calls.length,0);
  assert.equal(silent.run('workingOnTurn')(),true,'the dots do not depend on the sound');
 });
+
+/* The trace is the page's: the room announces a turn, this page opens the span and hands the room
+ * its traceparent. These tests drive the same functions the socket does, with a stub in the place
+ * the OpenTelemetry SDK takes when a collector is configured — and with none, to prove a room
+ * without one costs the call nothing. */
+function tracing({installed=true}={}){
+ const s=setup(),calls=[],sent=[];
+ // The controller measures with performance.now(); the sandbox has no clock of its own.
+ let tick=0;s.context.performance={now:()=>(tick+=10)};
+ s.context.globalSend=text=>sent.push(JSON.parse(text));
+ if(installed)s.context.window.sidevoiceTelemetry={
+  startCall:values=>{calls.push(['startCall',values]);return '00-11111111111111111111111111111111-2222222222222222-01'},
+  noteSession:id=>calls.push(['noteSession',id]),
+  endCall:reason=>calls.push(['endCall',reason]),
+  startTurn:(thread,revision)=>{calls.push(['startTurn',thread,revision]);return '00-11111111111111111111111111111111-3333333333333333-01'},
+  endTurn:(thread,revision,outcome)=>calls.push(['endTurn',thread,revision,outcome]),
+  stage:(thread,revision,stage,ms)=>calls.push(['stage',thread,revision,stage,ms]),
+  audioEvent:(kind,values)=>calls.push(['audioEvent',kind,JSON.parse(JSON.stringify(values))])
+ };
+ s.run("ws={readyState:1,send:text=>globalSend(text)};sessionId='s'");
+ return {s,calls,sent};
+}
+test('A turn the room announces opens a span here and reaches the room as a traceparent',()=>{
+ const {s,calls,sent}=tracing();
+ s.run("observeLatencyEvent('voice-user-turn',{phase:'started',thread_id:'a',revision:4})");
+ assert.deepEqual(calls[0],['startTurn','a',4]);
+ assert.equal(sent.length,1);
+ assert.equal(sent[0].type,'voice-turn-trace');
+ assert.deepEqual([sent[0].data.thread_id,sent[0].data.revision,sent[0].data.session_id],['a',4,'s']);
+ assert.match(sent[0].data.traceparent,/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/);
+ // A turn the room takes back is a turn whose span ends here, with why.
+ s.run("observeLatencyEvent('voice-user-turn',{phase:'cancelled',thread_id:'a',revision:4,merged:true})");
+ assert.deepEqual(calls.at(-1),['endTurn','a',4,'merged']);
+});
+test('The playback preparation this page measures becomes the stage of the same name',()=>{
+ const {s,calls}=tracing();
+ const durations=s.run("browserLatency({thread_id:'a',reply_revision:4,utterance_id:'u'},0)");
+ assert.ok(durations.audio_received_to_playback_scheduled_ms>0,'the existing measurement is unchanged');
+ const stage=calls.find(call=>call[0]==='stage');
+ assert.deepEqual(stage.slice(0,4),['stage','a',4,'audio_received_to_playback']);
+ assert.equal(stage[4],durations.audio_received_to_playback_scheduled_ms,'one measurement, said twice');
+});
+test('The audio output report goes to the room and to the trace, and the room report is unchanged',()=>{
+ const {s,calls,sent}=tracing();
+ s.context.window.roomVoice={health:()=>({output:'element',context:'running',stalls:2})};
+ s.run("reportAudioHealth('stall')");
+ assert.deepEqual(calls.at(-1),['audioEvent','stall',
+  {'sidevoice.audio_output':'element','sidevoice.audio_context':'running','sidevoice.stalls':2}]);
+ assert.equal(sent[0].type,'voice-audio-health');
+ assert.deepEqual(Object.entries(sent[0].data.health),[['output','element'],['context','running'],['stalls',2]]);
+});
+test('With no telemetry installed the call behaves exactly as it did',()=>{
+ const {s,sent}=tracing({installed:false});
+ s.context.window.roomVoice={health:()=>({output:'element'})};
+ s.run("observeLatencyEvent('voice-user-turn',{phase:'started',thread_id:'a',revision:1})");
+ // Nothing to open a span with means nothing to tell the room about: no extra frame, no failure.
+ assert.deepEqual(sent.map(frame=>frame.type),[]);
+ s.run("reportAudioHealth('stall')");
+ assert.deepEqual(sent.map(frame=>frame.type),['voice-audio-health']);
+ assert.ok(s.run("browserLatency({thread_id:'a',reply_revision:1},0)").audio_received_to_playback_scheduled_ms>0);
+});
+test('A progress reply leaves the turn open; the final one closes it',()=>{
+ const {s,calls}=tracing();
+ s.run("endTurnTrace({thread_id:'a',reply_revision:4,final:false},'played')");
+ assert.deepEqual(calls.filter(call=>call[0]==='endTurn'),[],'an acknowledgement is not the end of the turn');
+ s.run("endTurnTrace({thread_id:'a',reply_revision:4,final:true},'played')");
+ s.run("endTurnTrace({thread_id:'a',reply_revision:5},'played')");
+ assert.deepEqual(calls.filter(call=>call[0]==='endTurn'),
+  [['endTurn','a',4,'played'],['endTurn','a',5,'played']],'a reply that says nothing about it is the final one');
+});

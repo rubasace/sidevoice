@@ -125,6 +125,24 @@ next `voice_say` fails with the reason. The room remembers nothing; joining agai
 the agent's explicit `voice_connect` on the user's request. Cancelling microphone input applies
 only to the still-active turn, before outbox insertion.
 
+## Observability
+
+Every measurement the room takes has one owner and two readings. `CallLatency` owns the
+marks of one browser's turns, in memory and bounded, and the connection-statistics dialog
+reads them from `/api/presentation/latency` exactly as it always did. `telemetry.py` reads
+the same marks and says them in OpenTelemetry: one trace per turn, rooted in the browser's
+own span and continued by the room through the `traceparent` the page sends over the socket,
+and one histogram per stage. The stage names are a wire contract (`TURN_STAGES` in
+`packages/protocol`), so a span, a histogram and a row of the dialog are the same thing.
+
+Nothing of it is on unless a collector is named: with `OTEL_EXPORTER_OTLP_ENDPOINT` unset
+the room starts no provider and the page never downloads the SDK. The browser exports to the
+room and to nothing else — the room forwards the batch unread — so the browser's rule that it
+talks only to the room survives. A span carries ids, timings, states and engine names, and no
+transcript, reply or credential can reach one: both halves keep an allowlist and a test that
+drives real text through and asserts it never appears. The room persists nothing new.
+See [latency measurement](latency-measurement.md).
+
 ## Adapter boundary
 
 - Common: registry, persistence, delivery policy, duplicate handling and audio.

@@ -17,7 +17,11 @@ export function RoomProvider({ children, store: suppliedStore }: RoomProviderPro
     installRoomBridge(store);
     if (started.current) return;
     started.current = true;
-    controllerImport ??= import("../services/room-session-controller.js");
+    // Telemetry first, so `window.sidevoiceTelemetry` exists before the controller opens a call.
+    // It is a facade: the OpenTelemetry SDK itself only loads if the room names a collector.
+    controllerImport ??= import("../services/telemetry")
+      .catch(() => undefined)
+      .then(() => import("../services/room-session-controller.js"));
     void controllerImport.catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       window.sidevoiceUI?.setBootError(`No se pudo iniciar Sidevoice: ${message}`);

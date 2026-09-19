@@ -48,3 +48,60 @@ export type RoomServerEvent =
 export const PRESENTATION_API = "/api/presentation" as const;
 export const PRESENTATION_SOCKET = "/api/presentation/ws" as const;
 export const CONNECTOR_PROTOCOL_VERSION = 1 as const;
+
+/* ----- telemetry: the vocabulary the room and the page share -----
+ *
+ * The stages of a turn, and everything a span about one is allowed to say. Both halves implement
+ * this list: `apps/web/src/services/telemetry-types.ts` imports it, and `apps/server/sidevoice/
+ * telemetry.py` repeats it because Python cannot read this file — a test there asserts the two
+ * agree, so the contract has one owner and the copy cannot drift in silence.
+ *
+ * A stage name is the same thing three times over: the span, the histogram, and the row of the
+ * connection-statistics dialog. Renaming one means renaming all three. */
+export const TURN_STAGES = [
+  "endpoint_silence",
+  "recognition",
+  "request_to_transcript",
+  "transcript_to_delivery",
+  "delivery_to_read",
+  "read_to_reply",
+  "input_queued_to_reply",
+  "reply_to_synthesis",
+  "provider_synthesis",
+  "audio_received_to_playback",
+] as const;
+
+export type TurnStage = (typeof TURN_STAGES)[number];
+
+/** Ids, revisions, states, counts and engine names. Never a transcript, a reply or a credential. */
+export const TELEMETRY_ATTRIBUTES = [
+  "sidevoice.session_id",
+  "sidevoice.thread_id",
+  "sidevoice.turn_revision",
+  "sidevoice.reply_revision",
+  "sidevoice.utterance_id",
+  "sidevoice.status",
+  "sidevoice.reason",
+  "sidevoice.outcome",
+  "sidevoice.kind",
+  "sidevoice.stt_provider",
+  "sidevoice.stt_model",
+  "sidevoice.stt_device",
+  "sidevoice.tts_provider",
+  "sidevoice.tts_model",
+  "sidevoice.turn_end_mode",
+  "sidevoice.harness",
+  "sidevoice.shared_audio",
+  "sidevoice.synthesis_attempt",
+  "sidevoice.stage",
+  "sidevoice.duration_ms",
+  "sidevoice.audio_output",
+  "sidevoice.audio_context",
+  "sidevoice.stalls",
+  "sidevoice.build_id",
+] as const;
+
+export type TelemetryAttribute = (typeof TELEMETRY_ATTRIBUTES)[number];
+
+/** Where the page posts its OTLP batches. The room forwards them; the page never sees a collector. */
+export const TELEMETRY_API = "/api/telemetry" as const;

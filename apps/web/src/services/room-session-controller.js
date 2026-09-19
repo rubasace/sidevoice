@@ -551,7 +551,11 @@ function presenceReceipt(id,status){
 const REPORTED_OUTPUT_EVENTS=new Set(['cancel','stall','fail','complete','attach-refused','resume-refused','element-refused','audio-while-stopped','unlock-refused']);
 function reportAudioHealth(reason){
  if(!ws||ws.readyState!==1||!sessionId||!window.roomVoice?.health)return;
- try{ws.send(JSON.stringify({type:'voice-audio-health',data:{session_id:sessionId,reason,health:window.roomVoice.health()}}))}catch{}
+ const health=window.roomVoice.health();
+ // The same moment, twice said and once measured: the room's report keeps working exactly as it did,
+ // and the trace gets it as an event on the call span instead of a channel of its own.
+ window.sidevoiceTelemetry?.audioEvent?.(reason,{'sidevoice.audio_output':health?.output,'sidevoice.audio_context':health?.context,'sidevoice.stalls':health?.stalls});
+ try{ws.send(JSON.stringify({type:'voice-audio-health',data:{session_id:sessionId,reason,health}}))}catch{}
 }
 window.addEventListener('voice-output',event=>{const kind=event.detail?.kind;if(REPORTED_OUTPUT_EVENTS.has(kind))reportAudioHealth(kind)});
 function forgetThread(threadId){history=history.filter(r=>r.thread!==threadId);save();if(viewedThread===threadId)viewedThread=null;renderHistory()}
@@ -662,12 +666,19 @@ const latencyTurns=new Map();
 let latencyActiveTurn=null;
 function latencyNow(){return globalThis.performance?.now?.()}
 function latencyKey(thread,revision){return JSON.stringify([sessionId,thread,revision])}
+// The turn's root span is this page's: the room announces the turn, this browser opens the span and
+// hands the room its W3C traceparent, so every stage the room measures hangs from the same trace.
+function openTurnTrace(threadId,revision){
+ const traceparent=window.sidevoiceTelemetry?.startTurn?.(threadId,revision,{'sidevoice.stt_provider':voicePreferences?.stt_provider,'sidevoice.turn_end_mode':voicePreferences?.turn_end_mode});
+ if(!traceparent||!ws||ws.readyState!==1||!sessionId)return;
+ try{ws.send(JSON.stringify({type:'voice-turn-trace',data:{session_id:sessionId,thread_id:threadId,revision,traceparent}}))}catch{}
+}
 function observeLatencyEvent(type,data){
  const now=latencyNow();if(!Number.isFinite(now))return;
  if(type==='voice-user-turn'){
   const key=latencyKey(data.thread_id,data.revision);
-  if(data.phase==='started'){latencyActiveTurn=key;if(!latencyTurns.has(key))latencyTurns.set(key,{})}
-  if(data.phase==='cancelled'){latencyTurns.delete(key);if(latencyActiveTurn===key)latencyActiveTurn=null}
+  if(data.phase==='started'){latencyActiveTurn=key;if(!latencyTurns.has(key))latencyTurns.set(key,{});openTurnTrace(data.thread_id,data.revision)}
+  if(data.phase==='cancelled'){latencyTurns.delete(key);if(latencyActiveTurn===key)latencyActiveTurn=null;window.sidevoiceTelemetry?.endTurn?.(data.thread_id,data.revision,data.merged?'merged':'cancelled')}
   if(data.phase==='finished'){const turn=latencyTurns.get(key)||{};turn.finished=now;latencyTurns.set(key,turn)}
   if(latencyTurns.size>128)latencyTurns.delete(latencyTurns.keys().next().value);
  }else if(type==='user-stopped-speaking'){
@@ -679,6 +690,7 @@ function observeLatencyEvent(type,data){
 function browserLatency(d,received){
  const now=latencyNow();if(!Number.isFinite(now)||!Number.isFinite(received))return {};
  const durations={audio_received_to_playback_scheduled_ms:now-received};
+ window.sidevoiceTelemetry?.stage?.(d.thread_id,d.reply_revision??d.revision,'audio_received_to_playback',now-received,{'sidevoice.utterance_id':d.utterance_id,'sidevoice.reply_revision':d.reply_revision??d.revision});
  const turn=latencyTurns.get(latencyKey(d.thread_id,d.reply_revision??d.revision));
  if(Number.isFinite(turn?.finished)){
   durations.turn_finished_event_to_playback_scheduled_ms=now-turn.finished;
@@ -727,7 +739,7 @@ async function startCapture(socket,session){if(!micSource)throw Error('No se pud
   if(ws===socket&&socket.readyState===WebSocket.OPEN)socket.send(e.data);else bufferGapAudio(e.data);
  };source.connect(node);node.connect(context.destination)/* reachable from the destination so it keeps running; its output stays silent */}
 function disconnect(){
- latencyTurns.clear();latencyActiveTurn=null;
+ latencyTurns.clear();latencyActiveTurn=null;window.sidevoiceTelemetry?.endCall?.('left');
  ++connectEpoch;connecting=false;
  releaseScreenWakeLock();audioSession(false);++deviceEpoch;
  stopPresence('disconnected');window.roomVoice?.cancel();window.roomTranscription?.stop();if($('voice-loading').open)$('voice-loading').close();clearJoinStatus();
@@ -761,7 +773,10 @@ async function joinRoom(epoch,context){
  const socket=new WebSocket(roomSocketUrl());socket.binaryType='arraybuffer';
  if(context.keepCurrent)openingSocket=socket;else ws=socket;
  let session;
- try{session=await openSession(socket,{conversation:rememberedThread(),settings:voicePreferences,transcription:context.sttRuntime})}
+ // The hello carries this browser's call span, so the room's own spans are inside it instead of
+ // being a second trace about the same call. With no collector configured there is no span to carry.
+ const traceparent=window.sidevoiceTelemetry?.startCall?.({'sidevoice.stt_provider':voicePreferences?.stt_provider,'sidevoice.stt_model':voicePreferences?.stt_model});
+ try{session=await openSession(socket,{conversation:rememberedThread(),settings:voicePreferences,transcription:context.sttRuntime,...(traceparent?{telemetry:{traceparent}}:{})})}
  // A swap that failed leaves nothing behind: this socket never became the call's, and a refusal
  // that timed out could still be open and still be talking to a page that is not listening.
  catch(error){if(context.keepCurrent){socket.onclose=socket.onmessage=socket.onerror=null;try{socket.close()}catch{}}throw error}
@@ -778,6 +793,7 @@ async function joinRoom(epoch,context){
  socket.onclose=event=>{if(ws===socket)lostConnection(event,epoch,again)};
  socket.onmessage=e=>{if(ws===socket)message(e.data)};
  sessionId=session.session_id;roomRevision=0;
+ window.sidevoiceTelemetry?.noteSession?.(sessionId);
  if(context.browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});
  else window.roomTranscription?.stop();
  stopMeter();startMeter(session.sample_rate);await startCapture(socket,session);
@@ -786,6 +802,7 @@ async function joinRoom(epoch,context){
 async function lostConnection(event,epoch,context){
  if(epoch!==connectEpoch||reconnecting)return;
  ws=null;
+ window.sidevoiceTelemetry?.endCall?.('connection_lost');
  // The meter and the capture stay up on purpose: the microphone was never paused, and what it hears
  // while the socket is down is what the gap buffer keeps. Only the room's own transcription stops.
  window.roomTranscription?.stop();stopPresence('connection_lost');
@@ -963,7 +980,10 @@ function populateVoiceSettings(p){
 $('reset-languages').onclick=()=>{stopPreview();voiceDraft={};renderLanguageRows();$('preview-status').textContent='Todos los idiomas usan los valores por defecto. Pulsa Guardar cambios para aplicarlo.'};
 $('prepare-model').onclick=async()=>{if(activeSpeech||previewJob){$('model-status').textContent='Espera a que termine la voz.';return}const button=$('prepare-model');button.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.prepare({device:$('tts-device').value},text=>$('model-status').textContent=text)}catch(e){$('model-status').textContent=e.message}finally{button.disabled=false}};
 function cancelBrowserSpeech(){if(!activeSpeech)return;const speech=activeSpeech;clearKaraoke(speech);activeSpeech=null;window.roomVoice?.cancel();post('/api/presentation/browser-receipt',{session_id:speech.session_id,revision:speech.revision,utterance_id:speech.utterance_id,status:speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});const row=history.find(r=>r.segment===speechSegment(speech));if(row){row.interrupted=!!speech.started;save();renderHistory()}botLive=false;live()}
-async function receiveBrowserSpeech(d,cloud=false){const receivedAt=latencyNow();if(d.session_id!==sessionId)return;if(d.thread_id!==targetId())await refresh();if(d.session_id!==sessionId||d.thread_id!==targetId()||d.revision<roomRevision)return;roomRevision=d.revision;stopPresence(d.final===false?'progress':'reply',(d.session_id||sessionId)+':user-turn:'+(d.reply_revision??d.revision));stopPreview();cancelBrowserSpeech();activeSpeech=d;add('assistant',d.text,'voice:'+d.utterance_id,d.thread_id,{history_id:d.history_id,session:d.session_id,revision:d.revision});const receipt=status=>post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status,...(status==='playing'?{timings_ms:browserLatency(d,receivedAt)}:{})});try{await window.roomVoice[cloud?'playEncoded':'speak'](d,text=>$('live').textContent=text,()=>{d.started=true;botLive=true;renderHistory();live();receipt('playing').catch(()=>{})},range=>updateKaraoke(d,range));if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();await receipt('playback_finished')}catch(e){if(activeSpeech!==d)return;clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();if(e.name!=='AbortError'){setRoomError((cloud?'Audio de ElevenLabs: ':'Voz del navegador: ')+e.message);receipt('failed').catch(()=>{})}}}
+// A reply's playback is where its turn's root span closes, with what actually ended it. A progress
+// reply is not the end of the turn: its playback leaves the span open for the one that follows.
+function endTurnTrace(d,outcome){if(d.final!==false)window.sidevoiceTelemetry?.endTurn?.(d.thread_id,d.reply_revision??d.revision,outcome)}
+async function receiveBrowserSpeech(d,cloud=false){const receivedAt=latencyNow();if(d.session_id!==sessionId)return;if(d.thread_id!==targetId())await refresh();if(d.session_id!==sessionId||d.thread_id!==targetId()||d.revision<roomRevision)return;roomRevision=d.revision;stopPresence(d.final===false?'progress':'reply',(d.session_id||sessionId)+':user-turn:'+(d.reply_revision??d.revision));stopPreview();cancelBrowserSpeech();activeSpeech=d;add('assistant',d.text,'voice:'+d.utterance_id,d.thread_id,{history_id:d.history_id,session:d.session_id,revision:d.revision});const receipt=status=>post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status,...(status==='playing'?{timings_ms:browserLatency(d,receivedAt)}:{})});try{await window.roomVoice[cloud?'playEncoded':'speak'](d,text=>$('live').textContent=text,()=>{d.started=true;botLive=true;renderHistory();live();receipt('playing').catch(()=>{})},range=>updateKaraoke(d,range));if(activeSpeech!==d){endTurnTrace(d,'superseded');return}clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();endTurnTrace(d,'played');await receipt('playback_finished')}catch(e){if(activeSpeech!==d){endTurnTrace(d,'superseded');return}clearKaraoke(d);activeSpeech=null;renderHistory();botLive=false;live();endTurnTrace(d,e.name==='AbortError'?'interrupted':'failed');if(e.name!=='AbortError'){setRoomError((cloud?'Audio de ElevenLabs: ':'Voz del navegador: ')+e.message);receipt('failed').catch(()=>{})}}}
 function receiveServerSpeech(d){return receiveBrowserSpeech(d,true)}
 
 $('settings-open').onclick=async()=>{try{

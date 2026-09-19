@@ -346,6 +346,7 @@ def mount_presentation(app):
             client.fail_active()
         elif status == 'playing':
             client.latency.browser(uid, payload.get('timings_ms'))
+            client.telemetry.playback(uid, payload.get('timings_ms'))
             client.transition(uid, status)
         else:
             raise HTTPException(400, 'Estado inválido.')

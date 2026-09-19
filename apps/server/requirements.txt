@@ -2,3 +2,9 @@ pipecat-ai[websocket,silero,whisper]==1.10.0
 uvicorn==0.53.0
 
 scipy==1.18.1
+
+# Observability. The room starts none of this unless OTEL_EXPORTER_OTLP_ENDPOINT names a collector;
+# see docs/latency-measurement.md. The instrumentation packages carry their own version line.
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-fastapi==0.65b0

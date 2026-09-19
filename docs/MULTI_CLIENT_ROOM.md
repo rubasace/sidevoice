@@ -26,6 +26,7 @@ same?* If yes it is room state; if no it is client state. Nothing is both.
 | | microphone stream, mute, level meter, input gap stats; the STT runtime it resolved to |
 | | playback queue (`pending`, `active`), quiet grace, dispatch timer |
 | | local interruption, karaoke, output device; its own latency trace (`CallLatency`) |
+| | its own trace, rooted in that browser's spans (`telemetry.CallTelemetry`), which reads the latency marks and keeps none |
 
 Two consequences worth stating on their own:
 
@@ -181,6 +182,8 @@ never ships playback state.
 | 64 remembered session ids | `Room.sessions` | a reply naming an older session is rejected, not searched for |
 | `SynthesisCache` items and bytes | `synthesis_cache` | paid audio is cached, not accumulated |
 | 128 latency traces per client | `CallLatency` | pre-existing, and now per browser rather than per room |
+| 128 turn trace contexts per client | `telemetry.CallTelemetry` | a browser cannot make the room remember more turns than it measures |
+| 1 MiB per telemetry batch | `telemetry.MAX_TELEMETRY_BODY` | the room forwards the page's spans unread; unread is not unbounded |
 | 6000 characters per utterance | `Speech` | pre-existing |
 
 Origin validation is unchanged: browser endpoints require the `Origin` host to be

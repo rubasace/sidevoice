@@ -149,13 +149,18 @@ class VoiceCall:
         recognised on its own and never reaches this pipeline's detector.
         """
         if not isinstance(message, dict) or message.get('type') not in {
-                'voice-stt-ready', 'voice-settings', 'voice-audio-health', 'voice-catchup'}:
+                'voice-stt-ready', 'voice-settings', 'voice-audio-health', 'voice-catchup', 'voice-turn-trace'}:
             return
         data = message.get('data') if isinstance(message.get('data'), dict) else {}
         if data.get('session_id') != self.call.id:
             return
         if message['type'] == 'voice-catchup':
             return self.catch_up_slice(data)
+        if message['type'] == 'voice-turn-trace':
+            # The browser opened the root span for the turn the room just announced, and says so with a
+            # W3C traceparent. Everything the room measures of that turn hangs from it.
+            self.call.telemetry.turn_context(data.get('thread_id'), data.get('revision'), data.get('traceparent'))
+            return
         if message['type'] == 'voice-audio-health':
             # What the browser's output did lately (stalls, cancels, refusals), so a stuck phone can be read from the room.
             health = data.get('health') if isinstance(data.get('health'), dict) else {}
@@ -165,6 +170,11 @@ class VoiceCall:
             # The browser that reports a stuck output is usually reloaded seconds later: the report outlives it.
             if self.call.room is not None:
                 self.call.room.audio_reports.append({'session_id': self.call.id, **self.call.audio_health})
+            # The same moments, on the call's own span: one trace, not a second channel.
+            self.call.telemetry.audio_event(self.call.audio_health['reason'], {
+                'sidevoice.audio_output': self.call.audio_health.get('output'),
+                'sidevoice.audio_context': self.call.audio_health.get('context'),
+                'sidevoice.stalls': self.call.audio_health.get('stalls')})
             logger.info('Call {}: audio output {} · {} · clock {} · stalls {} · {}', self.call.id[:8], self.call.audio_health['reason'],
                         self.call.audio_health.get('context'), self.call.audio_health.get('clock'), self.call.audio_health.get('stalls'),
                         ' | '.join(f"{e.get('kind')}{(' ' + str(e.get('detail'))) if e.get('detail') else ''}" for e in self.call.audio_health['events'][-8:]))
@@ -342,8 +352,14 @@ class VoiceCall:
             # The browser must create the final bubble before its receipt arrives.
             if not cancelled:
                 call.enqueue_input(text, target=target, revision=revision)
+                delivered_at = time.monotonic()
                 call.latency.input(target.get('thread_id'), revision, {
-                    'transcript_to_delivery_ms': round((time.monotonic() - transcript_at) * 1000, 1)})
+                    'transcript_to_delivery_ms': round((delivered_at - transcript_at) * 1000, 1)})
+                # The stages of getting a spoken turn into the journal, as spans under the browser's
+                # root span for it. They are the same marks the stats dialog reads, said once more.
+                call.telemetry.turn_finished(target.get('thread_id'), revision, speech_end=speech_end,
+                                             turn_closed=stopped_at, transcript=transcript_at,
+                                             delivered=delivered_at, metrics=metrics)
             if failed:
                 call.error = failed
                 self.send({'type': 'error', 'data': {'message': failed}})
@@ -419,6 +435,12 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
                        runtime['device'], runtime['fallback_error'])
     voice = VoiceCall(call, transcriber, send, settings=settings, mic=mic, choice=choice, runtime=runtime,
                       vad_stop_secs=float(vad.params.stop_secs))
+    # The hello carries the browser's call span, so the room's turns are inside the browser's call
+    # and not a trace of their own. What this call is made of goes on it once, never on every turn.
+    told = hello.get('telemetry') if isinstance(hello.get('telemetry'), dict) else {}
+    call.telemetry.call_started(told.get('traceparent'), {
+        'sidevoice.stt_provider': choice['provider'], 'sidevoice.stt_model': call.transcription.get('model'),
+        'sidevoice.stt_device': call.transcription.get('device'), 'sidevoice.turn_end_mode': mic.turn_end_mode})
     call.mic = serializer
     problems = [message for message in (problem, runtime_problem) if message]
     logger.info('Call {}: transcription {} · {} ({}), turn end {}', call.id[:8], choice['provider'],
@@ -503,8 +525,14 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8767)
     arguments = parser.parse_args()
+    from .telemetry import configure as configure_telemetry, instrument, mount_telemetry
     app = FastAPI()
+    # Telemetry reads the same configuration the call does, so a room started without start.sh
+    # still sees .env.voice. With no OTEL_EXPORTER_OTLP_ENDPOINT this starts nothing at all.
+    configure_telemetry(environ={**dotenv_values(REPOSITORY_ROOT / '.env.voice'), **os.environ})
     mount_presentation(app)
     mount_connector_control(app, hub)
     mount_browser_call(app)
+    mount_telemetry(app)
+    instrument(app)
     uvicorn.run(app, host=arguments.host, port=arguments.port)
