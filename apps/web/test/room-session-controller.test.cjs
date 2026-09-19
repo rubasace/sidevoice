@@ -1164,7 +1164,7 @@ test('A step that fails leaves its reason, and what to do, where the step was',a
 });
 
 // ----- the ambient bed while the conversation works on this browser's turn (#42) -----
-function presenceSetup(preferences='{}'){
+function presenceSetup(preferences="{presence_sound:'on'}"){
  const s=setup(),calls=[],timers=new Map();let serial=0;
  s.context.setTimeout=(fn,ms)=>{const id=++serial;timers.set(id,{fn,ms});return id};
  s.context.clearTimeout=id=>timers.delete(id);
@@ -1241,11 +1241,15 @@ test('The bed is a device setting: off means silent, and the stored volume is wh
  const off=presenceSetup("{presence_sound:'off'}");
  off.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  off.flush();
- assert.deepEqual(off.calls,[]);
- const loud=presenceSetup("{presence_volume:8}");
+ assert.deepEqual(off.calls,[['chime','read']],'off silences the bed, not the note on the second tick');
+ const byDefault=presenceSetup('{}');
+ byDefault.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
+ byDefault.flush();
+ assert.deepEqual(byDefault.calls,[['chime','read']],'the looping bed is opt-in until it has earned its place');
+ const loud=presenceSetup("{presence_sound:'on',presence_volume:8}");
  loud.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  assert.deepEqual(loud.calls,[['chime','read'],['start','read',0.08]],'the stored percentage is a peak amplitude');
- const absurd=presenceSetup("{presence_volume:400}");
+ const absurd=presenceSetup("{presence_sound:'on',presence_volume:400}");
  absurd.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  assert.deepEqual(absurd.calls,[['chime','read'],['start','read',0.12]],'and it is bounded here as well as in the player');
 });
@@ -1291,7 +1295,7 @@ test('The read receipt is announced: one short note, the dots, and the bed; the 
  // With the sound turned off there is no note and no bed, and the dots still say what is happening.
  const silent=presenceSetup("{presence_sound:'off'}");
  silent.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
- assert.deepEqual(silent.calls,[]);
+ assert.deepEqual(silent.calls,[['chime','read']],'the note is not the bed: it stays when the bed is off');
  assert.equal(silent.run('workingOnTurn')(),true);
  assert.equal(silent.context.__view.working,true);
 });

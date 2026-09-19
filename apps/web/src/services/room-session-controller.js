@@ -478,7 +478,10 @@ function presenceVolumePercent(preferences){
 }
 function presenceOptions(){
  const preferences=voicePreferences||{};
- if((preferences.presence_sound??'on')==='off')return null;
+ // Off until it has earned its place: the bed is the only looping source this app plays, and on
+ // 2026-09-19 the operator heard audio stick again the first evening it was on. The note on the second
+ // tick and the three dots carry the same meaning without a loop. Turn it on in Avanzado to try it.
+ if((preferences.presence_sound??'off')!=='on')return null;
  return {volume:presenceVolumePercent(preferences)/100};
 }
 function stopPresence(reason){
@@ -493,7 +496,7 @@ function startPresence(id,reason){
  if(!ws)return;
  if(workingTurn!==id){workingTurn=id;renderHistory()}
  // The second tick, made audible: one short note the moment the conversation picks the message up.
- if(reason==='read'&&presenceOptions())window.roomVoice?.chime?.('read',presenceOptions());
+ if(reason==='read')window.roomVoice?.chime?.('read',{volume:.05});
  const options=presenceOptions();
  if(!options||!window.roomVoice?.startPresence)return;
  presenceTurn=id;window.roomVoice.startPresence({...options,reason});
