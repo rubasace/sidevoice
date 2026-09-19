@@ -681,3 +681,46 @@ class ReplayOnReturnTests(RoomFixture):
         _, summary = await self.returning('fresh')
         self.assertEqual([item['history_id'] for item in summary['replayed']], ['one:voice:recent'],
                          'a tab that names no earlier session of its own has heard nothing')
+
+
+class ReplyAfterTheBrowserChangedTests(IsolatedAsyncioTestCase):
+    """A reply answers a person, not a socket: the browser that asked may have been replaced meanwhile."""
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.hub = Room(RoomHistory(Path(self.temp.name) / 'history.sqlite3'), SynthesisCache(renderer=self.render))
+        voices = patch('sidevoice.language_settings.resolve_voice', side_effect=lambda *a, **k: dict(KOKORO))
+        voices.start(); self.addCleanup(voices.stop)
+        self.hub.journal.register_binding('conn', harness='claude', thread='a', title='A')
+
+    async def render(self, choice, text):
+        return {'mime_type': 'audio/mpeg', 'audio_base64': 'YQ==', 'timings_ms': {}, 'alignment': {'characters': []}}
+
+    def browser(self, session_id):
+        client = RoomClient(session_id, self.hub, worker=AsyncMock())
+        client.connected = True
+        client.target = {'thread_id': 'a', 'title': 'A', 'binding_id': 'bind-' + session_id}
+        client.heard = []
+        client.on_browser_event = client.heard.append
+        return client
+
+    async def test_a_reply_for_a_browser_that_was_replaced_is_played_by_the_one_that_took_its_place(self):
+        gone = self.browser('old')
+        gone.user_started(); gone.speaking = False
+        asked_at = gone.revision
+        gone.disconnect()
+        # The person came back: same conversation, new socket, new epoch.
+        back = self.browser('new')
+        back.user_started(); back.speaking = False
+        result = await self.hub.publish(Speech(thread_id='a', session_id='old', revision=asked_at,
+                                               text='Lo que me preguntaste', utterance_id='u'))
+        self.assertIn(result['status'], {'queued', 'synthesizing'})
+        self.assertEqual(set(self.hub.utterances['u'].clients), {'new'}, 'it sounds where the person is')
+
+    async def test_with_nobody_on_that_conversation_it_is_still_only_text(self):
+        gone = self.browser('old')
+        gone.disconnect()
+        result = await self.hub.publish(Speech(thread_id='a', session_id='old', revision=0,
+                                               text='Nadie escucha', utterance_id='alone'))
+        self.assertEqual((result['status'], result['reason']), ('text_only', 'call_ended'))

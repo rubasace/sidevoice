@@ -630,6 +630,13 @@ class Room:
         row_id = payload.session_id + ':voice:' + payload.utterance_id
         # Store the conversational text even if its audio epoch has expired.
         asker = self.clients.get(payload.session_id)
+        # The browser that asked may have been replaced while the conversation was thinking — a reconnection,
+        # a reload, a room restart. The reply is not stale: it answers a question this person asked minutes
+        # ago and is still waiting for. If someone is on that conversation now, they are who it is for.
+        if (asker is None or not asker.connected) and self.audience(payload.thread_id):
+            asker = self.audience(payload.thread_id)[-1]
+            payload = payload.model_copy(update={'session_id': asker.id, 'revision': asker.revision})
+            row_id = payload.session_id + ':voice:' + payload.utterance_id
         record = self.journal.binding_for_thread(payload.thread_id) if self.journal else None
         name = (record or {}).get('title') or (
             asker.target.get('title') if asker and asker.target.get('thread_id') == payload.thread_id else None) or 'Conversación'
