@@ -90,16 +90,28 @@ The connector declares protocol version 1 when it connects; the room accepts a
 stated range and `voice_status` says when a bump is needed. Connector and room
 do not have to be the same version.
 
-## Read receipts and speaking first (optional hook)
+## Read receipts and speaking first
 
 The room shows one tick when the harness accepted a voice message and two when the
-conversation actually read it. The second tick, and a nudge that asks the model to
-acknowledge by voice before any other tool, come from a harness hook that runs
-`sidevoice hook` when a prompt is admitted. The hook only acts on Sidevoice voice
-messages; any other prompt exits silently. It reports to the connector over its
-local socket, so no room credential lives in the hook configuration.
+conversation actually read it. The second tick, and a line of context that asks the
+model to acknowledge by voice before any other tool, come from a harness hook on the
+prompt-admitted event. The hook is a plain command (no model involved, about 40 ms):
+it only acts on Sidevoice voice envelopes, reports to the connector over its local
+socket, so no room credential lives in any hook configuration, and always exits 0.
 
-Claude Code (`~/.claude/settings.json`, or the project's `.claude/settings.json`):
+**Claude Code, per conversation (preferred).** Install the `voice-room` skill once (`/voice` itself is Claude Code's own command):
+
+```bash
+npx -y @sidevoice/uplink@<version> skill install     # copies ~/.claude/skills/voice-room/
+```
+
+In a conversation, `/voice-room` (or asking to enable voice) joins the room and registers
+the hook for that session only; other sessions are untouched. New sessions see the
+skill; a session already open needs a restart. `skill remove` deletes the copy, and
+neither command touches a `voice-room` skill that is not Sidevoice's.
+
+**Claude Code, every session on the machine.** Alternatively, in `~/.claude/settings.json`
+(or a project's `.claude/settings.json`):
 
 ```json
 {
@@ -111,8 +123,8 @@ Claude Code (`~/.claude/settings.json`, or the project's `.claude/settings.json`
 }
 ```
 
-Codex (`~/.codex/config.toml`; verified for a turn started directly, still to be
-checked for a queued message on a long-lived thread):
+**Codex** (`~/.codex/config.toml`; verified for a turn started directly, still to be
+checked for a queued message on a long-lived thread; Codex has no per-session hooks):
 
 ```toml
 [[hooks.UserPromptSubmit]]
@@ -120,7 +132,7 @@ hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook
 ```
 
 Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt but
-drop the nudge. Installing a hook changes how that harness runs every session on the
+drop the nudge. A machine-wide hook changes how that harness runs every session on the
 machine: ask before adding it to someone's settings.
 
 ## Uninstall
