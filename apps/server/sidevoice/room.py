@@ -12,6 +12,7 @@ listener wants to hear. See `docs/MULTI_CLIENT_ROOM.md`.
 """
 import asyncio
 import json
+import time
 import uuid
 from collections import deque
 
@@ -25,6 +26,10 @@ from .telemetry import CallTelemetry
 
 # A client's own playback verdict, past which no later event of its own may move it.
 CLIENT_TERMINAL = {'interrupted', 'failed', 'disconnected', 'playback_finished'}
+# What counts as *heard* by a browser, and is therefore never replayed to it when it comes back: the
+# reply either ran to the end, or that listener stopped it on purpose. Everything else — queued,
+# waiting, synthesizing, cut off mid-sentence when the socket went, failed — it never got through.
+HEARD = {'playback_finished', 'interrupted'}
 # What the journal row says about an utterance: the furthest any listener got.
 RANK = {'disconnected': 1, 'failed': 2, 'interrupted': 3, 'queued': 4,
         'waiting_for_turn': 5, 'waiting_for_pause': 5, 'synthesizing': 6,
@@ -34,10 +39,12 @@ RANK = {'disconnected': 1, 'failed': 2, 'interrupted': 3, 'queued': 4,
 class Utterance:
     """One assistant reply. The text and the epoch are the room's; playback is each client's."""
 
-    def __init__(self, id, text, *, language=None, thread_id=None, revision=0, row_id=None):
+    def __init__(self, id, text, *, language=None, thread_id=None, revision=0, row_id=None, at=None):
         self.id, self.text, self.language = id, text, language
         self.thread_id, self.revision = thread_id, revision
         self.row_id = row_id
+        self.at = time.time() if at is None else at   # when the room published it: what "recent enough" reads
+        self.replay_of = None   # the reply this one repeats, when it is a catch-up rather than an answer
         self.clients = {}       # client id -> {'status': ..., 'reason': ...}
         self.published = None   # last (status, reason) written to the journal
 
@@ -66,7 +73,7 @@ class Utterance:
 
     def snapshot(self):
         return {'utterance_id': self.id, 'revision': self.revision, 'thread_id': self.thread_id,
-                'status': self.status,
+                'status': self.status, 'replay_of': self.replay_of,
                 'clients': {cid: entry['status'] for cid, entry in self.clients.items()}}
 
 
@@ -221,11 +228,22 @@ class RoomClient:
         entry = utterance.clients.get(self.id) if utterance else None
         if not entry or entry['status'] in CLIENT_TERMINAL:
             return
+        previous = entry['status']
         entry['status'], entry['reason'] = status, reason
         self.latency.status(uid, status)
         if status == 'playing':
             self.latency.mark(uid, 'playing_receipt')
         self.room.sync(utterance)
+        # A catch-up that actually sounded says so on the reply it repeated, under this browser's own
+        # id: without it the next return would ask the same question of the same reply and repeat it
+        # again, because the entry it reads belongs to a session that no longer exists. One that never
+        # left the queue — a new turn cancelled it — writes nothing: not playing it said nothing about
+        # whether it was ever heard, and claiming otherwise would lose the reply for good.
+        if utterance.replay_of and status in CLIENT_TERMINAL and (status == 'playback_finished' or previous == 'playing'):
+            original = self.utterances.get(utterance.replay_of)
+            if original is not None and self.id not in original.clients:
+                original.clients[self.id] = {'status': status, 'reason': reason}
+                self.room.sync(original)
 
     def halt(self, status, reason=None, *, preserve_waiting=False, announce=True):
         """Drop what this browser was going to play. Only this browser's entries move."""
@@ -239,10 +257,13 @@ class RoomClient:
             entry = utterance.clients.get(self.id)
             if not entry:
                 continue
-            # A browser that renders its own audio can be handed again anything it
-            # never started playing; a server-side pipeline cannot take it back.
-            if preserve_waiting and (entry['status'] == 'waiting_for_turn' or self.on_browser_event
-                                     and entry['status'] in {'queued', 'synthesizing', 'waiting_for_pause'}):
+            # A browser that renders its own audio can be handed again anything it never started
+            # playing; a server-side pipeline cannot take it back. A catch-up is the exception and
+            # is never held: cancelling it is exactly what a new turn is meant to do to it, and audio
+            # the person has already moved past must not come back after they have spoken again.
+            if (preserve_waiting and not utterance.replay_of
+                    and (entry['status'] == 'waiting_for_turn' or self.on_browser_event
+                         and entry['status'] in {'queued', 'synthesizing', 'waiting_for_pause'})):
                 utterance.revision = self.revision
                 self.transition(uid, 'waiting_for_turn', 'user_speaking')
                 waiting.append(uid)
@@ -348,17 +369,31 @@ class RoomClient:
         common = {'session_id': self.id, 'revision': rev, 'utterance_id': uid,
                   'reply_revision': reply_revision, 'thread_id': self.target.get('thread_id'),
                   'text': utterance.text, 'history_id': utterance.row_id,
-                  'final': getattr(utterance, 'final', True)}
+                  'final': getattr(utterance, 'final', True),
+                  # The bubble has to say it is being repeated, or it reads as something just said.
+                  **({'replay': True} if utterance.replay_of else {})}
         if choice['provider'] == 'kokoro':
             self.latency.mark(uid, 'audio_dispatched')
             self.telemetry.synthesis(uid, provider=choice['provider'], model=choice.get('model'))
             self.on_browser_event({'type': 'voice-speech', 'data': {**common, **choice}})
             return
-        try:
-            audio, fresh = await self.room.shared_audio(utterance, choice)
-        except ValueError as error:
-            self.fail_active()
-            raise HTTPException(502, str(error)) from error
+        if utterance.replay_of:
+            # A paid engine renders once and the room keeps that render in a bounded cache. Repeating
+            # what someone missed must not bill the account again, so a catch-up uses the render the
+            # room already has or nothing at all: between the offer and this moment the cache may have
+            # dropped it, and then this one is let go and the queue carries on.
+            audio, fresh = self.room.stored_audio(utterance, choice), False
+            if audio is None:
+                self.transition(uid, 'failed', 'replay_audio_gone')
+                self.active = None
+                await self.dispatch()
+                return
+        else:
+            try:
+                audio, fresh = await self.room.shared_audio(utterance, choice)
+            except ValueError as error:
+                self.fail_active()
+                raise HTTPException(502, str(error)) from error
         self.latency.mark(uid, 'audio_ready')
         # A listener that was handed someone else's render did not wait for the provider;
         # recording that request as its own would be a measurement it never made.
@@ -382,6 +417,10 @@ class Room:
     MAX_CLIENTS = 8
     MAX_UTTERANCES = 2048
     MAX_PENDING = 16
+    # How many missed replies one browser is handed when it comes back. Coming out of a tunnel is
+    # not an excuse to make somebody sit through a monologue: what is wanted is the last thing that
+    # was said, and the recency setting is what really bounds this.
+    MAX_REPLAY = 8
 
     def __init__(self, journal=None, assets=None):
         self.clients = {}
@@ -475,12 +514,79 @@ class Room:
         if (status, reason) == utterance.published:
             return
         utterance.published = (status, reason)
-        if self.journal and utterance.row_id:
+        # A catch-up writes nothing of its own: the journal already has one row for that reply, and
+        # what repeating it did to one browser is said on that row through the reply itself.
+        if self.journal and utterance.row_id and not utterance.replay_of:
             self.journal.update(utterance.row_id, status, reason)
 
     async def shared_audio(self, utterance, choice):
         """A paid engine is billed per character: one render per utterance, reused by every listener."""
         return await self.assets.obtain(choice, utterance.text)
+
+    def stored_audio(self, utterance, choice):
+        """The render the room already paid for, or None. Never asks a provider for a new one."""
+        return self.assets.read(self.assets.key(choice, utterance.text))
+
+    # ----- what a browser that came back never heard -----
+
+    def missed_replies(self, client, *, seconds, sessions=()):
+        """The replies on this browser's conversation that it never heard through, oldest first.
+
+        The room does not guess at this: every utterance records what each browser did with it, and a
+        browser that reconnects is a new client id, so the page names the ids it used before. Declaring
+        a session can only take replies away from the answer, never add one, so a wrong id costs the
+        person a repetition and can never hand them somebody else's.
+        """
+        thread = client.target.get('thread_id')
+        if not thread or not seconds:
+            return []
+        mine = {client.id, *(session for session in sessions if isinstance(session, str))}
+        floor = time.time() - seconds
+        missed = [utterance for utterance in self.utterances.values()
+                  if utterance.thread_id == thread and not utterance.replay_of and utterance.at >= floor
+                  and client.id not in utterance.clients
+                  and not any(entry['status'] in HEARD
+                              for session, entry in utterance.clients.items() if session in mine)]
+        return missed[-self.MAX_REPLAY:]
+
+    async def replay(self, client, *, seconds=0, sessions=()):
+        """Play a returning browser what it missed, oldest first, before anything new.
+
+        Each one is queued as an utterance of its own, at this browser's current epoch and with no
+        journal row: the reply's row already exists and says what it said. Being in the same queue as
+        a live reply is what keeps a stale one from ever sounding over one — there is one output and
+        one thing in it at a time — and being an ordinary entry in that queue is what makes a new turn
+        cancel the lot, through the same halt that interrupts anything else.
+        """
+        from .language_settings import load_settings, resolve_voice
+        queued, skipped = [], []
+        for original in self.missed_replies(client, seconds=seconds, sessions=sessions):
+            try:
+                choice = resolve_voice(client.settings or load_settings(), original.language)
+            except ValueError:
+                choice = {'provider': 'kokoro'}
+            if choice['provider'] != 'kokoro' and self.stored_audio(original, choice) is None:
+                # The room no longer has that audio and will not invent it or buy it again.
+                skipped.append({'history_id': original.row_id, 'reason': 'audio_gone'})
+                continue
+            echo = Utterance(original.id + ':replay:' + client.id, original.text,
+                             language=original.language, thread_id=original.thread_id,
+                             revision=client.revision, row_id=original.row_id, at=original.at)
+            echo.replay_of = original.id
+            echo.final = True
+            echo.clients[client.id] = {'status': 'queued', 'reason': 'replay'}
+            self.utterances[echo.id] = echo
+            client.pending.append(echo.id)
+            queued.append({'utterance_id': echo.id, 'history_id': original.row_id})
+        if (queued or skipped) and client.on_browser_event:
+            # The browser is told before any of it plays, so the bubbles say they are being repeated
+            # rather than being mistaken for something the conversation has just said.
+            client.on_browser_event({'type': 'voice-replay', 'data': {
+                'session_id': client.id, 'thread_id': client.target.get('thread_id'),
+                'replies': queued, 'skipped': skipped}})
+        if queued:
+            await self.fan_out([client])
+        return {'replayed': queued, 'skipped': skipped}
 
     # ----- what the agent publishes -----
 

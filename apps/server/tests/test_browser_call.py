@@ -598,6 +598,65 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         for socket, task, _ in joined:
             await self.leave(socket, task)
 
+    # ----- what this browser never heard, when it comes back (#52) -----
+
+    async def test_the_hello_names_this_tab_s_earlier_sessions_and_the_room_plays_back_what_it_missed(self):
+        from sidevoice.presentation import Speech
+        from unittest.mock import patch as patch_
+        first = FakeWebSocket()
+        first_task, first_client = await self.join(first)
+        with patch_('sidevoice.language_settings.resolve_voice',
+                    return_value={'provider': 'kokoro', 'model': 'kokoro', 'voice': 'ef_dora',
+                                  'speed': 1.0, 'language': 'es', 'device': 'auto'}):
+            await self.hub.publish(Speech(thread_id='thread-a', session_id=first_client.id, revision=0,
+                                          text='Lo último que te dije', utterance_id='u-1'))
+            # The tunnel: the socket goes, the call does not, and that reply was never heard through.
+            await self.leave(first, first_task)
+            self.assertEqual(self.hub.utterances['u-1'].clients[first_client.id]['status'], 'disconnected')
+            second = FakeWebSocket()
+            hello = {**TIMER_HELLO, 'sessions': [first_client.id],
+                     'settings': {'replay_on_return_seconds': 120}}
+            second_task, second_client = await self.join(second, hello)
+            announcement = await self.received(second, 'voice-replay')
+            speech = await self.received(second, 'voice-speech')
+        self.assertEqual(announcement['data']['replies'],
+                         [{'utterance_id': 'u-1:replay:' + second_client.id,
+                           'history_id': first_client.id + ':voice:u-1'}])
+        self.assertEqual(announcement['data']['skipped'], [])
+        self.assertEqual((speech['data']['text'], speech['data']['replay']),
+                         ('Lo último que te dije', True))
+        self.assertEqual(speech['data']['history_id'], first_client.id + ':voice:u-1')
+        # Nothing new in the journal: the reply already had its row and still has exactly one.
+        self.assertEqual([row['id'] for row in self.hub.journal.history('thread-a')],
+                         [first_client.id + ':voice:u-1'])
+        await self.leave(second, second_task)
+
+    async def test_a_device_that_turned_the_catch_up_off_is_played_nothing_and_a_hello_declares_only_strings(self):
+        from sidevoice.app import prior_sessions, MAX_PRIOR_SESSIONS
+        from sidevoice.presentation import Speech
+        from unittest.mock import patch as patch_
+        first = FakeWebSocket()
+        first_task, first_client = await self.join(first)
+        with patch_('sidevoice.language_settings.resolve_voice',
+                    return_value={'provider': 'kokoro', 'model': 'kokoro', 'voice': 'ef_dora',
+                                  'speed': 1.0, 'language': 'es', 'device': 'auto'}):
+            await self.hub.publish(Speech(thread_id='thread-a', session_id=first_client.id, revision=0,
+                                          text='Lo último que te dije', utterance_id='u-1'))
+        await self.leave(first, first_task)
+        second = FakeWebSocket()
+        second_task, second_client = await self.join(second, {
+            **TIMER_HELLO, 'sessions': [first_client.id], 'settings': {'replay_on_return_seconds': 0}})
+        await self.settled()
+        self.assertFalse(second_client.pending, 'off means the room offers nothing at all')
+        self.assertFalse([raw for raw in list(second.sent._queue)
+                          if isinstance(raw, str) and json.loads(raw)['type'] == 'voice-replay'])
+        await self.leave(second, second_task)
+        # What a page may claim as its own earlier sessions: strings, bounded, and nothing else.
+        self.assertEqual(prior_sessions(['a', 7, None, '', 'b']), ['a', 'b'])
+        self.assertEqual(prior_sessions('a'), [])
+        self.assertEqual(len(prior_sessions([str(n) for n in range(50)])), MAX_PRIOR_SESSIONS)
+        self.assertEqual(prior_sessions(['x' * 65]), [])
+
 
 if __name__ == '__main__':
     import unittest; unittest.main()

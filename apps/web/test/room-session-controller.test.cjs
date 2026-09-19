@@ -1266,7 +1266,7 @@ test('Saving the settings form stores every device setting, the ambient bed amon
  s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};
  s.run("ws=null;voicePreferences={stt_provider:'openai',stt_device:'auto'};voiceCatalog={languages:[],models:[]}");
  for(const [id,value] of [['stt-language','es'],['stt-device',''],['default-tts-language','es'],['tts-speed','1'],['ui-language','es'],
-  ['tts-device','auto'],['default-model','kokoro'],['default-voice','ef_dora'],['audio-grace-seconds','2'],['presence-sound','on'],['presence-volume','5'],
+  ['tts-device','auto'],['default-model','kokoro'],['default-voice','ef_dora'],['audio-grace-seconds','2'],['presence-sound','on'],['presence-volume','5'],['replay-on-return-seconds','300'],
   ['turn-end-mode','smart_turn'],['user-speech-timeout','2.5'],['smart-turn-min-silence','0.6'],['smart-turn-max-silence','3'],
   ['vad-confidence','0.6'],['vad-min-volume','0.35'],['vad-start-secs','0.2']])
   s.run(`$('${id}').value=${JSON.stringify(value)}`);
@@ -1279,6 +1279,7 @@ test('Saving the settings form stores every device setting, the ambient bed amon
  assert.equal('vad_start_secs' in saved,false,'the detector is tuned in the room, not here');
  assert.equal(saved.presence_sound,'on');
  assert.equal(saved.presence_volume,5);
+ assert.equal(saved.replay_on_return_seconds,300,'how far back to repeat is this device\'s, and a number');
 });
 
 test('The read receipt is announced: one short note, the dots, and the bed; the dots stay even with the sound off',()=>{
@@ -1564,4 +1565,93 @@ test('A progress reply leaves the turn open; the final one closes it',()=>{
  s.run("endTurnTrace({thread_id:'a',reply_revision:5},'played')");
  assert.deepEqual(calls.filter(call=>call[0]==='endTurn'),
   [['endTurn','a',4,'played'],['endTurn','a',5,'played']],'a reply that says nothing about it is the final one');
+});
+
+// ----- what the room plays back when this browser comes back (#52) -----
+// Driving out of a tunnel, the transcript has the text and the driver cannot read it. The page's part
+// is naming the sessions it used, saying on the bubble that a reply is a repetition, and stopping.
+function replaySetup(){
+ const s=setup(),view={};
+ s.context.window.sidevoiceUI={setParticipants(){},setBootError(){},setJoinStatus(){},setConversation(value){view.current=value}};
+ s.context.window.roomVoice={cancel(){},unlock:async()=>{},startPresence(){return true},stopPresence(){return true}};
+ s.context.fetch=async()=>({ok:true,json:async()=>({})});
+ s.run(`ws={readyState:1,close(){}};roomBinding={thread_id:'a',title:'A'};sessionId='s';
+  add('assistant','La primera',null,'a',{history_id:'old:voice:1'});
+  add('assistant','La segunda',null,'a',{history_id:'old:voice:2'});
+  add('assistant','La tercera',null,'a',{history_id:'old:voice:3'})`);
+ return {...s,view,
+  note:id=>view.current.messages.find(message=>message.segment===id)?.replayNote,
+  emit:(type,data)=>s.run(`message(${JSON.stringify(JSON.stringify({type,data}))})`)};
+}
+test('The bubbles say a reply is being repeated, and say when the room no longer has its audio',()=>{
+ const s=replaySetup();
+ s.emit('voice-replay',{session_id:'s',thread_id:'a',
+  replies:[{utterance_id:'1:replay:s',history_id:'old:voice:1'},{utterance_id:'2:replay:s',history_id:'old:voice:2'}],
+  skipped:[{history_id:'old:voice:3',reason:'audio_gone'}]});
+ assert.equal(s.note('old:voice:1'),'Repitiendo lo que no oíste');
+ assert.equal(s.note('old:voice:2'),'Repitiendo lo que no oíste');
+ assert.equal(s.note('old:voice:3'),'No se pudo repetir · la sala ya no tiene ese audio',
+  'a render the room dropped is said, never invented');
+ // Another browser's catch-up marks nothing here.
+ s.emit('voice-replay',{session_id:'other',thread_id:'a',replies:[{history_id:'old:voice:1'}],skipped:[]});
+ assert.equal(s.note('old:voice:1'),'Repitiendo lo que no oíste');
+});
+test('A repetition is played like any reply, oldest first, and the bubble follows what really happened',async()=>{
+ const s=replaySetup();
+ s.emit('voice-replay',{session_id:'s',thread_id:'a',
+  replies:[{utterance_id:'1:replay:s',history_id:'old:voice:1'}],skipped:[]});
+ let started,finish;
+ s.context.window.roomVoice.speak=(d,status,onPlaying)=>{started=onPlaying;return new Promise(resolve=>finish=resolve)};
+ const playing=s.run(`receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:0,utterance_id:'1:replay:s',
+  history_id:'old:voice:1',text:'La primera',replay:true})`);
+ started();
+ assert.equal(s.note('old:voice:1'),'Repitiendo lo que no oíste');
+ finish();await playing;
+ assert.equal(s.note('old:voice:1'),'Repetido al volver','once it has sounded the bubble says so');
+ // A reply that is not a repetition never claims to be one.
+ assert.equal(s.run("replayNote({role:'assistant',segment:'old:voice:2'})"),'');
+ assert.equal(s.run("replayNote({role:'user',segment:'old:voice:1'})"),'');
+});
+test('A new turn cancels the catch-up, and no bubble claims a repetition that never sounded',()=>{
+ const s=replaySetup();
+ s.emit('voice-replay',{session_id:'s',thread_id:'a',
+  replies:[{utterance_id:'1:replay:s',history_id:'old:voice:1'},{utterance_id:'2:replay:s',history_id:'old:voice:2'}],
+  skipped:[{history_id:'old:voice:3',reason:'audio_gone'}]});
+ s.emit('voice-user-turn',{session_id:'s',thread_id:'a',revision:1,phase:'started'});
+ assert.equal(s.note('old:voice:1'),'Repetición cancelada');
+ assert.equal(s.note('old:voice:2'),'Repetición cancelada');
+ assert.equal(s.note('old:voice:3'),'No se pudo repetir · la sala ya no tiene ese audio',
+  'one the room never offered is not something the turn cancelled');
+ // The room cancelling this browser's audio ends it just the same.
+ const cancelled=replaySetup();
+ cancelled.emit('voice-replay',{session_id:'s',thread_id:'a',replies:[{history_id:'old:voice:1'}],skipped:[]});
+ cancelled.emit('voice-cancel',{session_id:'s',revision:1});
+ assert.equal(cancelled.note('old:voice:1'),'Repetición cancelada');
+});
+test('The tab names the sessions it has used, so the room can answer what this browser never heard',async()=>{
+ const s=setup();const sockets=[],store={};
+ s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
+ s.context.WebSocket.OPEN=1;
+ s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});s.context.crypto={randomUUID:()=>'hello-id'};
+ s.context.fetch=async()=>({ok:true,json:async()=>({binding:null,room:{revision:0},clients:[],call:null,participants:[]})});
+ s.context.sessionStorage={getItem:key=>store[key]??null,setItem:(key,value)=>{store[key]=value},removeItem:key=>{delete store[key]}};
+ s.run(`startMeter=()=>{};stopMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};
+  window.roomVoice={unlock:async()=>{},cancel(){},context:{state:'running'}};window.roomTranscription={stop(){},start(){}};
+  voicePreferences={stt_provider:'openai'};stream={getAudioTracks:()=>[{enabled:true}]}`);
+ for(const id of ['first-session','second-session']){
+  const joining=s.run('joinRoom')(s.run('connectEpoch'),{browserStt:false,sttRuntime:null});
+  const socket=sockets.at(-1);socket.readyState=1;socket.onopen();
+  const hello=JSON.parse(socket.sent[0]).data;
+  assert.deepEqual(hello.sessions,id==='first-session'?[]:['first-session'],
+   'the hello carries the ids this tab used before, and only those');
+  socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:id,sample_rate:16000,channels:1}})});
+  await joining;
+ }
+ assert.deepEqual(JSON.parse(store['sidevoice.sessions']),['first-session','second-session']);
+ assert.deepEqual(s.run('rememberedSessions')(),['first-session','second-session']);
+ // Bounded, and never poisoned by whatever happens to be in storage.
+ s.run("for(let i=0;i<20;i++)rememberSession('id-'+i)");
+ assert.equal(s.run('rememberedSessions')().length,s.run('REMEMBERED_SESSIONS'));
+ store['sidevoice.sessions']='no es json';
+ assert.equal(s.run('rememberedSessions')().length,0,'storage that is not a list of ids is no list of ids');
 });

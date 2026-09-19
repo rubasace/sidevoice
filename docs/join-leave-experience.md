@@ -42,7 +42,7 @@ only signal; visible text and accessible names use the copy below.
 | Idle / ready | The call is connected, the selected conversation is available, the microphone is live, and nobody is currently speaking. Red button hangs up. | Status: **“Puedes hablar”**. Button: **“Salir de la sala”**. |
 | Listening | Voice activity for this tab has opened a user turn. The live waveform is the draft bubble, not another toolbar animation. | Status and bubble: **“Escuchando…”**. Button remains **“Salir de la sala”**; bubble action is **“Cancelar envío”**. |
 | Speaking | Reply audio is playing. The microphone stays open, so the person can interrupt naturally. | Status: **“La conversación está hablando · Puedes interrumpir”**. |
-| Reconnecting | The call remains conceptually active. Keep the media stream, unlocked output, mute state, and remembered conversation while reopening the socket. The microphone is not paused and what it hears is buffered, bounded, for the session that comes back (#46). Red still hangs up. | Status: **“Reconectando con la sala…”**. The line promises nothing about speech in either direction: what survives the gap is bounded and the bubble says what did. |
+| Reconnecting | The call remains conceptually active. Keep the media stream, unlocked output, mute state, and remembered conversation while reopening the socket. The microphone is not paused and what it hears is buffered, bounded, for the session that comes back (#46); what the person missed in the other direction is played back when it does (#52). Red still hangs up. | Status: **“Reconectando con la sala…”**. The line promises nothing about speech in either direction: what survives the gap is bounded and the bubble says what did. |
 | Switching model | The current pipeline keeps the call usable while the replacement prepares. Show this only when a change needs loading or a new socket; ordinary live voice changes need no state. | **“Cambiando la transcripción…”**, or **“Cargando {modelo} (42 %)…”**. On failure: **“No se pudo cambiar el modelo · Sigues usando {modelo anterior}”**. |
 | Muted | The call and playback continue, but this tab sends no microphone audio. The dedicated mic control, not the red button, owns this state. | Status: **“Micrófono silenciado”**. Mic action: **“Activar micrófono”**. |
 
@@ -96,7 +96,9 @@ The one tap must cover everything required by iOS. Behind it, the browser:
    parallel, but the UI names the current bottleneck rather than showing several
    spinners.
 5. Opens the room socket and sends the hello with device settings, resolved
-   transcription runtime, and this tab's remembered conversation.
+   transcription runtime, this tab's remembered conversation, and the session ids
+   this tab has already used, so the room can tell which replies this browser
+   never heard (#52).
 6. Waits for `voice-session`, starts the meter/transcription/capture graph, and
    restores the tab's conversation if it is still connected. If the tab has no
    remembered choice and exactly one conversation is available, the browser may
@@ -198,3 +200,7 @@ receipts and working feedback stay with the transcript/audio where they belong.
   is down and the page hands the new session what it heard, as one catch-up turn that
   never opens a turn from stale detector state. Protocol, bounds and failure copy are
   in [the room's audio](audio-call-behavior.md#lo-que-se-dijo-mientras-no-había-conexión).
+- **#52 (landed):** the other direction of the same moment. A browser that comes back is played the
+  replies it never heard through, oldest first and before anything new, for as far back as this device
+  chose. Rule, wire and copy are in
+  [the room's audio](audio-call-behavior.md#lo-que-te-dijeron-mientras-no-estabas-issue-52).

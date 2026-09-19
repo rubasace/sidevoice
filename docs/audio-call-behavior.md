@@ -114,6 +114,48 @@ Queda por comprobar en un dispositivo: hablar durante un reinicio real de la sal
 confirmar que la frase llega entera, que no abre una intervención al volver, y que un hueco de más de
 30 s dice que se cortó.
 
+## Lo que te dijeron mientras no estabas (issue #52)
+
+La otra dirección del mismo momento. Del operador, conduciendo: «si entro en un túnel y se cae la
+conexión, al volver me gustaría oír lo último que me dijiste». El texto está en la transcripción, y
+quien conduce no puede leerla.
+
+**Qué se repite.** Al volver a la sala — tras una reconexión, o al entrar otra vez en esa conversación —
+la sala le ofrece a ese navegador las respuestas de la conversación que **no llegó a oír enteras**, de la
+más antigua a la más reciente y antes que nada nuevo. Una que sonó hasta el final no se repite. Una que
+paraste tú tampoco: parar el audio es una decisión, no un hueco. Lo demás — en cola, sintetizándose,
+cortada a media frase cuando se fue el socket, fallida — es una respuesta que este navegador no oyó.
+
+**Cómo lo sabe la sala.** No lo adivina. Cada locución guarda lo que hizo con ella cada navegador
+(`Utterance.clients`), y como reconectar es entrar con un id nuevo, la página nombra en su saludo los
+ids que ha usado (`sessions`, hasta ocho, solo cadenas). Nombrar un id solo puede **quitar** una
+respuesta de la repetición, nunca meter la de otro navegador: equivocarse cuesta como mucho oír algo
+dos veces.
+
+**Cuánto hacia atrás es de este dispositivo**: desactivado, el último minuto, 2 minutos (por defecto),
+5 o 15, en «Avanzado». La sala lo recibe en el saludo, lo usa para esa llamada y no guarda copia —
+a diferencia del ajuste del detector, que es de la sala porque nadie lo oye y romperlo lo rompe para todos.
+
+**Cómo se reproduce.** Cada repetición entra en la misma cola de reproducción del navegador, como una
+locución más, con la época de quien la oye. De ahí salen dos garantías sin escribir una línea para
+ellas: hay una salida y una cosa sonando en ella, así que **una respuesta vieja nunca suena encima de
+una en directo**; y una intervención nueva la cancela por el mismo `halt` que interrumpe cualquier otra
+cosa. Una repetición cancelada antes de sonar no dice que sonó: sigue siendo una respuesta no oída y se
+volverá a ofrecer.
+
+**En la burbuja.** «Repitiendo lo que no oíste» mientras suena, «Repetido al volver» cuando terminó,
+«Repetición cancelada» si hablaste antes. Si la respuesta la pagó un motor externo y la sala ya no
+tiene ese *render* (la caché acotada lo soltó), **no se vuelve a pagar y no se inventa**: la burbuja
+dice «No se pudo repetir · la sala ya no tiene ese audio». Una respuesta tan vieja que ya no está en el
+registro de la sala no tiene burbuja donde decirlo, y por eso no se dice nada de ella.
+
+**La sala no guarda nada nuevo.** Las respuestas ya eran suyas; una repetición no añade fila al diario
+ni toca la de la respuesta, salvo para dejar constancia de que por fin alguien la oyó entera.
+
+Queda por comprobar en un dispositivo: cortar la red del iPhone mientras la conversación habla, volver,
+y oír lo que se perdió; comprobar que hablar durante la repetición la corta; y que con el ajuste en
+«Desactivado» no suena nada al volver.
+
 ## Verificación y prueba manual pendiente
 
 Las pruebas automatizadas cubren micro abierto durante TTS e interrupción por voz,
@@ -135,6 +177,9 @@ Para validar físicamente:
 8. Reiniciar la sala mientras se habla y comprobar que lo dicho en el hueco llega como un mensaje
    marcado «Capturado sin conexión», que no abre una intervención al reconectar, y que un hueco
    de más de 30 s avisa de que se cortó.
+9. Cortar la red mientras la conversación habla, volver, y comprobar que se oye lo que se perdió y no
+   lo que ya se había oído; que hablar durante la repetición la cancela; y que en «Desactivado» no
+   suena nada al volver.
 
 ## Missing microphone packets versus silence
 

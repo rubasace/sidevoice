@@ -119,6 +119,16 @@ Playback completion comes from the browser, not synthesis completion or a timer.
 Replies can wait for the user to finish and the configured grace period to pass.
 Audio already interrupted by the user is not automatically replayed.
 
+A browser that comes back — after a reconnection, or entering a conversation again — is played the
+replies of that conversation it never heard through, oldest first and ahead of anything new, for as
+far back as that device asked for (two minutes by default, off and longer available). The room does
+not guess who heard what: every utterance records what each browser did with it, and since
+reconnecting mints a new client id, the page names the ids it has used. A reply that ran to the end,
+or that the listener stopped on purpose, is never repeated; a new turn cancels the catch-up, and one
+cancelled before it sounded stays unheard rather than claiming it was played. A paid render the room
+no longer has is not bought again and not invented: the bubble says it could not be repeated. Nothing
+is stored for any of this — the replies were already the room's, and no journal row is added.
+
 Closing a conversation's voice from the room removes its binding: the connector is
 told and forgets it, input still waiting for it is marked not sent, and the agent's
 next `voice_say` fails with the reason. The room remembers nothing; joining again is

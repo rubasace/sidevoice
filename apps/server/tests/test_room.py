@@ -20,7 +20,9 @@ KOKORO = {'provider': 'kokoro', 'model': 'kokoro', 'voice': 'ef_dora', 'speed': 
 ELEVEN = {'provider': 'elevenlabs', 'model': 'eleven_v3', 'voice': 'una-voz', 'speed': 1.0, 'language': 'es'}
 
 
-class MultiClientRoomTests(IsolatedAsyncioTestCase):
+class RoomFixture(IsolatedAsyncioTestCase):
+    """One room, a stand-in for the paid engine, and browsers that record what they were handed."""
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -60,6 +62,10 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         return await self.hub.publish(Speech(thread_id='task', session_id=client.id,
                                              revision=client.revision, text=text,
                                              utterance_id=utterance_id, **extra))
+
+
+class MultiClientRoomTests(RoomFixture):
+    """Does what belongs to one browser stay in that browser, and what belongs to the room stay shared?"""
 
     # ----- the room is shared -----
 
@@ -525,3 +531,153 @@ class PerBrowserSelectionTests(IsolatedAsyncioTestCase):
         await self.hub.deselect('one', one.target['binding_id'])
         self.assertIsNone(self.hub.snapshot('one')['binding'])
         self.assertEqual(two.target['thread_id'], 'a')
+
+
+class ReplayOnReturnTests(RoomFixture):
+    """What a browser is played when it comes back, and what it is never played again (#52).
+
+    Driving through a tunnel drops the socket; the transcript keeps the text and a driver cannot read
+    it. Everything here asks the same question: does the room offer exactly the replies *this* browser
+    never heard through, in the order they were said, and does it stop the moment the person speaks?
+    """
+
+    async def heard_to_the_end(self, client, utterance_id):
+        client.transition(utterance_id, 'playing')
+        await client.playback_finished(utterance_id, client.revision)
+
+    async def returning(self, session_id, *, sessions=(), seconds=120):
+        """The same tab after a reconnection: a new client id naming the ids it used before."""
+        client = self.browser(session_id)
+        return client, await self.hub.replay(client, seconds=seconds, sessions=sessions)
+
+    def announcement(self, client):
+        return [event['data'] for event in client.heard if event['type'] == 'voice-replay']
+
+    async def test_a_browser_that_comes_back_hears_what_it_missed_oldest_first_and_nothing_it_finished(self):
+        first = self.browser('one')
+        await self.reply(first, 'heard', text='La primera')
+        await self.heard_to_the_end(first, 'heard')
+        await self.reply(first, 'cut', text='La segunda')
+        await self.reply(first, 'never', text='La tercera')
+        first.disconnect()   # the tunnel: the socket goes and the call does not
+        back, summary = await self.returning('back', sessions=['one'])
+        self.assertEqual([item['history_id'] for item in summary['replayed']],
+                         ['one:voice:cut', 'one:voice:never'], 'oldest first, and only what it missed')
+        self.assertEqual(summary['skipped'], [])
+        # The browser is told before any of it sounds, so the bubbles can say they are repetitions.
+        self.assertEqual(self.announcement(back)[0]['replies'], summary['replayed'])
+        spoken = self.spoken(back)
+        self.assertEqual([item['text'] for item in spoken], ['La segunda'], 'one at a time, like any reply')
+        self.assertEqual((spoken[0]['replay'], spoken[0]['history_id']), (True, 'one:voice:cut'))
+        self.assertEqual(spoken[0]['revision'], back.revision, "at the epoch of the browser hearing it")
+        # The queue holds the rest; nothing about the room's own utterances moved.
+        self.assertEqual(list(back.pending), ['never:replay:back'])
+        self.assertEqual(self.hub.utterances['cut'].clients['one']['status'], 'disconnected')
+
+    async def test_a_reply_this_listener_stopped_is_not_repeated_to_it(self):
+        first = self.browser('one')
+        await self.reply(first, 'stopped', text='La que paraste')
+        first.transition('stopped', 'playing')
+        first.browser_cancelled('stopped', first.revision, True)
+        first.disconnect()
+        _, summary = await self.returning('back', sessions=['one'])
+        self.assertEqual(summary['replayed'], [], 'stopping the audio is a decision, not a gap')
+
+    async def test_another_browsers_playback_never_answers_for_this_one(self):
+        first, other = self.browser('one'), self.browser('two')
+        await self.reply(first, 'shared', text='Para los dos')
+        await self.heard_to_the_end(other, 'shared')
+        first.disconnect()
+        _, mine = await self.returning('back', sessions=['one'])
+        self.assertEqual([item['history_id'] for item in mine['replayed']], ['one:voice:shared'])
+        # And a browser that names the session which did hear it is told nothing.
+        _, theirs = await self.returning('other-back', sessions=['two'])
+        self.assertEqual(theirs['replayed'], [])
+
+    async def test_a_new_turn_cancels_the_catch_up_and_it_is_never_held_for_later(self):
+        first = self.browser('one')
+        await self.reply(first, 'one-missed', text='Primera')
+        await self.reply(first, 'two-missed', text='Segunda')
+        first.disconnect()
+        back, summary = await self.returning('back', sessions=['one'])
+        self.assertEqual(len(summary['replayed']), 2)
+        back.user_started()
+        self.assertEqual(list(back.pending), [], 'a catch-up is dropped by a turn, not queued behind it')
+        self.assertEqual(self.hub.utterances['two-missed:replay:back'].clients['back']['status'], 'interrupted')
+        # It never sounded, so it is still a reply this browser has not heard: the next return offers it.
+        _, again = await self.returning('back-again', sessions=['one', 'back'])
+        self.assertEqual([item['history_id'] for item in again['replayed']],
+                         ['one:voice:one-missed', 'one:voice:two-missed'])
+
+    async def test_a_catch_up_played_to_the_end_is_not_repeated_on_the_next_return(self):
+        first = self.browser('one')
+        await self.reply(first, 'missed', text='Lo que no oíste')
+        first.disconnect()
+        back, _ = await self.returning('back', sessions=['one'])
+        await self.heard_to_the_end(back, 'missed:replay:back')
+        back.disconnect()
+        _, again = await self.returning('back-again', sessions=['one', 'back'])
+        self.assertEqual(again['replayed'], [], 'it was heard through; the room does not say it twice')
+
+    async def test_the_recency_window_is_the_devices_and_off_means_nothing_is_repeated(self):
+        first = self.browser('one')
+        await self.reply(first, 'old', text='Hace rato')
+        await self.reply(first, 'recent', text='Hace nada')
+        self.hub.utterances['old'].at -= 600
+        first.disconnect()
+        _, narrow = await self.returning('a', sessions=['one'], seconds=120)
+        self.assertEqual([item['history_id'] for item in narrow['replayed']], ['one:voice:recent'])
+        _, wide = await self.returning('b', sessions=['one'], seconds=900)
+        self.assertEqual([item['history_id'] for item in wide['replayed']],
+                         ['one:voice:old', 'one:voice:recent'])
+        off, summary = await self.returning('c', sessions=['one'], seconds=0)
+        self.assertEqual((summary['replayed'], summary['skipped'], self.announcement(off)), ([], [], []))
+
+    async def test_a_catch_up_writes_nothing_in_the_journal_until_it_has_actually_sounded(self):
+        first = self.browser('one')
+        await self.reply(first, 'missed', text='Lo que no oíste')
+        first.disconnect()
+        self.assertEqual(self.row('missed', 'one')['status'], 'disconnected')
+        back, _ = await self.returning('back', sessions=['one'])
+        self.assertEqual(len(self.hub.journal.history('task')), 1, 'a repetition is not a second message')
+        self.assertEqual(self.row('missed', 'one')['status'], 'disconnected',
+                         'queueing a repetition says nothing about the reply yet')
+        await self.heard_to_the_end(back, 'missed:replay:back')
+        self.assertEqual(self.row('missed', 'one')['status'], 'playback_finished',
+                         'the row carries the furthest any listener got, and now someone got to the end')
+
+    async def test_a_paid_render_the_room_no_longer_has_is_said_and_never_bought_again(self):
+        self.voice = ELEVEN
+        first = self.browser('one')
+        await self.reply(first, 'kept', text='Con audio')
+        await self.reply(first, 'dropped', text='Sin audio')
+        first.disconnect()
+        # The first was dispatched and paid for; the second was still queued when the socket went, so
+        # the room never rendered it — the same place a browser lands when the bounded cache drops one.
+        self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Con audio')])
+        self.assertIsNone(self.hub.assets.read(self.hub.assets.key(ELEVEN, 'Sin audio')))
+        back, summary = await self.returning('back', sessions=['one'])
+        self.assertEqual([item['history_id'] for item in summary['replayed']], ['one:voice:kept'])
+        self.assertEqual(summary['skipped'], [{'history_id': 'one:voice:dropped', 'reason': 'audio_gone'}])
+        self.assertEqual(self.announcement(back)[0]['skipped'], summary['skipped'])
+        self.assertEqual(len(self.renders), 1, 'repeating what someone missed never bills the account again')
+        self.assertEqual(self.spoken(back)[0]['shared'], True)
+
+    async def test_only_the_conversation_this_browser_is_on_is_caught_up(self):
+        first = self.browser('one')
+        await self.reply(first, 'mine', text='De esta conversación')
+        first.disconnect()
+        elsewhere = self.browser('back')
+        elsewhere.target = {'thread_id': 'otra', 'title': 'Otra', 'binding_id': 'b'}
+        summary = await self.hub.replay(elsewhere, seconds=120, sessions=['one'])
+        self.assertEqual((summary['replayed'], summary['skipped']), ([], []))
+        nowhere = self.browser('nada')
+        nowhere.target = {}
+        self.assertEqual(self.hub.missed_replies(nowhere, seconds=120), [])
+
+    async def test_a_browser_entering_the_conversation_for_the_first_time_hears_what_is_recent(self):
+        first = self.browser('one')
+        await self.reply(first, 'recent', text='Lo último que te dije')
+        _, summary = await self.returning('fresh')
+        self.assertEqual([item['history_id'] for item in summary['replayed']], ['one:voice:recent'],
+                         'a tab that names no earlier session of its own has heard nothing')
