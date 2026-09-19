@@ -152,10 +152,28 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
         socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id'], 'working': True})
         socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id'], 'working': False})
+        socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id']})
         # A binding this connector does not hold says nothing about anyone.
         socket.incoming.append({'type': 'input.working', 'binding_id': 'someone-elses', 'working': True})
         await asyncio.sleep(.1)
         self.assertEqual(self.hub.working, [('sess-1', True), ('sess-1', False)])
+        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+
+    async def test_binding_keeps_declared_capabilities_and_missing_ones_are_unknown(self):
+        socket, task = await self.run_connection([
+            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
+            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'codex', 'thread': 'thread-1',
+             'capabilities': {'deliver': 'supported', 'working': 'unsupported', 'inspectInbound': False}},
+        ])
+        participant = self.control.participants()[0]
+        self.assertEqual(participant['capabilities'], {
+            'deliver': 'supported',
+            'inspectInbound': 'unknown',
+            'working': 'unsupported',
+            'endOfTurn': 'unknown',
+            'sessionIdentity': 'unknown',
+        })
+        self.assertIsNone(self.journal.binding(participant['id']).get('inbound'))
         task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):

@@ -76,6 +76,7 @@ body,
 .participant-row .ui-avatar { width:2.5rem;height:2.5rem }
 .participant-copy { display:block;min-width:0;text-align:left }
 .participant-copy>span { display:block }
+.person-capability { margin-top:.25rem;color:var(--sv-muted);font-size:.68rem;line-height:1.3 }
 .participant-more { flex:none;border:0;background:transparent;font-size:1.35rem }
 .person[data-reach=holding] .ui-avatar,.person[data-reach=offline] .ui-avatar { opacity:.45 }
 

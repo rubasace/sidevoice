@@ -118,6 +118,9 @@ neither command touches a `voice-room` skill that is not Sidevoice's.
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook" } ] }
     ]
   }
 }
@@ -129,11 +132,15 @@ checked for a queued message on a long-lived thread; Codex has no per-session ho
 ```toml
 [[hooks.UserPromptSubmit]]
 hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook" } ]
+
+[[hooks.Stop]]
+hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook" } ]
 ```
 
 Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt but
-drop the nudge. A machine-wide hook changes how that harness runs every session on the
-machine: ask before adding it to someone's settings.
+drop the nudge. `Stop` reports that the turn ended and produces no harness output. A
+machine-wide hook changes how that harness runs every session on the machine: ask before
+adding it to someone's settings.
 
 ## The room: observability (optional)
 

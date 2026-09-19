@@ -149,8 +149,10 @@ See [latency measurement](latency-measurement.md).
 - Adapter: connect, identify the session, deliver input and normalize results.
 - Agent-to-room: the same speech publication API regardless of harness.
 
-This boundary has not been fully extracted from the prototype. It is not yet
-a finished plug-and-play adapter SDK.
+The connector side of this boundary is the harness contract described in
+[HARNESS_CONTRACT.md](HARNESS_CONTRACT.md). It is deliberately small and is not
+a general plug-in SDK: each shipped harness module declares support or lack of
+support for the capabilities the product actually consumes.
 
 The earlier Claude draft used MCP Channels; the session socket made it
 unnecessary and it is kept only as the fallback reference.

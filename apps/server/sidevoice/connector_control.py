@@ -22,6 +22,15 @@ HEARTBEAT_SECONDS = 15.0
 HEARTBEAT_MISSES = 2
 ACK_TIMEOUT_SECONDS = 60.0
 THREAD_PATTERN = re.compile(r'^[A-Za-z0-9._:-]{1,200}$')
+HARNESS_CAPABILITIES = ('deliver', 'inspectInbound', 'working', 'endOfTurn', 'sessionIdentity')
+CAPABILITY_STATES = {'supported', 'unsupported'}
+
+
+def harness_capabilities(value):
+    """Normalize the wire declaration. Missing and invalid values stay unknown, never false."""
+    declared = value if isinstance(value, dict) else {}
+    return {name: declared.get(name) if declared.get(name) in CAPABILITY_STATES else 'unknown'
+            for name in HARNESS_CAPABILITIES}
 
 
 class PairingRequest(BaseModel):
@@ -52,7 +61,8 @@ class ConnectorControl:
         return self.live.get(binding_id) in self.sockets
 
     def participants(self):
-        return [{**binding, 'connected': self.is_live(binding['id'])} for binding in self.journal.bindings()]
+        return [{**binding, 'capabilities': harness_capabilities(binding.get('capabilities')),
+                 'connected': self.is_live(binding['id'])} for binding in self.journal.bindings()]
 
     @staticmethod
     def reachability(binding):
@@ -153,9 +163,10 @@ class ConnectorControl:
     async def working(self, connector_id, message):
         """The harness itself says whether that conversation is busy. The room shows it while it lasts."""
         binding = self.journal.binding(message.get('binding_id'))
-        if not binding or self.live.get(binding['id']) != connector_id:
+        if (not binding or self.live.get(binding['id']) != connector_id
+                or not isinstance(message.get('working'), bool)):
             return
-        self.hub.conversation_working(binding['thread'], bool(message.get('working')))
+        self.hub.conversation_working(binding['thread'], message['working'])
 
     # ----- bindings and speech -----
 
@@ -169,7 +180,8 @@ class ConnectorControl:
             inbound = message.get('inbound') if isinstance(message.get('inbound'), dict) else None
             binding = self.journal.register_binding(connector_id, harness=str(message.get('harness') or 'unknown')[:40],
                                                     thread=thread, title=(message.get('title') or None) and str(message['title'])[:200],
-                                                    binding_id=message.get('binding_id'), inbound=inbound)
+                                                    binding_id=message.get('binding_id'), inbound=inbound,
+                                                    capabilities=harness_capabilities(message.get('capabilities')))
         except ValueError as error:
             await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': str(error)})
             return

@@ -267,6 +267,7 @@ def mount_presentation(app):
         reach = hub.control.reachability if hub.control else (lambda b: {'state': 'offline', 'detail': None})
         return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversación ' + b['thread'][:8]),
                  'harness': b.get('harness'), 'available': b['connected'],
+                 'capabilities': b.get('capabilities'),
                  'reach': reach(b),
                  'selected': b['thread'] == current.get('thread_id')} for b in entries]
 

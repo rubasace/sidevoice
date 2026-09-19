@@ -45,6 +45,8 @@ export interface ParticipantView {
   unread: number;
   reach: "listening" | "holding" | "offline";
   stateLabel: string;
+  /** Honest activity support: unsupported and unknown are different messages. */
+  activityNote?: string | null;
   detail?: string;
 }
 
