@@ -26,3 +26,11 @@ test("settings controls reflow without overflowing on narrow screens",()=>{
  assert.match(css,/grid-template-areas:"name name name" "model model model" "voice speed preview"/);
  assert.match(css,/@media \(max-width:430px\)[\s\S]*?grid-template-areas:"name name" "model model" "voice voice" "speed preview"/);
 });
+
+test("the recording bubble is the waveform and cancelling sits inside it, on its own line",()=>{
+ assert.match(css,/\.voice-wave\{[^}]*display:block/);
+ assert.match(css,/\.voice-wave canvas\{[^}]*width:100%;height:100%/);
+ assert.match(css,/\.voice-wave\[data-phase=transcribing\] canvas\{[^}]*animation:voice-wave-rest/);
+ assert.match(css,/@media \(prefers-reduced-motion:reduce\)\{\.voice-bars i\{animation:none/);
+ assert.match(css,/\.cancel-input\{[^}]*display:block;margin:\.3rem 0 0 auto;[^}]*border:0;[^}]*color:#ffb4ab/);
+});

@@ -37,6 +37,13 @@ state. WebSocket, MediaStream, AudioContext, AudioWorklet, Worker,
 AbortController, wake lock and monotonic epochs belong to the single room
 runtime instance.
 
+A view that needs the audio itself pulls it, per animation frame and from its own
+element: the runtime publishes `window.sidevoiceAudio.readWaveform()`, which
+returns the samples the call meter's analyser already holds (or `null` when no
+call captures). The listening bubble draws them on its canvas without a store
+update, a second analyser or a render per frame; the reduced-motion fallback is
+the older CSS bars.
+
 The current `room-session-controller.js` is a transitional runtime. It publishes
 render snapshots through `sidevoiceUI` and exposes typed actions through
 `sidevoiceActions`; its DOM fallback exists only while the behavioral VM suite

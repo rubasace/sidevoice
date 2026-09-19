@@ -214,4 +214,17 @@ body,
 @keyframes voice-bar{0%,100%{height:6px}50%{height:18px}}
 @media (prefers-reduced-motion:reduce){.voice-bars i{animation:none;height:12px}}
 
+/* The turn being recorded is drawn, not described: the bubble is the microphone's own waveform, and the
+ * bars above remain the fallback when the device asks for less motion. */
+.voice-wave{display:block;width:min(13rem,44vw);height:2.15rem;color:#b9f1da}
+.voice-wave canvas{display:block;width:100%;height:100%}
+.voice-wave[data-phase=transcribing] canvas{animation:voice-wave-rest 1.9s ease-in-out infinite}
+@keyframes voice-wave-rest{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.voice-wave[data-phase=transcribing] canvas{animation:none;opacity:.6}}
+.chat-bubble[data-live]{padding:.5rem .6rem .34rem;opacity:1}
+
+/* Cancelling belongs to the bubble, not beside it: second line, to the right, red and without a frame. */
+.cancel-input{display:block;margin:.3rem 0 0 auto;padding:.1rem .1rem 0;border:0;background:transparent;color:#ffb4ab;font-size:.78rem;font-weight:650}
+.cancel-input:hover,.cancel-input:focus-visible{color:#ffd4ce;text-decoration:underline}
+
 .receipt.delivery[data-state=read]{color:#8ab4f8;letter-spacing:-.15em}

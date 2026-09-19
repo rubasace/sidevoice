@@ -3,6 +3,7 @@ import { Button } from "../../components/ui/Button";
 import type { ConversationView } from "../../state/room-types";
 import { groupMessages } from "./group-messages";
 import { MessageGroup } from "./MessageGroup";
+import { VoiceWaveform } from "./VoiceWaveform";
 
 export function MessageList({ conversation }: { conversation: ConversationView }) {
   const groups = useMemo(() => groupMessages(conversation.messages), [conversation.messages]);
@@ -35,7 +36,7 @@ export function MessageList({ conversation }: { conversation: ConversationView }
       }}>
         {!groups.length && !conversation.pendingText && !conversation.pendingPhase && <div className="empty"><b>Hablemos de lo que sigue.</b><span>Tu voz y la respuesta aparecerán aquí.<br />El historial de la sala se conserva al reconectar.</span></div>}
         {groups.map((group) => <MessageGroup group={group} key={group.id} />)}
-        {(conversation.pendingText || conversation.pendingPhase) && <div className="message-group live-draft" data-role="user"><div className="chat-message-row"><article className="chat-bubble" data-role="user" data-position="only" data-draft="true">{conversation.pendingText ? <span>{conversation.pendingText}</span> : <span className="voice-bars" data-phase={conversation.pendingPhase} role="status" aria-label={conversation.pendingPhase === "transcribing" ? "Transcribiendo tu intervención" : "Escuchando"} title={conversation.pendingPhase === "transcribing" ? "Transcribiendo…" : "Escuchando…"}><i /><i /><i /><i /><i /></span>}{conversation.pendingCancellable && <Button variant="ghost" size="compact" className="cancel-input" onClick={() => void window.sidevoiceActions?.cancelInput()}>Cancelar envío</Button>}</article></div></div>}
+        {(conversation.pendingText || conversation.pendingPhase) && <div className="message-group live-draft" data-role="user"><div className="chat-message-row"><article className="chat-bubble" data-role="user" data-position="only" data-draft="true" data-live={conversation.pendingText ? undefined : conversation.pendingPhase || undefined}>{conversation.pendingText ? <span>{conversation.pendingText}</span> : <VoiceWaveform phase={conversation.pendingPhase === "transcribing" ? "transcribing" : "listening"} />}{conversation.pendingCancellable && <Button variant="ghost" size="compact" className="cancel-input" onClick={() => void window.sidevoiceActions?.cancelInput()}>Cancelar envío</Button>}</article></div></div>}
       </div>
       {showNewMessages && <Button className="new-messages" size="compact" onClick={() => scrollToBottom()}>Nuevos mensajes ↓</Button>}
     </div>

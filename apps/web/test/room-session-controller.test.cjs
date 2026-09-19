@@ -762,6 +762,20 @@ test('One bubble per turn: bars while listening, slower while transcribing, kept
  assert.equal(views.at(-1).pendingPhase,'','a real cancel closes the bubble');
 });
 
+test('The waveform bubble reads the meter\'s own analyser and never opens a second audio graph',()=>{
+ const s=setup();
+ assert.equal(s.run('window.sidevoiceAudio.readWaveform()'),null,'no call, nothing to draw');
+ s.run("analyser={fftSize:8,reads:0,getFloatTimeDomainData(target){this.reads++;for(let i=0;i<target.length;i++)target[i]=(i+1)/10}}");
+ const first=s.run('window.sidevoiceAudio.readWaveform()');
+ assert.equal(first.length,8,'the buffer follows the analyser it reads from');
+ assert.deepEqual(Array.from(first).map(v=>Math.round(v*10)),[1,2,3,4,5,6,7,8]);
+ assert.equal(s.run('window.sidevoiceAudio.readWaveform()===window.sidevoiceAudio.readWaveform()'),true,'one buffer, reused: a frame allocates nothing');
+ assert.equal(s.run('analyser.reads'),3);
+ assert.equal(s.run('audioContext'),null,'reading the waveform opens no audio context of its own');
+ s.run('analyser=null');
+ assert.equal(s.run('window.sidevoiceAudio.readWaveform()'),null,'a closed meter stops feeding the bubble');
+});
+
 test('The stages view lists the last turn in order with bars scaled to the longest stage',()=>{
  const s=setup();
  s.run("renderLatencyStages({reply_revision:4,input_ms:{endpoint_silence_ms:610,recognition_ms:900,transcript_to_delivery_ms:12},server_ms:{input_queued_to_reply_received_ms:9000},browser_ms:{audio_received_to_playback_scheduled_ms:40}})");

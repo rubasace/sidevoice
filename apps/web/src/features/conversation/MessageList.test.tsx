@@ -47,8 +47,25 @@ test("keeps the active transcribed draft cancellable after listening text disapp
   expect(cancelInput).toHaveBeenCalledOnce();
 });
 
-test("shows listening bars in the live bubble while a turn is open and no text has arrived", () => {
-  const { container } = render(<MessageList conversation={{ messages: [], pendingText: "", pendingCancellable: true, pendingPhase: "transcribing" }} />);
-  expect(container.querySelector(".voice-bars")?.getAttribute("data-phase")).toBe("transcribing");
+test("the open turn is its own waveform bubble, with cancelling on a second line inside it", () => {
+  const { container } = render(<MessageList conversation={{ messages: [], pendingText: "", pendingCancellable: true, pendingPhase: "listening" }} />);
+  const bubble = container.querySelector('.chat-bubble[data-live="listening"]');
+  expect(bubble?.querySelector(".voice-wave canvas")).toBeInTheDocument();
+  expect(bubble?.querySelector(".cancel-input")?.textContent).toBe("Cancelar envío");
+  expect(bubble?.lastElementChild?.className).toContain("cancel-input");
   expect(container.querySelector(".empty")).toBeNull();
+});
+
+test("transcribing keeps one bubble and says so, so both phases stay apart", () => {
+  const { container } = render(<MessageList conversation={{ messages: [], pendingText: "", pendingCancellable: true, pendingPhase: "transcribing" }} />);
+  expect(container.querySelectorAll(".chat-bubble")).toHaveLength(1);
+  expect(container.querySelector(".voice-wave")?.getAttribute("data-phase")).toBe("transcribing");
+  expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Transcribiendo tu intervención");
+});
+
+test("once the transcript arrives the bubble becomes the text and the waveform goes", () => {
+  const { container } = render(<MessageList conversation={{ messages: [], pendingText: "Estoy diciendo esto", pendingCancellable: true, pendingPhase: "listening" }} />);
+  expect(container.querySelector(".voice-wave")).toBeNull();
+  expect(container.querySelector(".chat-bubble[data-live]")).toBeNull();
+  expect(screen.getByText("Estoy diciendo esto")).toBeInTheDocument();
 });

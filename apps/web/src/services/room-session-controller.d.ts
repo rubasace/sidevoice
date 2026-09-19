@@ -24,6 +24,8 @@ declare global {
       setBootError(value: string | null): void;
       updateKaraoke?(segment: string, karaoke: KaraokeRange | null): void;
     };
+    /** The meter's analyser, pulled per animation frame by the waveform bubble; null while no call captures. */
+    sidevoiceAudio?: { readWaveform(): Float32Array | null };
     sidevoiceActions?: SidevoiceActions;
   }
 }
