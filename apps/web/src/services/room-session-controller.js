@@ -1430,13 +1430,9 @@ function publishSessionView(view = roomStore.getState()) {
             ui.setJoinStatus?.(view.join);
         }
     }
-    const join = $('join-status');
-    if (join) {
-        join.textContent = view.join?.text || '';
-        join.hidden = !view.join;
-        join.dataset.state = view.join?.failed ? 'failed' : view.join ? 'busy' : '';
-        join.setAttribute('role', view.join?.failed ? 'alert' : 'status');
-    }
+    // The join line has one owner: JoinStatus renders it from this same store. Writing its textContent
+    // from here removed React's own children, and the next render threw NotFoundError trying to replace
+    // a node that was no longer there — which unmounts the whole root and leaves the room blank (#58).
     const badge = $('engine-badge');
     if (badge) {
         badge.textContent = view.engine.text;

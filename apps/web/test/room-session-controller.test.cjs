@@ -15,6 +15,15 @@ function setup({strictDOM=false}={}){
  vm.runInContext("roomBinding={thread_id:'a',title:'A'};sessionId='s'",context);
  return {context,handlers,Element,elements,run:code=>vm.runInContext(code,context)};
 }
+test('The runtime never writes into a node React fills itself',()=>{
+ // Two owners for the join line cost a blank room: setting textContent removed React's children, and the
+ // next render threw NotFoundError trying to replace them. React reads the join from this same store.
+ const s=setup({strictDOM:true});
+ const join=s.elements.get('join-status');join.textContent='pintado por React';
+ s.run("joinStep='room';publishSessionView()");
+ assert.equal(join.textContent,'pintado por React','the join line belongs to JoinStatus alone');
+ assert.equal(s.run("joinView(state)?.step"),'room','and the same store still says what the step is');
+});
 test('A page whose interface is gone still runs the call',()=>{
  // React unmounts its whole root when a render throws. The runtime writes into nodes React owns, so
  // after that every one of them is null: the call must survive it, because the audio callbacks run here.
@@ -151,8 +160,9 @@ test('Joining with ElevenLabs reaches microphone capture without loading Kokoro'
   await s.run("$('connect').onclick()");
   assert.equal(captured,1,model);
   assert.equal(prepared,model==='kokoro'?1:0,model);
-  assert.match(s.run("$('join-status').textContent"),/No se pudo abrir el micrófono: Microphone test boundary/,model);
-  assert.equal(s.run("$('join-status').dataset.state"),'failed');
+  // The failure is a fact in the store; JoinStatus is the one that paints it.
+  assert.match(s.run('joinView(state).text'),/No se pudo abrir el micrófono: Microphone test boundary/,model);
+  assert.equal(s.run('joinView(state).failed'),true);
   assert.equal(s.run('connecting'),false);
  }
 });
