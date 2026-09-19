@@ -28,8 +28,13 @@ function chunkTextRange(text,chunk,from=0){
 class RoomVoice {
  constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null;
   // What the output did lately, for the stats dialog: a stuck buzz on a phone is otherwise invisible from here.
-  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=.5}
+  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=.5;
+  // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
+  this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
+  this.presence=null;this.presenceSeconds=4;this.presencePulseSeconds=2;this.presenceFadeSeconds=.25;this.presenceMaxVolume=.12}
  note(kind,detail){const event={at:Date.now(),kind,...(detail?{detail}:{})};this.events.push(event);if(this.events.length>24)this.events.shift();
+  // The event list is bounded, so what it proves is kept apart from it: a voice has already left this output.
+  if(kind==='play-encoded'||kind==='complete')this.rendered=true;
   if(typeof window!=='undefined'&&window.dispatchEvent&&typeof CustomEvent==='function'){try{window.dispatchEvent(new CustomEvent('voice-output',{detail:event}))}catch{}}}
  /* The output as it is right now, and what happened to it lately. */
  health(){
@@ -37,7 +42,7 @@ class RoomVoice {
   return {context:this.context?.state||'none',clock:this.context?Math.round(this.context.currentTime*1000)/1000:null,
    output:element?'element':(this.context?'context':'none'),
    element:element?{paused:!!element.paused,readyState:element.readyState??null}:null,
-   playing:!!this.job?.playing,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
+   playing:!!this.job?.playing,presence:this.presence?this.presence.volume:null,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
  }
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
  async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput();this.greet()}
@@ -48,7 +53,7 @@ class RoomVoice {
   * before that and the element looped its last instant, the same failure as a cut without a tail. */
  greet(){
   if(!this.context||!this.output||this.greeted||typeof this.context.createBufferSource!=='function')return;
-  this.greeted=true;
+  this.greeted=true;this.greetedAt=Date.now();
   try{
    const rate=this.context.sampleRate||48000,notes=[[660,0,.11],[880,.12,.13]],length=Math.round(rate*(this.greetSeconds||1.8));
    const buffer=this.context.createBuffer(1,length,rate),samples=new Float32Array(length);
@@ -147,6 +152,80 @@ class RoomVoice {
    source.start(this.context.currentTime+.05);this.note(kind);
   }catch(error){this.note(kind+'-failed',error?.message||kind)}
  }
+ /* ----- the ambient bed: the conversation is working on the turn this browser sent (#42) -----
+  * One loop, generated here, no asset: a band of noise between roughly 110 and 420 Hz mixed with two
+  * quiet partials a fifth apart (220 and 330 Hz), the whole thing breathing once every two seconds.
+  * The loop is four seconds long so both partials close a whole number of cycles at the seam, and the
+  * noise is crossfaded into its own head so the join has no click.
+  *
+  * Its level is what keeps it out of the microphone's way: the buffer is normalized to peak 1 and the
+  * gain *is* the peak amplitude, so 0.035 means -29 dBFS and nothing has to be guessed about it. It
+  * leaves through the same media element as the voice (see ensureOutput), so a phone's echo
+  * cancellation subtracts it instead of the detector hearing it as speech. */
+ presenceBuffer(){
+  const rate=this.context.sampleRate||48000,length=Math.round(rate*this.presenceSeconds);
+  const fade=Math.min(Math.round(rate*.12),length>>2),noise=new Float32Array(length+fade);
+  const lowCoefficient=Math.exp(-2*Math.PI*420/rate),meanCoefficient=Math.exp(-2*Math.PI*110/rate);
+  let low=0,mean=0,noisePeak=0;
+  for(let i=0;i<noise.length;i++){
+   low=low*lowCoefficient+(Math.random()*2-1)*(1-lowCoefficient);   // one pole, everything above ~420 Hz gone
+   mean=mean*meanCoefficient+low*(1-meanCoefficient);               // and its slow mean...
+   noise[i]=low-mean;                                               // ...taken back out: no rumble either
+   noisePeak=Math.max(noisePeak,Math.abs(noise[i]));
+  }
+  if(noisePeak>0)for(let i=0;i<noise.length;i++)noise[i]/=noisePeak;
+  // The loop has to join itself: the extra tail is crossfaded into the head, so the seam has no step.
+  for(let i=0;i<fade;i++){const weight=i/fade;noise[i]=noise[i]*weight+noise[length+i]*(1-weight)}
+  const samples=new Float32Array(length);let peak=0;
+  for(let i=0;i<length;i++){
+   const at=i/rate,breath=.3+.7*(.5-.5*Math.cos(2*Math.PI*at/this.presencePulseSeconds));
+   samples[i]=breath*(noise[i]*.55+.3*Math.sin(2*Math.PI*220*at)+.15*Math.sin(2*Math.PI*330*at));
+   peak=Math.max(peak,Math.abs(samples[i]));
+  }
+  if(peak>0)for(let i=0;i<length;i++)samples[i]/=peak;
+  const buffer=this.context.createBuffer(1,length,rate);buffer.copyToChannel(samples,0);return buffer;
+ }
+ /* True once something audible has already left this output. A fresh sink must never be opened with the
+  * bed: the greeting is what puts the media element in the phone's echo reference, and until it has
+  * been through, a quiet loop is exactly the silent-first-source failure of 2026-09-19 again. */
+ presenceReady(){return this.rendered||(!!this.greetedAt&&Date.now()-this.greetedAt>=this.greetSeconds*1000)}
+ /* Returns whether the bed is now sounding. Refuses rather than queueing: a caller that cannot have it
+  * yet asks again on the next turn. Never starts over speech — a job in flight owns the output. */
+ startPresence({volume=.035,reason='working'}={}){
+  if(this.presence)return true;
+  if(!this.context||this.context.state!=='running'||this.job)return false;
+  if(typeof this.context.createBufferSource!=='function'||typeof this.context.createGain!=='function')return false;
+  const level=Math.min(this.presenceMaxVolume,Math.max(0,Number(volume)||0));
+  if(!level)return false;
+  if(!this.presenceReady()){this.note('presence-refused','output not yet rendering');return false}
+  try{
+   const gain=this.context.createGain(),source=this.context.createBufferSource();
+   source.buffer=this.presenceBuffer();source.loop=true;source.connect(gain);gain.connect(this.destination);
+   const now=this.context.currentTime,fade=this.presenceFadeSeconds;
+   gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(level,now+fade);
+   source.start(now);
+   this.presence={source,gain,volume:level};this.note('presence-start',reason+' · '+level.toFixed(3));
+   return true;
+  }catch(error){this.note('presence-failed',error?.message||'presence');return false}
+ }
+ stopPresence(reason='stop'){
+  const presence=this.presence;if(!presence)return false;
+  this.presence=null;
+  const now=this.context?.currentTime||0,fade=this.presenceFadeSeconds;
+  try{
+   presence.gain.gain.cancelScheduledValues?.(now);
+   presence.gain.gain.setValueAtTime(presence.gain.gain.value,now);
+   presence.gain.gain.linearRampToValueAtTime(0,now+fade);
+  }catch{}
+  presence.source.onended=null;
+  try{presence.source.stop(now+fade+.02)}catch{try{presence.source.stop()}catch{}}
+  setTimeout(()=>{try{presence.gain.disconnect()}catch{}},(fade+.3)*1000);
+  this.note('presence-stop',reason);
+  // The bed may have been this sink's only input, and a sink left with nothing is the stuck-last-instant
+  // failure on iPhone Safari. It gets the same silent tail a cut voice gets.
+  this.tail('presence-tail');
+  return true;
+ }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
  async setOutputDevice(id){
   await this.unlock();
@@ -197,7 +276,7 @@ class RoomVoice {
   job.clock.timer=setTimeout(check,this.stallCheckMs);
  }
  stopClock(job){if(job.clock?.timer)clearTimeout(job.clock.timer);if(job.clock)job.clock.timer=null}
- cancel(){this.announce('','hidden');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;this.note('cancel',job.playing?'playing':'pending');this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);this.silence(job);
+ cancel(){this.announce('','hidden');this.stopPresence('speech');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;this.note('cancel',job.playing?'playing':'pending');this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);this.silence(job);
   // Seen on iPhone Safari (2026-09-19): after a voice is cut mid-utterance the graph keeps running and
   // reporting playback, while what leaves the element is stuck. The element gets its stream back once
   // the fade is over; a cancel while the context is stopped pauses it at once so it cannot loop.

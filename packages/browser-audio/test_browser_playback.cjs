@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
-function setup(){const workers=[],sources=[],events=[];class Worker{constructor(){workers.push(this)}postMessage(d){this.last=d}terminate(){this.terminated=true}}
-class AudioContext{constructor(){this.currentTime=0;this.state='running'}async resume(){}async decodeAudioData(){return {duration:1}}createBuffer(c,n,r){return {duration:n/r,copyToChannel(){}}}createBufferSource(){const s={connect(){},start(){},stop(){this.stopped=true}};sources.push(s);return s}}
-const context=vm.createContext({window:{dispatchEvent:e=>events.push(e.detail)},CustomEvent:class{constructor(name,options){this.detail=options.detail}},Worker,AudioContext,DOMException,Uint8Array,atob,setTimeout,clearTimeout,Error,Set,Math});vm.runInContext(fs.readFileSync(__dirname+'/room-client.js','utf8'),context);return {voice:context.window.roomVoice,workers,sources,events,context}}
+function setup(){const workers=[],sources=[],events=[],gains=[];class Worker{constructor(){workers.push(this)}postMessage(d){this.last=d}terminate(){this.terminated=true}}
+class AudioContext{constructor(){this.currentTime=0;this.state='running';this.destination={id:'context destination'}}async resume(){}async decodeAudioData(){return {duration:1}}createBuffer(c,n,r){return {duration:n/r,copyToChannel(data){this.data=data}}}createBufferSource(){const s={connect(){},start(at){this.startedAt=at},stop(at){this.stopped=true;this.stoppedAt=at}};sources.push(s);return s}createGain(){const g={gain:{value:0,setValueAtTime(v,at){g.gain.value=v;g.ramps.push(['set',v,at])},linearRampToValueAtTime(v,at){g.gain.value=v;g.ramps.push(['ramp',v,at])},cancelScheduledValues(){}},ramps:[],connect(target){g.connectedTo=target},disconnect(){g.disconnected=true}};gains.push(g);return g}}
+const context=vm.createContext({window:{dispatchEvent:e=>events.push(e.detail)},CustomEvent:class{constructor(name,options){this.detail=options.detail}},Worker,AudioContext,DOMException,Uint8Array,atob,setTimeout,clearTimeout,Error,Set,Math});vm.runInContext(fs.readFileSync(__dirname+'/room-client.js','utf8'),context);return {voice:context.window.roomVoice,workers,sources,events,gains,context}}
 test('Completion waits for the last audio source, not synthesis done',async()=>{const s=setup();await s.voice.unlock();let finished=false;const p=s.voice.speak({text:'hello'}).then(()=>finished=true);const w=s.workers[0],id=w.last.id;w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});w.onmessage({data:{type:'done',id}});await Promise.resolve();assert.equal(finished,false);s.sources[0].onended();await p;assert.equal(finished,true)});
 test('Cancellation stops scheduled sources and ignores late worker results',async()=>{const s=setup();await s.voice.unlock();const p=s.voice.speak({text:'hello'});const rejection=assert.rejects(p,{name:'AbortError'});const w=s.workers[0],id=w.last.id;w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});s.voice.cancel();await rejection;assert.equal(s.sources[0].stopped,true);const afterCancel=s.sources.length;/* the voice source plus the silent tail that follows a cut */assert.equal(afterCancel,2);w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});assert.equal(s.sources.length,afterCancel,'late worker audio schedules nothing')});
 
@@ -102,7 +102,8 @@ test('Speech leaves through a media element when the context can feed one, so ec
  let connected;s.voice.context.createBufferSource=()=>{const src={connect(target){connected=target},start(){},stop(){}};return src};
  const p=s.voice.speak({text:'hello'});const w=s.workers[0],id=w.last.id;
  w.onmessage({data:{type:'audio',id,samples:new Float32Array(24),sampleRate:24}});
- assert.equal(connected,sink);
+ assert.equal(connected,s.voice.job.gain,'the voice goes through a gain of its own, so cutting it can fade');
+ assert.equal(s.voice.job.gain.connectedTo,sink,'and that gain leaves through the media element, not the context');
  assert.equal(s.voice.supportsOutputSelection,true);await s.voice.setOutputDevice('headset');assert.equal(elementSink,'headset');
  s.voice.cancel();await assert.rejects(p);
 });
@@ -197,7 +198,7 @@ test('A clock that advances raises no alarm, and cancelling while the context is
  assert.equal(counters.paused,pausedBefore+1,'a cancel while the context is stopped pauses the element so it cannot loop');
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
  const health=s.voice.health();
- assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','resuming','stalls']);
+ assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','presence','resuming','stalls']);
 });
 
 test('A barge-in fades the voice out through its own gain instead of cutting the sink last input dead',async()=>{
@@ -272,4 +273,77 @@ test('A fresh output is greeted once: audible notes first, then silence long eno
  assert.equal(written[0],0,'starts from zero, no click');
  assert.equal(tail.every(v=>v===0),true,'silence keeps the sink fed after the notes');
  assert.equal(s.voice.health().events.at(-1).kind,'chime');
+});
+
+// ----- the ambient bed while a conversation works on a turn (#42) -----
+test('The bed is never the first thing a fresh output renders: it waits for the greeting or a voice',async()=>{
+ const s=setup();
+ assert.equal(s.voice.startPresence({volume:.035}),false,'no context, nothing to play into');
+ await s.voice.unlock();
+ assert.equal(s.voice.presenceReady(),false);
+ assert.equal(s.voice.startPresence({volume:.035}),false);
+ assert.equal(s.voice.events.at(-1).kind,'presence-refused');
+ assert.equal(s.sources.length,0,'and it scheduled nothing at all');
+ // A silent first source took the media element out of the phone's echo reference for the whole session.
+ s.voice.greetedAt=Date.now()-s.voice.greetSeconds*1000;
+ assert.equal(s.voice.presenceReady(),true);
+});
+test('A voice that already played keeps the bed allowed even after the event list has rolled over',async()=>{
+ const s=setup();await s.voice.unlock();
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});
+ await new Promise(resolve=>setImmediate(resolve));
+ s.sources[0].onended();await speech;
+ for(let i=0;i<30;i++)s.voice.note('settle');
+ assert.equal(s.voice.health().events.some(event=>['play-encoded','complete'].includes(event.kind)),false);
+ assert.equal(s.voice.presenceReady(),true,'what the bounded list forgets, the output still knows');
+});
+test('The bed loops, fades in and out over at least 200 ms and leaves the sink fed when it goes',async()=>{
+ const s=setup();await s.voice.unlock();s.voice.rendered=true;
+ assert.equal(s.voice.startPresence({volume:.035,reason:'read'}),true);
+ assert.equal(s.voice.startPresence({volume:.035}),true,'asking twice does not stack a second loop');
+ assert.equal(s.sources.length,1);
+ const [bed]=s.sources,[gain]=s.gains;
+ assert.equal(bed.loop,true);
+ assert.deepEqual(gain.ramps,[['set',0,0],['ramp',.035,.25]]);
+ assert.ok(s.voice.presenceFadeSeconds>=.2,'a bed that appears abruptly is worse than no bed');
+ assert.equal(gain.connectedTo,s.voice.destination,'through the same output as the voice');
+ assert.equal(s.voice.health().presence,.035);
+
+ s.voice.context.currentTime=10;
+ assert.equal(s.voice.stopPresence('reply'),true);
+ assert.deepEqual(gain.ramps.slice(-2),[['set',.035,10],['ramp',0,10.25]]);
+ assert.equal(bed.stopped,true);
+ assert.ok(bed.stoppedAt>10.25,'the source outlives its own fade');
+ assert.equal(s.sources.length,2);
+ assert.equal(s.voice.events.at(-1).kind,'presence-tail','a sink left with nothing loops its last instant on iOS');
+ assert.equal(s.voice.health().presence,null);
+ assert.equal(s.voice.stopPresence('reply'),false);
+});
+test('Speech always owns the output: a voice silences the bed and the bed never starts over one',async()=>{
+ const s=setup();await s.voice.unlock();s.voice.rendered=true;
+ assert.equal(s.voice.startPresence({volume:.035}),true);
+ const speech=s.voice.speak({text:'hola'});
+ assert.equal(s.voice.presence,null,'cancelling for a new utterance takes the bed with it');
+ assert.equal(s.voice.startPresence({volume:.035}),false,'and a job in flight owns the output');
+ s.voice.cancel();await assert.rejects(speech,{name:'AbortError'});
+});
+test('The bed refuses a volume of nothing and bounds one that is too much',async()=>{
+ const s=setup();await s.voice.unlock();s.voice.rendered=true;
+ assert.equal(s.voice.startPresence({volume:0}),false);
+ assert.equal(s.voice.startPresence({volume:'nonsense'}),false);
+ assert.equal(s.sources.length,0);
+ assert.equal(s.voice.startPresence({volume:5}),true);
+ assert.equal(s.voice.presence.volume,s.voice.presenceMaxVolume);
+});
+test('The loop is a breathing two-tone bed, normalized so its gain is its peak amplitude',()=>{
+ const s=setup();s.voice.context=new s.context.AudioContext();
+ const buffer=s.voice.presenceBuffer(),rate=48000;
+ assert.equal(buffer.duration,4,'four seconds: both partials close a whole number of cycles at the seam');
+ let peak=0;for(const value of buffer.data)peak=Math.max(peak,Math.abs(value));
+ assert.ok(Math.abs(peak-1)<1e-9,'peak 1, so the gain asked for is the peak amplitude in full scale');
+ assert.ok(Math.abs(buffer.data[0]-buffer.data[buffer.data.length-1])<.05,'the loop joins itself without a step');
+ const rms=(from,to)=>{let squares=0;for(let i=from;i<to;i++)squares+=buffer.data[i]*buffer.data[i];return Math.sqrt(squares/(to-from))};
+ const loud=rms(rate*.9,rate*1.1),quiet=rms(rate*1.9,rate*2.1);
+ assert.ok(loud>2*quiet,'it breathes: full at the middle of each two-second pulse, a third of it at the joins');
+ assert.ok(rms(rate*2.9,rate*3.1)>2*quiet,'and it breathes twice per loop, not once');
 });
