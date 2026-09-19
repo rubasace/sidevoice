@@ -11,7 +11,7 @@ commands; React and its audio effect subscriber consume the same snapshot.
 
 | Facts owned by the session store | Pure projection |
 | --- | --- |
-| Per-conversation harness `true` / `false` / absent; per-turn receipts, delivery deadline, progress and final markers; session and selection | Working dots. Either harness boolean is authoritative; absent reports use unsettled turns of this session and conversation. A final marker closes only its own session/revision turn; bubble history IDs remain separate. |
+| Per-conversation harness `true` / `false` / absent; per-turn receipts, delivery deadline and settled replies; session and selection | Working dots. Either harness boolean is authoritative; absent reports use unsettled turns of this session and conversation. A reply settles only its own session/revision fallback turn; bubble history IDs remain separate. |
 | User speech, room speech, active playback, preview, connection and switching | Speaker: user / room / nobody. Conversation: working / speaking / idle. Tab: reconnecting / switching / out / transcribing / listening. |
 | Working, speaker, playback/preview, device presence preference | Ambient breath iff working and quiet, with a connected, stable tab; default on, fixed amplitude `0.1`. |
 | Join step, progress, detail, returning conversation and failure | Join line, progress and alert status. |
@@ -54,7 +54,7 @@ Twelve existing ambient/dots sequence tests became the rules in
 
 | Previous test | Replacement rule(s) |
 | --- | --- |
-| The bed starts when the conversation reads this turn and ends at its first spoken reply | Read readiness; turn-scoped final markers; ambient iff working and quiet |
+| The bed starts when the conversation reads this turn and ends at its first spoken reply | Read readiness; turn-scoped settled replies; ambient iff working and quiet |
 | Without a read receipt the bed waits a moment after delivery, and a read overtakes that wait | Delivery deadline versus immediate read |
 | A delivery that failed, a new turn, the user speaking and losing the room all end the bed | Failed delivery; ambient speaker/connection predicates. A new turn or audio cancellation alone is not evidence of sound and cannot suppress a quiet working bed. |
 | The bed belongs to the turn this browser sent to the conversation it is looking at | Browser/conversation ownership |
@@ -62,8 +62,8 @@ Twelve existing ambient/dots sequence tests became the rules in
 | Turning the bed off while it sounds silences it at once | Preference predicate and store subscription |
 | The read receipt is announced: one short note, the dots, and the bed; the dots stay even with the sound off | Read readiness; dots independent of sound; no receipt chime |
 | What silences the bed is not always what puts the dots out | Independent working and speaker facts |
-| The dots belong to the conversation, not to the microphone: only a final reply puts them out | Harness precedence; progress versus final; speaker independence |
-| A final reply settles the turn it answers, not whatever the conversation is working on now | Turn-scoped final markers, including late receipts |
+| The dots belong to the conversation, not to the microphone | Harness lifecycle precedence; speaker independence; reply fallback only when lifecycle is absent |
+| A reply settles the fallback turn it answers, not whatever the conversation is working on now | Turn-scoped settled state, including late receipts |
 | While the harness says it is working, nothing the conversation says puts the dots out | Both harness booleans override receipts/replies/speech |
 | The bed belongs to the silence: it goes while anyone speaks and comes back when the room is quiet | Ambient predicate across voice, preview and setting combinations |
 
@@ -76,18 +76,18 @@ selectors. Join observations include the initial empty store snapshot. React joi
 tests write join facts instead of injecting rendered strings.
 
 Added: 16 pure browser rule tests, six adapter regressions (late playback
-callbacks, failed progress playback, synchronous output notifications, stale
-final audio epochs, cancellation/idle-harness authority, and typed-message turn identity), and 11 server
+callbacks, failed playback, synchronous output notifications, stale
+audio epochs, cancellation/idle-harness authority, and typed-message turn identity), and 11 server
 publication rule tests. All original server, connector and audio tests remain.
 
-Required verification: server **199** (198 passed, one pre-existing optional
-skip); web **125** Node tests plus **33** React tests; connector **38**;
+Required verification: server **200** (199 passed, one pre-existing optional
+skip); web **125** Node tests plus **33** React tests; connector **39**;
 browser-audio **41**; both browser-audio and web production builds.
 
 ## Preserved boundaries and device verification
 
-No protocol changes, new room persistence, connector changes or browser-audio
-engine changes. Microphone capture, same-hello reconnect, bounded gap PCM,
+No new room persistence or browser-audio engine changes. Microphone capture,
+same-hello reconnect, bounded gap PCM,
 replay receipts and hot pipeline swaps retain their existing adapters. Device
 preferences remain in device storage; detector tuning remains the room's.
 Manual microphone controls remain available; playback and previews never mute

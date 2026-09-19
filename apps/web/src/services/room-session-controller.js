@@ -454,7 +454,7 @@ async function copyLatencyAggregates(){
 // ----- the ambient bed: this browser's turn is in the conversation's hands (#42) -----
 // Feedback with no model in it. Between the moment the conversation has read what this browser sent and
 // the moment it speaks, a driver cannot tell work from a hang, and the silence is the whole problem. So
-// The harness report is authoritative. Without one, receipts and final markers record turn work;
+// The harness report is authoritative. Without one, receipts and replies record turn work;
 // the store derives whether the silence between voices can carry the ambient breath.
 // The sound itself, its level and why it cannot open a microphone turn are in RoomVoice.startPresence.
 let presenceTimer=null;
@@ -466,7 +466,7 @@ function presenceReceipt(id,status){
 let receiptDeadline=null,bedPlaying=false,observedStream=null;
 function reconcileSession(view){
  if(view.facts.stream!==observedStream){observedStream=view.facts.stream;showEchoCover();return}
- const deadlines=Object.values(state.turns).filter(t=>!t.final&&['delivered','unconfirmed'].includes(t.status)&&t.readyAt>state.now).map(t=>t.readyAt);
+ const deadlines=Object.values(state.turns).filter(t=>!t.settled&&['delivered','unconfirmed'].includes(t.status)&&t.readyAt>state.now).map(t=>t.readyAt);
  const deadline=deadlines.length?Math.min(...deadlines):null;
  if(deadline!==receiptDeadline){clearTimeout(presenceTimer);receiptDeadline=deadline;
   if(deadline!==null)presenceTimer=setTimeout(()=>{receiptDeadline=null;state.now=Math.max(Date.now(),deadline)},Math.max(0,deadline-state.now));
@@ -770,8 +770,18 @@ function recordMessage(raw) {
         state.userLive = false;
     }
     if (t === 'voice-conversation' && d.thread_id) {
-        if (typeof d.working === 'boolean')
+        if (typeof d.working === 'boolean') {
             state.harness = { ...state.harness, [d.thread_id]: d.working };
+            if (d.turn_phase === 'end' && d.session_id === state.sessionId && d.thread_id === targetId()
+                    && Number.isInteger(d.revision)) {
+                const id = d.session_id + ':user-turn:' + d.revision;
+                const previous = state.turns[id] || {};
+                state.turns = { ...state.turns, [id]: { ...previous, session: d.session_id,
+                    thread: d.thread_id, settled: true, harnessEnded: true } };
+                if (!previous.harnessEnded)
+                    window.sidevoiceTelemetry?.endTurn?.(d.thread_id, d.revision, 'harness_finished');
+            }
+        }
     }
     if (t === 'error')
         setRoomError(d.message || d.error || 'Error de conexión');
@@ -1100,7 +1110,6 @@ function cancelBrowserSpeech(){
  post('/api/presentation/browser-receipt',{session_id:speech.session_id,revision:speech.revision,
   utterance_id:speech.utterance_id,status:speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});
 }
-function endTurnTrace(d,outcome){if(d.final!==false)window.sidevoiceTelemetry?.endTurn?.(d.thread_id,d.reply_revision??d.revision,outcome)}
 async function receiveBrowserSpeech(d,cloud=false){
  const receivedAt=latencyNow();
  if(d.session_id!==state.sessionId)return;
@@ -1122,13 +1131,13 @@ async function receiveBrowserSpeech(d,cloud=false){
    roomStore.batch(()=>{roomStore.patch({activeSpeech:{...d,started:true},botLive:true});if(d.replay)markReplay(d.history_id,'playing')});
    receipt('playing').catch(()=>{});
   },range=>{if(speechJob===d)updateKaraoke(d,range)});
-  if(speechJob!==d){endTurnTrace(d,'superseded');return}
-  finish();endTurnTrace(d,'played');
+  if(speechJob!==d)return
+  finish();
   if(d.replay)markReplay(d.history_id,'done');
   await receipt('playback_finished');
  }catch(e){
-  if(speechJob!==d){endTurnTrace(d,'superseded');return}
-  finish();endTurnTrace(d,e.name==='AbortError'?'interrupted':'failed');
+  if(speechJob!==d)return
+  finish();
   if(d.replay)markReplay(d.history_id,'cancelled');
   if(e.name!=='AbortError'){setRoomError((cloud?'Audio de ElevenLabs: ':'Voz del navegador: ')+e.message);receipt('failed').catch(()=>{})}
  }

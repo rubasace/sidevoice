@@ -3,10 +3,10 @@ const moduleReady=import('../src/state/room-session-state.js');
 function facts(api,patch={}){return {...api.initialSessionFacts(),ws:{},sessionId:'s',roomBinding:{thread_id:'a'},...patch}}
 function turn(patch={}){return {session:'s',thread:'a',status:'read',...patch}}
 
-test('A harness report, including idle, overrides every receipt, reply and microphone state',async()=>{
+test('A harness report, including idle, overrides every receipt, settled turn and microphone state',async()=>{
  const api=await moduleReady;
- for(const busy of [false,true])for(const userLive of [false,true])for(const botLive of [false,true])for(const final of [false,true]){
-  const s=facts(api,{harness:{a:busy},userLive,botLive,turns:{one:turn({final})}});
+ for(const busy of [false,true])for(const userLive of [false,true])for(const botLive of [false,true])for(const settled of [false,true]){
+  const s=facts(api,{harness:{a:busy},userLive,botLive,turns:{one:turn({settled})}});
   assert.equal(api.working(s),busy);
  }
 });
@@ -15,18 +15,18 @@ test('Harness activity belongs to its conversation; another conversation cannot 
  assert.equal(api.working(facts(api,{harness:{b:true}})),false);
  assert.equal(api.working(facts(api,{harness:{a:true,b:false}})),true);
 });
-test('A final marker settles only its own turn, and late receipts cannot reopen it',async()=>{
+test('A reply settles only its own turn, and late receipts cannot reopen it',async()=>{
  const api=await moduleReady;let s=facts(api,{turns:{'s:user-turn:1':turn(),'s:user-turn:2':turn()}});
- s.turns=api.recordReply(s,{session_id:'s',thread_id:'a',revision:2,reply_revision:1,final:true});
+ s.turns=api.recordReply(s,{session_id:'s',thread_id:'a',revision:2,reply_revision:1});
  assert.equal(api.working(s),true);
- s.turns=api.recordReply(s,{session_id:'s',thread_id:'a',revision:2,final:true});
+ s.turns=api.recordReply(s,{session_id:'s',thread_id:'a',revision:2});
  assert.equal(api.working(s),false);
  s.turns=api.recordReceipt(s,'s:user-turn:2','read',100);
  assert.equal(api.working(s),false);
 });
-test('A progress reply establishes work without a receipt; a final reply defaults to final',async()=>{
+test('A reply settles fallback work without a model-authored turn marker',async()=>{
  const api=await moduleReady;const s=facts(api);
- s.turns=api.recordReply(s,{session_id:'s',thread_id:'a',revision:1,final:false});
+ s.turns=api.recordReceipt(s,'s:user-turn:1','read',100);
  assert.equal(api.working(s),true);
  s.turns=api.recordReply(s,{session_id:'s',thread_id:'a',revision:1});
  assert.equal(api.working(s),false);

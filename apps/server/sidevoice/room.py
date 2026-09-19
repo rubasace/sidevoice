@@ -370,7 +370,6 @@ class RoomClient:
         common = {'session_id': self.id, 'revision': rev, 'utterance_id': uid,
                   'reply_revision': reply_revision, 'thread_id': self.target.get('thread_id'),
                   'text': utterance.text, 'history_id': utterance.row_id,
-                  'final': getattr(utterance, 'final', True),
                   # The bubble has to say it is being repeated, or it reads as something just said.
                   **({'replay': True} if utterance.replay_of else {})}
         if choice['provider'] == 'kokoro':
@@ -425,6 +424,7 @@ class Room:
 
     def __init__(self, journal=None, assets=None):
         self.clients = {}
+        self.working = {}          # harness truth by thread; in-memory only, for browsers that select mid-turn
         self.sessions = deque(maxlen=64)   # ids we have known, so an older reply can be told apart
         self.utterances = {}
         self.audio_reports = deque(maxlen=30)   # browsers' reports about their audio output, kept past their leaving
@@ -467,12 +467,32 @@ class Room:
     def speaking(self):
         return any(client.speaking for client in self.clients.values())
 
-    def conversation_working(self, thread_id, working):
+    def conversation_working(self, thread_id, working, *, turn_id=None, turn_phase=None,
+                             session_id=None, revision=None):
         """Told by the harness, not deduced from what was said: every browser on that conversation sees it."""
+        self.working[thread_id] = working
+        data = {'thread_id': thread_id, 'working': working}
+        if turn_id is not None:
+            data['turn_id'] = turn_id
+        if turn_phase is not None:
+            data['turn_phase'] = turn_phase
+        if session_id is not None:
+            data['session_id'] = session_id
+        if revision is not None:
+            data['revision'] = revision
         for client in self.audience(thread_id):
             if client.on_browser_event:
-                client.on_browser_event({'type': 'voice-conversation',
-                                         'data': {'thread_id': thread_id, 'working': working}})
+                client.on_browser_event({'type': 'voice-conversation', 'data': data})
+
+    def clear_conversation_working(self, thread_id):
+        self.working.pop(thread_id, None)
+
+    def report_conversation_working(self, client):
+        """Give a browser selecting mid-turn the current aggregate, without inventing a lifecycle event."""
+        thread_id = client.target.get('thread_id')
+        if thread_id in self.working and client.on_browser_event:
+            client.on_browser_event({'type': 'voice-conversation',
+                                     'data': {'thread_id': thread_id, 'working': self.working[thread_id]}})
 
     def audience(self, thread_id):
         """The connected browsers whose selected conversation is this one."""
@@ -574,7 +594,6 @@ class Room:
                              language=original.language, thread_id=original.thread_id,
                              revision=client.revision, row_id=original.row_id, at=original.at)
             echo.replay_of = original.id
-            echo.final = True
             echo.clients[client.id] = {'status': 'queued', 'reason': 'replay'}
             self.utterances[echo.id] = echo
             client.pending.append(echo.id)
@@ -592,7 +611,7 @@ class Room:
     # ----- what the agent publishes -----
 
     async def speak(self, text, utterance_id, session_id, revision, language=None,
-                    wait_for_quiet=False, thread_id=None, row_id=None, final=True):
+                    wait_for_quiet=False, thread_id=None, row_id=None):
         previous = self.utterances.get(utterance_id)
         if previous:
             if (previous.text, previous.revision, previous.language) != (text, revision, language):
@@ -615,7 +634,6 @@ class Room:
             raise HTTPException(429, 'Cola o historial de locuciones lleno.')
         utterance = Utterance(utterance_id, text, language=language, thread_id=thread_id, revision=revision,
                               row_id=row_id or (session_id + ':voice:' + utterance_id))
-        utterance.final = final
         for client in listeners:
             utterance.clients[client.id] = {
                 'status': 'waiting_for_turn' if client.speaking else 'queued',
@@ -664,8 +682,7 @@ class Room:
         try:
             result = await self.speak(payload.text, payload.utterance_id, payload.session_id,
                                       decision.revision, payload.language,
-                                      wait_for_quiet=decision.wait_for_quiet, thread_id=payload.thread_id, row_id=row_id,
-                                      final=getattr(payload, 'final', True))
+                                      wait_for_quiet=decision.wait_for_quiet, thread_id=payload.thread_id, row_id=row_id)
         except HTTPException as error:
             if error.status_code not in {409, 429}:
                 raise
@@ -780,6 +797,7 @@ class Room:
             client.error = None
         finally:
             client.switching = False
+        self.report_conversation_working(client)
         return dict(new)
 
     # ----- reporting -----

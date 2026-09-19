@@ -166,7 +166,14 @@ class ConnectorControl:
         if (not binding or self.live.get(binding['id']) != connector_id
                 or not isinstance(message.get('working'), bool)):
             return
-        self.hub.conversation_working(binding['thread'], message['working'])
+        metadata = {}
+        turn_id, turn_phase = message.get('turn_id'), message.get('turn_phase')
+        if isinstance(turn_id, str) and turn_id and turn_phase in {'start', 'end'}:
+            metadata.update(turn_id=turn_id, turn_phase=turn_phase)
+            session_id, revision = message.get('session_id'), message.get('revision')
+            if isinstance(session_id, str) and session_id and type(revision) is int and revision >= 0:
+                metadata.update(session_id=session_id, revision=revision)
+        self.hub.conversation_working(binding['thread'], message['working'], **metadata)
 
     # ----- bindings and speech -----
 
@@ -186,6 +193,7 @@ class ConnectorControl:
             await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': str(error)})
             return
         self.live[binding['id']] = connector_id
+        self.hub.clear_conversation_working(binding['thread'])
         # A conversation joining the room selects itself for nobody: which conversation a browser
         # talks to is that browser's choice (and the reason a call must never jump on a connect).
         await socket.send_json({'type': 'binding.registered', 'client_ref': client_ref, 'binding_id': binding['id'], 'thread': binding['thread']})
@@ -195,6 +203,7 @@ class ConnectorControl:
         connector_id = self.live.pop(record['id'], None)
         self.journal.deactivate_binding(record['connector'], record['id'])
         self.inflight.pop(record['id'], None)
+        self.hub.clear_conversation_working(record['thread'])
         socket = self.sockets.get(connector_id or '')
         if socket is not None:
             try:
@@ -206,8 +215,11 @@ class ConnectorControl:
     async def unregister(self, connector_id, message):
         binding_id = message.get('binding_id')
         if self.live.get(binding_id) == connector_id:
+            record = self.journal.binding(binding_id)
             del self.live[binding_id]
             self.journal.deactivate_binding(connector_id, binding_id)
+            if record:
+                self.hub.clear_conversation_working(record['thread'])
             inflight = self.inflight.pop(binding_id, None)
             if inflight:
                 self.journal.defer(inflight[0], immediate=True)
@@ -222,8 +234,7 @@ class ConnectorControl:
         try:
             speech = Speech(thread_id=binding['thread'], session_id=str(message.get('session_id') or ''),
                             revision=int(message.get('revision') or 0), text=str(message.get('text') or ''),
-                            utterance_id=str(message.get('utterance_id') or uuid.uuid4()), language=message.get('language'),
-                            final=message.get('final') is not False)
+                            utterance_id=str(message.get('utterance_id') or uuid.uuid4()), language=message.get('language'))
             result = await self.hub.publish(speech)
             await socket.send_json({**reply, **result})
         except HTTPException as error:

@@ -27,9 +27,9 @@ export function working(s, thread = selectedThread(s)) {
     // false is an authoritative report too. Receipts and replies can never override it.
     if (typeof s.harness[thread] === 'boolean')
         return s.harness[thread];
-    return Object.values(s.turns).some(t => t.thread === thread && t.session === s.sessionId && !t.final &&
+    return Object.values(s.turns).some(t => t.thread === thread && t.session === s.sessionId && !t.settled &&
         !['not_sent', 'channel_closed'].includes(t.status) &&
-        (t.status === 'read' || t.progress || (['delivered', 'unconfirmed'].includes(t.status) && s.now >= t.readyAt)));
+        (t.status === 'read' || (['delivered', 'unconfirmed'].includes(t.status) && s.now >= t.readyAt)));
 }
 export function sessionStatus(s) {
     const speaker = s.userLive ? 'user' : s.botLive || s.activeSpeech?.started ? 'room' : 'nobody';
@@ -131,8 +131,7 @@ export function recordReceipt(s, id, status, at) {
 export function recordReply(s, d) {
     const id = (d.session_id || s.sessionId) + ':user-turn:' + (d.reply_revision ?? d.revision);
     const previous = s.turns[id] || {};
-    return { ...s.turns, [id]: { ...previous, session: d.session_id || s.sessionId, thread: d.thread_id,
-            final: previous.final || d.final !== false, progress: d.final === false } };
+    return { ...s.turns, [id]: { ...previous, session: d.session_id || s.sessionId, thread: d.thread_id, settled: true } };
 }
 // A single store is shared by React and the runtime adapter. The writable facade records top-level
 // facts; batch() makes a synchronous protocol transition observable only once. Nested records are

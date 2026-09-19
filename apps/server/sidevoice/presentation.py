@@ -97,8 +97,6 @@ class Speech(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
     utterance_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     language: str | None = Field(default=None, pattern=r'^(es|en|fr|it|pt|hi)$')
-    # False while the conversation keeps working on this turn: the room goes on showing it as busy.
-    final: bool = True
 
 
 class TextMessage(BaseModel):

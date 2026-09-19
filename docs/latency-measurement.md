@@ -72,7 +72,7 @@ not a physical speaker measurement; Bluetooth latency needs external measurement
 Server dispatch-to-receipt includes delivery, browser preparation and the return
 request, so do not add it to browser preparation as if they were disjoint.
 
-Compare the first reply per turn separately from progress/final follow-ups.
+Compare the first reply per turn separately from any follow-up utterances.
 Include interrupted/failed rows when reporting failures, but do not treat missing
 playback measurements as fast successful calls. Avoid adding overlapping intervals.
 

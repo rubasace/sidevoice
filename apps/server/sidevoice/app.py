@@ -484,6 +484,7 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
         # Only now can anything reach the browser: what its hello got wrong goes right after the session.
         for message in problems:
             send({'type': 'error', 'data': {'message': message}})
+        call.room.report_conversation_working(call)
         # A person coming back from a tunnel cannot read the transcript. What this browser never heard
         # through goes to it now, oldest first and ahead of anything new, for as long back as this
         # device asked for (#52). Nothing is stored for it: the room already had every one of them.

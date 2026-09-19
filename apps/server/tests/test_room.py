@@ -69,6 +69,16 @@ class MultiClientRoomTests(RoomFixture):
 
     # ----- the room is shared -----
 
+    async def test_a_browser_selecting_mid_turn_receives_the_current_working_state(self):
+        first, second = self.browser('one'), self.browser('two')
+        second.target = {'thread_id': 'other', 'title': 'Other', 'binding_id': 'other-two'}
+        self.hub.conversation_working('task', True, turn_id='turn-1', turn_phase='start')
+        self.assertEqual(first.heard[-1]['data']['working'], True)
+        self.assertEqual(second.heard, [])
+        await self.hub.select(second.id, 'task', 'Tarea')
+        self.assertEqual(second.heard[-1], {'type': 'voice-conversation',
+                                            'data': {'thread_id': 'task', 'working': True}})
+
     async def test_two_browsers_stay_connected_and_both_hear_one_shared_reply(self):
         first, second = self.browser('one'), self.browser('two')
         result = await self.reply(first, 'shared')

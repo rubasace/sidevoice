@@ -9,7 +9,7 @@ invalid declaration is `unknown`. Unknown is deliberately not false.
 | --- | --- | --- | --- | --- |
 | `deliver` | Accept one room event for the harness's conversation | supported: session messaging socket | supported: `codex queue` (or configured HTTP receiver) | supported: configured HTTP receiver |
 | `inspectInbound` | Preflight whether injected input will be admitted | supported: launch flags and `crossSessionInbound` settings | unsupported | unsupported |
-| `working` | Query whether this conversation is busy now | supported: `~/.claude/sessions/*.json` status | unsupported | unsupported |
+| `working` | Mechanically provide whether this conversation is busy now | supported: polled `~/.claude/sessions/*.json` status | supported: `UserPromptSubmit` / `Stop` lifecycle hooks | unsupported |
 | `endOfTurn` | Normalize a harness `Stop` hook into an end-of-turn report | supported | supported | unsupported |
 | `sessionIdentity` | Identify the conversation without model-supplied text | supported: façade environment | supported: MCP tool metadata (or hook payload) | supported: explicit environment |
 
@@ -18,7 +18,7 @@ state, as before. The participant API exposes the normalized declaration and
 the browser distinguishes `unsupported` from `unknown` when explaining why no
 harness-native working signal is available.
 
-## Why Codex `working` is unsupported
+## Codex's event-backed working state
 
 Checked on Codex CLI 0.153.2 on 2026-09-19:
 
@@ -31,13 +31,32 @@ Checked on Codex CLI 0.153.2 on 2026-09-19:
   owning app-server connection. A normal TUI or stdio app-server exposes no
   endpoint to an unrelated local connector, and a second app-server cannot
   resume a thread while its writer is active (see issue #29's steer design).
-- Codex's hook schema includes `UserPromptSubmit` and `Stop`. A configured
-  Sidevoice hook can therefore report prompt admission and the end of a turn,
-  but it is an event stream, not an answer to “is this thread working right
-  now?”. It also cannot reconstruct state before the hook/connector binding was
-  present.
+- Codex's hook schema includes `UserPromptSubmit` and `Stop`. In a real Codex
+  0.153.2 session, both a directly entered prompt and a message delivered by
+  `codex queue --thread` to that live thread emitted those two hooks. Each pair
+  carried the same `session_id` (the thread) and `turn_id`; the queued turn kept
+  the thread identity and received a distinct turn identity.
 
-So Codex truthfully supports end-of-turn reporting while declaring pull-style
-working state unsupported. If a future owner-side connection becomes available,
-the Codex module can implement `working` from that lifecycle stream without
-changing the connector, room or UI contract.
+The public capability is therefore `supported`, while an internal source marker
+keeps the connector from trying to poll Codex. The hook reports start/end events
+over the connector's local socket. The connector correlates them by turn,
+deduplicates them, and sends the aggregate state through the existing
+`input.working` path. Lifecycle frames also name `turn_phase`; an older turn's
+end can therefore close its own telemetry while carrying `working: true` if a
+newer turn remains active. Only the last active end carries `working: false`.
+Completed turn IDs are retained for the binding's lifetime, so arbitrarily late
+duplicates cannot resurrect work. Aggregate state is re-announced without
+lifecycle metadata after a room WebSocket reconnect, and the room retains that
+Boolean in memory so a browser selecting or reconnecting mid-turn sees it.
+
+This support has prerequisites rather than invented recovery: both hooks must be
+configured, and the conversation must have an active Sidevoice binding. It does
+not reconstruct a turn that started before either existed, and connector-process
+restart loses in-memory turn state. Hook delivery is fail-open, so an unavailable
+connector never blocks Codex.
+
+Assistant speech carries no `final` field. A published utterance is presentation
+data, not evidence that the harness ended its turn; one turn may publish zero,
+one, or several utterances. Codex's correlated `Stop` closes browser turn
+telemetry. Transcription and offline-audio protocols retain their unrelated
+`final` fields, where the word means the end of input or an audio upload.

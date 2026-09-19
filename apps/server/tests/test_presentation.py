@@ -185,6 +185,7 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]['type'], 'voice-speech')
         self.assertEqual(events[0]['data']['voice'], 'ef_dora')
+        self.assertNotIn('final', events[0]['data'])
         await c.playback_finished('browser-a', 0)
         self.assertEqual(events[-1]['data']['language'], 'en')
         c.transition('browser-b', 'playing')

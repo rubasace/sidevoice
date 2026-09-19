@@ -126,8 +126,9 @@ neither command touches a `voice-room` skill that is not Sidevoice's.
 }
 ```
 
-**Codex** (`~/.codex/config.toml`; verified for a turn started directly, still to be
-checked for a queued message on a long-lived thread; Codex has no per-session hooks):
+**Codex** (`~/.codex/config.toml`; verified with Codex CLI 0.153.2 for both a
+direct turn and `codex queue --thread` into the same live thread; Codex has no
+per-session hooks):
 
 ```toml
 [[hooks.UserPromptSubmit]]
@@ -138,9 +139,18 @@ hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook
 ```
 
 Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt but
-drop the nudge. `Stop` reports that the turn ended and produces no harness output. A
-machine-wide hook changes how that harness runs every session on the machine: ask before
-adding it to someone's settings.
+drop the nudge. `UserPromptSubmit` mechanically reports the thread working and
+`Stop` reports it idle; the queued voice envelope also supplies the browser turn
+correlation used by telemetry. Both hooks produce no model-authored working
+signal. Restart Codex after editing the configuration, then join the conversation
+to create the active binding; work that predates the hooks or binding cannot be
+reconstructed.
+
+The package does not rewrite `config.toml`: unlike the Claude skill installer,
+Codex's hook is machine-wide and the file may contain user-managed TOML that the
+uplink does not own. Add the two entries explicitly. A machine-wide hook changes
+how Codex runs every session on the machine, so inspect the command and scope
+before adding it.
 
 ## The room: observability (optional)
 

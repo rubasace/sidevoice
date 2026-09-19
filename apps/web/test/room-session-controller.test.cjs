@@ -1380,14 +1380,14 @@ test('With no telemetry installed the call behaves exactly as it did',()=>{
  assert.deepEqual(sent.map(frame=>frame.type),['voice-audio-health']);
  assert.ok(s.run("browserLatency({thread_id:'a',reply_revision:1},0)").audio_received_to_playback_scheduled_ms>0);
 });
-test('A progress reply leaves the turn open; the final one closes it',()=>{
+test('A correlated harness end closes telemetry once even while a newer turn keeps the thread working',()=>{
  const {s,calls}=tracing();
- s.run("endTurnTrace({thread_id:'a',reply_revision:4,final:false},'played')");
- assert.deepEqual(calls.filter(call=>call[0]==='endTurn'),[],'an acknowledgement is not the end of the turn');
- s.run("endTurnTrace({thread_id:'a',reply_revision:4,final:true},'played')");
- s.run("endTurnTrace({thread_id:'a',reply_revision:5},'played')");
- assert.deepEqual(calls.filter(call=>call[0]==='endTurn'),
-  [['endTurn','a',4,'played'],['endTurn','a',5,'played']],'a reply that says nothing about it is the final one');
+ s.run("observeLatencyEvent('voice-user-turn',{phase:'started',thread_id:'a',revision:4})");
+ s.run("state.turns=recordReply(state,{session_id:'s',thread_id:'a',revision:4})");
+ const stopped=JSON.stringify(JSON.stringify({type:'voice-conversation',data:{thread_id:'a',working:true,turn_id:'codex-turn',turn_phase:'end',session_id:'s',revision:4}}));
+ s.run(`message(${stopped})`);s.run(`message(${stopped})`);
+ assert.deepEqual(calls.filter(call=>call[0]==='endTurn'),[['endTurn','a',4,'harness_finished']]);
+ assert.equal(s.run('roomStore.getState().session.working'),true);
 });
 
 // ----- what the room plays back when this browser comes back (#52) -----
@@ -1483,7 +1483,7 @@ test('A cancelled playback cannot be revived by a late playing callback or compl
  const s=presenceSetup();let onPlaying,finish;
  s.context.window.roomVoice.speak=(_d,_status,playing)=>{onPlaying=playing;return new Promise(resolve=>finish=resolve)};
  s.emit('voice-conversation',{thread_id:'a',working:true});
- const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'late',text:'Late',final:false})");
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'late',text:'Late'})");
  s.emit('user-started-speaking',{});
  onPlaying();finish();await pending;
  assert.equal(s.run('activeSpeech'),null);
@@ -1494,8 +1494,9 @@ test('A cancelled playback cannot be revived by a late playing callback or compl
 });
 test('Progress speech failure releases its output and the bed returns automatically',async()=>{
  const s=presenceSetup();let onPlaying,fail;
+ s.emit('voice-conversation',{thread_id:'a',working:true});
  s.context.window.roomVoice.speak=(_d,_status,playing)=>{onPlaying=playing;return new Promise((resolve,reject)=>fail=reject)};
- const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'fail',text:'Progress',final:false})");
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'fail',text:'Progress'})");
  onPlaying();fail(Error('device refused'));await pending;
  assert.equal(s.run('activeSpeech'),null);
  assert.equal(s.run('roomStore.getState().session.bed'),true);
@@ -1507,16 +1508,16 @@ test('Ambient effects stop before speech, survive synchronous output reports, an
  s.emit('voice-conversation',{thread_id:'a',working:true});
  assert.equal(starts,1,'an output report during start cannot start the bed recursively');
  s.context.window.roomVoice.speak=(_d,_status,onPlaying)=>{played=onPlaying;assert.equal(s.run('bedPlaying'),false);return new Promise(resolve=>finish=resolve)};
- const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Progress',final:false})");
+ const pending=s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'u',text:'Progress'})");
  played();finish();await pending;
  assert.equal(starts,2);
  assert.equal(s.run('roomStore.getState().session.bed'),true);
 });
-test('A stale audio epoch still settles the final reply it carries without playing it',async()=>{
+test('A stale audio epoch still settles the reply it carries without playing it',async()=>{
  const s=presenceSetup();let played=false;s.context.window.roomVoice.speak=()=>{played=true};
  s.run("roomRevision=3;state.turns={'s:user-turn:1':{session:'s',thread:'a',status:'read'},'s:user-turn:3':{session:'s',thread:'a',status:'read'}}");
  await s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:1,utterance_id:'late-final',text:'Done'})");
- assert.equal(played,false);assert.equal(s.run("state.turns['s:user-turn:1'].final"),true);
+ assert.equal(played,false);assert.equal(s.run("state.turns['s:user-turn:1'].settled"),true);
  assert.equal(s.run('roomStore.getState().session.working'),true);
 });
 test('An audio cancellation in silence cannot contradict harness work or suppress the bed',()=>{
@@ -1528,15 +1529,15 @@ test('An audio cancellation in silence cannot contradict harness work or suppres
  s.emit('voice-input-receipt',{...OWN_TURN,status:'read'});
  assert.equal(s.run('roomStore.getState().session.working'),false);
 });
-test('Typed-message receipts keep their bubble ID but final replies settle the session and revision turn',async()=>{
+test('Typed-message receipts keep their bubble ID and replies settle fallback state',async()=>{
  const s=presenceSetup();
  s.run("add('user','Typed input',null,'a',{history_id:'s:user-text:message-id',session:'s',revision:7,delivery:'pending'})");
  s.emit('voice-input-receipt',{session_id:'s',thread_id:'a',revision:7,history_id:'s:user-text:message-id',status:'read'});
  assert.equal(s.run('roomStore.getState().session.working'),true);
  assert.equal(s.run('roomStore.getState().conversation.messages[0].delivery'),'read');
  s.context.window.roomVoice.speak=async()=>{};
- await s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:7,reply_revision:7,utterance_id:'typed-reply',text:'Done',final:true})");
+ await s.run("receiveBrowserSpeech({session_id:'s',thread_id:'a',revision:7,reply_revision:7,utterance_id:'typed-reply',text:'Done'})");
  assert.equal(s.run('roomStore.getState().session.working'),false);
  s.emit('voice-input-receipt',{session_id:'s',thread_id:'a',revision:7,history_id:'s:user-text:message-id',status:'read'});
- assert.equal(s.run('roomStore.getState().session.working'),false,'a repeated receipt cannot reopen a final turn');
+ assert.equal(s.run('roomStore.getState().session.working'),false,'a repeated receipt cannot reopen a settled turn');
 });
