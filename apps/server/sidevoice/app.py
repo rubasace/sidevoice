@@ -92,7 +92,7 @@ def vad_analyzer(mic, config):
     # so a breath between words does not end the turn. A fixed timer needs no floor.
     default_stop = mic.smart_turn_min_silence if mic.turn_end_mode == 'smart_turn' else 0.2
     return SileroVADAnalyzer(params=VADParams(
-        start_secs=float(config.get('VOICE_VAD_START_SECS', '0.08')),
+        start_secs=mic.vad_start_secs,
         stop_secs=float(config.get('VOICE_VAD_STOP_SECS', default_stop)),
         confidence=mic.vad_confidence,
         min_volume=mic.vad_min_volume,

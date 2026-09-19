@@ -49,6 +49,9 @@ class LanguageSettings(BaseModel):
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
+    # How long the detector must hear voice before it opens a turn (and interrupts a reply). 80 ms opened turns
+    # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
+    vad_start_secs: float = Field(default=0.2, ge=0.05, le=1)
 
 
     @model_validator(mode='after')
@@ -115,8 +118,11 @@ class MicSettings(BaseModel):
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
+    # How long the detector must hear voice before it opens a turn (and interrupts a reply). 80 ms opened turns
+    # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
+    vad_start_secs: float = Field(default=0.2, ge=0.05, le=1)
 
-    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence', 'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume')
+    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence', 'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume', 'vad_start_secs')
 
 
 def mic_settings(settings, overrides=None):

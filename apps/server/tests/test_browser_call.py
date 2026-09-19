@@ -107,6 +107,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(session['mic_settings']['turn_end_mode'], 'timer')
         self.assertEqual(session['mic_settings']['user_speech_timeout'], 1.0)
         self.assertEqual(session['mic_settings']['vad_confidence'], 0.6)
+        self.assertEqual(session['mic_settings']['vad_start_secs'], 0.2, 'the onset is the device\'s, 200 ms by default')
         self.assertEqual((session['transcription']['provider'], session['transcription']['model'],
                           session['transcription']['device']), ('browser', 'onnx-community/whisper-tiny', 'wasm'))
         self.assertEqual(session['mic']['transport'], 'pcm')
@@ -139,6 +140,8 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(strategy._turn_analyzer.params.stop_secs, 3.0)
         from sidevoice.app import vad_analyzer
         self.assertEqual(vad_analyzer(mic, {}).params.stop_secs, 0.6)
+        self.assertEqual(vad_analyzer(mic, {}).params.start_secs, 0.2)
+        self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.35})[0], {}).params.start_secs, 0.35, 'the onset comes from the device')
         floor, _ = mic_settings(LanguageSettings(), {'smart_turn_min_silence': 1.2})
         self.assertEqual(vad_analyzer(floor, {}).params.stop_secs, 1.2)
         timer, _ = mic_settings(LanguageSettings(), {'turn_end_mode': 'timer', 'user_speech_timeout': 4})
