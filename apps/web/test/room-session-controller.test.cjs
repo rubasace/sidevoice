@@ -771,4 +771,9 @@ test('The stages view lists the last turn in order with bars scaled to the longe
  assert.equal(JSON.stringify(items[6]),JSON.stringify(['Agente: entrega → primera respuesta',false,'100%','9.00 s']));
  assert.equal(JSON.stringify(items[4]),JSON.stringify(['Entregado → leído por la conversación',true,'','—']));
  assert.match(s.run("$('stats-stages-note').textContent"),/Turno 4/);
+ // A harness that never acknowledges delivery (Claude Code's inbox) still yields a read mark: the stage falls back to queued → read.
+ s.run("renderLatencyStages({reply_revision:5,server_ms:{input_queued_to_read_ms:5800,read_to_reply_received_ms:4200,input_queued_to_reply_received_ms:10000}})");
+ const read=s.run("$('stats-stages').children.map(li=>[li.children[0].textContent,li.children[2].textContent])");
+ assert.equal(JSON.stringify(read[4]),JSON.stringify(['Entregado → leído por la conversación','5.80 s']));
+ assert.equal(JSON.stringify(read[5]),JSON.stringify(['Leído → primera respuesta','4.20 s']));
 });
