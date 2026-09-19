@@ -38,14 +38,17 @@ replaceable adapters.
 
 ## Room and clients
 
-The room is shared and the browsers in it are not. The selected conversation, the
-journal, the assistant's utterances and any audio a paid engine rendered belong to
-the room; a WebSocket identity, a microphone turn, a transcription runtime, a
-playback queue, karaoke, an output device and a latency trace belong to one
-browser. Starting to speak advances the room's epoch, because it makes the
-previous answer stale for everyone; stopping the audio does not leave the browser
-that stopped it, and no browser's arrival ends another's call. The split, its
-invariants and its lifecycle are in [the multi-client room](MULTI_CLIENT_ROOM.md).
+The room is shared and the browsers in it are not. The journal, the assistant's
+utterances and any audio a paid engine rendered belong to the room; a WebSocket
+identity, **the selected conversation**, the turn epoch, a microphone turn, a
+transcription runtime, a playback queue, karaoke, an output device and a latency
+trace belong to one browser. Every tab chooses which conversation it talks to
+(kept per tab, sent again in its hello after a reload) and the room only routes:
+a turn advances that tab's epoch and interrupts that tab's audio, a reply reaches
+the tabs that are on its conversation, and a conversation joining the room selects
+itself for nobody. Two tabs on two conversations is a supported state; the noise it
+makes on one speaker is the user's choice. The split, its invariants and its
+lifecycle are in [the multi-client room](MULTI_CLIENT_ROOM.md).
 
 ## Transcription
 

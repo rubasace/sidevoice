@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from .room_history import RoomHistory
 from .paths import BROWSER_AUDIO_DIST, BROWSER_AUDIO_ROOT, RUNTIME_ROOT, WEB_DIST
 from .pipeline_frames import PresentationBoundary, PresentationSpeech
-from .room import Room, RoomClient, binding  # noqa: F401 — RoomClient is re-exported for app.py
+from .room import Room, RoomClient  # noqa: F401 — RoomClient is re-exported for app.py
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -244,8 +244,10 @@ def mount_presentation(app):
         # A latency trace is one browser's own measurements; nobody else's are returned.
         return hub.latency_snapshot(session_id)
 
-    def available_participants():
-        current = binding() or {}
+    def available_participants(session_id=None):
+        # `selected` is the asking browser's own choice; nobody else has one that matters to it.
+        client = client_for(session_id)
+        current = client.target if client else {}
         entries = hub.control.participants() if hub.control else [{**b, 'connected': False} for b in hub.journal.bindings()]
         reach = hub.control.reachability if hub.control else (lambda b: {'state': 'offline', 'detail': None})
         return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversación ' + b['thread'][:8]),
@@ -254,8 +256,8 @@ def mount_presentation(app):
                  'selected': b['thread'] == current.get('thread_id')} for b in entries]
 
     @app.get('/api/presentation/participants')
-    async def participants():
-                return {'participants': available_participants()}
+    async def participants(session_id: str | None = None):
+        return {'participants': available_participants(session_id)}
 
     @app.post('/api/presentation/select')
     async def select_participant(payload: dict, request: Request):
@@ -266,7 +268,9 @@ def mount_presentation(app):
         record = hub.journal.binding_for_thread(thread_id)
         if not record:
             raise HTTPException(409, 'Esa conversación no está conectada. Activa la voz desde su tarea.')
-        return await hub.activate({'thread_id': thread_id, 'title': record.get('title')})
+        if not client_for(payload.get('session_id')):
+            raise HTTPException(409, 'Ese navegador no está en la sala.')
+        return await hub.select(payload['session_id'], thread_id, record.get('title'))
 
     @app.post('/api/presentation/cancel-input')
     async def cancel_input(payload: dict, request: Request):
@@ -294,11 +298,9 @@ def mount_presentation(app):
     @app.post('/api/presentation/leave')
     async def leave(payload: dict, request: Request):
         require_same_origin(request)
-        # Check and mutate under the same lock as activation.
-        async with hub.activation_lock:
-            if payload.get('binding_id') != (binding() or {}).get('binding_id'):
-                raise HTTPException(409, 'La conversación cambió. Actualiza la sala.')
-            return await hub._activate({})
+        if not client_for(payload.get('session_id')):
+            raise HTTPException(409, 'Ese navegador no está en la sala.')
+        return await hub.deselect(payload['session_id'], payload.get('binding_id'))
 
     @app.post('/api/presentation/text')
     async def typed_message(payload: TextMessage, request: Request):

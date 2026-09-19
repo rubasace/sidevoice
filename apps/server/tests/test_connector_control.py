@@ -140,7 +140,7 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(old.closed, 1008); self.assertEqual(old.sent[0]['type'], 'connector.error')
 
-    async def test_register_mints_id_focuses_room_and_an_unknown_id_is_a_fresh_registration(self):
+    async def test_register_mints_id_focuses_nobody_and_an_unknown_id_is_a_fresh_registration(self):
         socket, task = await self.run_connection([
             {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
             {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
@@ -152,7 +152,7 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         registered = socket.sent[1]
         self.assertEqual(registered['client_ref'], 'r1'); self.assertEqual(registered['thread'], 'sess-1')
         self.assertTrue(self.control.is_live(registered['binding_id']))
-        self.assertEqual(self.hub.activated[0], {'thread_id': 'sess-1', 'title': 'Trabajo'})
+        self.assertEqual(self.hub.activated, [], 'a conversation joining selects itself for no browser')
         # An id the room does not know (it restarted) is not foreign: the same connector gets its binding back.
         reused = [f for f in socket.sent if f['type'] == 'binding.registered' and f['client_ref'] == 'r2']
         self.assertEqual(reused[0]['binding_id'], registered['binding_id'])

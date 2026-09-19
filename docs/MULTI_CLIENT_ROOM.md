@@ -19,19 +19,19 @@ same?* If yes it is room state; if no it is client state. Nothing is both.
 
 | Room (`room.Room`) | Client (`room.RoomClient`) |
 | --- | --- |
-| selected connector conversation (`target`, mirrored in `.voice-poc/presentation.json`) | WebSocket identity (`id`, minted per socket) |
-| durable journal: transcript, outbox, delivery state | microphone stream, mute, level meter, input gap stats |
-| assistant utterances: text, language, epoch | input turn (`turn_revision`, `turn_target`, cancellation) |
-| the room revision (`revision`) | the STT runtime it resolved to, local or cloud |
-| audio a paid engine rendered (`synthesis_cache.SynthesisCache`) | playback queue (`pending`, `active`), quiet grace, dispatch timer |
-| which conversations are closed | local interruption, karaoke, output device |
-| `switching` while the focus moves | its own latency trace (`CallLatency`) |
+| the journal: transcript, outbox, delivery state (in memory) | WebSocket identity (`id`, minted per socket) |
+| assistant utterances: text, language, the epoch they answer | the selected conversation (`target`), remembered per tab and named again in the hello |
+| audio a paid engine rendered (`synthesis_cache.SynthesisCache`) | its turn epoch (`revision`) and `switching` while it changes conversation |
+| which conversations are connected (bindings) | input turn (`turn_revision`, `turn_target`, cancellation) |
+| | microphone stream, mute, level meter, input gap stats; the STT runtime it resolved to |
+| | playback queue (`pending`, `active`), quiet grace, dispatch timer |
+| | local interruption, karaoke, output device; its own latency trace (`CallLatency`) |
 
 Two consequences worth stating on their own:
 
 - **The room outlives every client.** No browser owns the room. The last one
-  leaving does not close the conversation, empty the journal or reset the
-  revision; the next one to arrive joins what is already there.
+  leaving does not close any conversation or empty the journal; the next one to
+  arrive joins what is already there and chooses its own conversation.
 - **A client never reaches into another client.** Everything a browser reports
   — a receipt, a cancellation, a failure, a measurement — is written under its
   own id inside the shared utterance, never onto the utterance itself.
@@ -41,20 +41,21 @@ Two consequences worth stating on their own:
 There are two revisions, and confusing them is the whole bug class this design
 exists to prevent.
 
-`room.revision` is the **room epoch**. It increases by one every time *any*
-participant starts an input turn, whether by microphone or by typing. It is the
-number the agent is handed with the input, the number it must quote in
-`voice_say`, and the number every audio decision is checked against. An utterance
-whose revision is not the room's is stale everywhere at once.
+`client.revision` is **that browser's epoch**. It increases by one every time
+that browser starts an input turn, by microphone or by typing, and every time it
+changes conversation. It is the number the agent is handed with that browser's
+input, the number it must quote in `voice_say`, and the number every audio
+decision for that browser is checked against. Another tab's turns never move it.
 
-`client.turn_revision` is **that browser's current input turn** — the room epoch
+`client.turn_revision` is **that browser's current input turn** — its epoch when
 the turn was allocated. It is what `/api/presentation/cancel-input` checks and
 what a delivery receipt is matched against. It is never compared across clients.
 
-So: *starting to speak* is room-wide, because it makes the agent's previous
-answer stale for everybody. *Stopping the audio* is local, because it only says
-what one listener wants to hear. The first bumps `room.revision` and invalidates
-every client's queue; the second writes one entry in one utterance.
+So: *starting to speak* interrupts the browser that spoke, and no other. A reply
+is judged by the epoch of the browser it answers (`session_id`) and is played by
+every browser on that conversation; a browser on another conversation gets the
+text in its history and no audio (`focus_changed`). *Stopping the audio* is
+local too: it writes one entry in one utterance.
 
 ## Utterance lifecycle
 
@@ -95,7 +96,7 @@ socket closed
   └─ Room.leave(client)
        ├─ the client's entries in live utterances become `disconnected`
        ├─ its pending queue, dispatch timer and open turns are dropped
-       └─ the room, its target, its revision and every other client are untouched
+       └─ the room and every other client are untouched; the selection left with the tab
 ```
 
 Reconnecting is joining again with a new id. Nothing is replayed: audio the
@@ -107,17 +108,16 @@ chosen per connection and the room does not care which one produced the words.
 ## Input: independent, once each, ordered
 
 Every participant speaks or types on their own. Each input becomes one journal row
-whose id is `<client id>:user-turn:<room revision>` (or `:user-text:<message id>`
-for typed messages). Client ids are unique per socket and room revisions are
+whose id is `<client id>:user-turn:<that browser's revision>` (or `:user-text:<message id>`
+for typed messages). Client ids are unique per socket and a browser's revisions are
 allocated one at a time by the room, so two participants can never collide, and
 `RoomHistory.put` is idempotent on that id, so a retry cannot duplicate.
 
 Delivery to the agent is unchanged: the connector control plane drains the journal
 in `seq` order, one delivery in flight per binding, advancing only on an exact
 acknowledgement. **Ordering when turns overlap** is therefore the order turns
-*completed*, which is total and stable, while the room revision orders turns
-*started* and governs audio epochs. Two participants who start together get
-distinct revisions; whoever finishes first is delivered first.
+*completed*, which is total and stable; each browser's revision only orders that
+browser's own turns and governs its audio. Whoever finishes first is delivered first.
 
 A receipt for a row is routed back to the client named in its payload, and only
 there. Every other browser learns the same fact from the shared history poll, so

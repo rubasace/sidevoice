@@ -24,17 +24,12 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        for target in [patch('sidevoice.room.BINDING', self.path('binding.json')),
-                       ]:
-            target.start()
-            self.addCleanup(target.stop)
         self.renders = []
         self.hub = Room(RoomHistory(self.path('history.sqlite3')), SynthesisCache(renderer=self.render))
         self.voice = KOKORO
         voices = patch('sidevoice.language_settings.resolve_voice', side_effect=lambda *a, **k: dict(self.voice))
         voices.start()
         self.addCleanup(voices.stop)
-        await self.hub.activate({'thread_id': 'task', 'title': 'Tarea'})
 
     def path(self, name):
         return Path(self.temp.name) / name
@@ -49,6 +44,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
     def browser(self, session_id):
         client = RoomClient(session_id, self.hub, worker=AsyncMock())
         client.connected = True
+        client.target = {'thread_id': 'task', 'title': 'Tarea', 'binding_id': 'bind-' + session_id}
         client.heard = []
         client.on_browser_event = client.heard.append
         return client
@@ -62,7 +58,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
 
     async def reply(self, client, utterance_id, text='Ya está listo', **extra):
         return await self.hub.publish(Speech(thread_id='task', session_id=client.id,
-                                             revision=self.hub.revision, text=text,
+                                             revision=client.revision, text=text,
                                              utterance_id=utterance_id, **extra))
 
     # ----- the room is shared -----
@@ -89,24 +85,26 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(self.spoken(second)), 1)
         self.assertEqual(self.spoken(second)[0]['session_id'], 'two')
 
-    async def test_a_turn_in_one_browser_moves_the_epoch_for_every_browser(self):
+    async def test_a_turn_in_one_browser_moves_only_that_browsers_epoch(self):
         first, second = self.browser('one'), self.browser('two')
         await self.reply(first, 'stale')
         second.user_started()
-        self.assertEqual(self.hub.revision, 2)
-        # Both browsers were told to drop the audio of the epoch that just ended.
-        for client in (first, second):
-            self.assertEqual(client.heard[-1]['type'], 'voice-cancel')
-            self.assertEqual(client.heard[-1]['data']['revision'], 2)
+        self.assertEqual((first.revision, second.revision), (0, 1))
+        # Only the browser whose user spoke drops the audio; the other keeps playing the shared reply.
+        self.assertEqual(second.heard[-1]['type'], 'voice-cancel')
+        self.assertEqual(second.heard[-1]['data']['revision'], 1)
+        self.assertNotEqual(first.heard[-1]['type'], 'voice-cancel')
+        self.assertEqual(self.hub.utterances['stale'].clients['one']['status'], 'synthesizing')
+        self.assertEqual(self.hub.utterances['stale'].clients['two']['status'], 'waiting_for_turn')
         with self.assertRaises(HTTPException):
-            await self.hub.speak('Respuesta de un turno viejo', 'late', first.id, 1)
+            await self.hub.speak('Respuesta de un turno viejo', 'late', second.id, 0)
 
     # ----- playback is not -----
 
     async def test_one_browser_stopping_playback_leaves_the_other_playing(self):
         first, second = self.browser('one'), self.browser('two')
         await self.reply(first, 'shared')
-        revision = self.hub.revision
+        revision = second.revision
         self.assertTrue(second.browser_cancelled('shared', revision, True))
         utterance = self.hub.utterances['shared']
         self.assertEqual(utterance.clients['two']['status'], 'interrupted')
@@ -131,7 +129,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
     async def test_a_receipt_from_one_browser_can_never_move_another(self):
         first, second = self.browser('one'), self.browser('two')
         await self.reply(first, 'shared')
-        revision = self.hub.revision
+        revision = second.revision
         # Whatever the second browser claims, it is answered under its own id.
         second.browser_cancelled('shared', revision, True)
         self.assertFalse(second.is_current('shared', revision))
@@ -146,9 +144,9 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
 
     async def test_each_browser_input_is_delivered_once_and_overlapping_turns_are_ordered(self):
         first, second = self.browser('one'), self.browser('two')
-        first.user_started()          # turn opened first: epoch 2
-        second.user_started()         # overlapping turn: epoch 3
-        self.assertEqual((first.turn_revision, second.turn_revision), (2, 3))
+        first.user_started()          # each browser's turn advances its own epoch only
+        second.user_started()
+        self.assertEqual((first.turn_revision, second.turn_revision), (1, 1))
         first.speaking = second.speaking = False
         first.enqueue_input('Lo que dije yo')
         second.enqueue_input('Lo que dijo el otro')
@@ -156,7 +154,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         rows = self.hub.journal.pending()
         self.assertEqual([row['text'] for row in rows], ['Lo que dije yo', 'Lo que dijo el otro'])
         self.assertEqual([row['session'] for row in rows], ['one', 'two'])
-        self.assertEqual([row['revision'] for row in rows], [2, 3])
+        self.assertEqual([row['revision'] for row in rows], [1, 1])
         self.assertEqual(len({row['id'] for row in rows}), 2)
 
     async def test_the_outbox_delivers_each_participant_exactly_once_in_order(self):
@@ -199,9 +197,9 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         second.user_started()
         microphone_turn = second.turn_revision
         result = await self.hub.send_text('Escribo yo', first.id, 'task',
-                                          self.hub.target['binding_id'], 'msg-1')
-        self.assertEqual(result['revision'], self.hub.revision)
-        self.assertGreater(self.hub.revision, microphone_turn)
+                                          first.target['binding_id'], 'msg-1')
+        self.assertEqual(result['revision'], first.revision)
+        self.assertEqual(first.revision, 1)
         self.assertEqual(second.turn_revision, microphone_turn)
         self.assertTrue(second.speaking)
         row = self.hub.journal.get(result['id'])
@@ -209,20 +207,20 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException):
             # Nobody may send text as a browser that is not theirs.
             await self.hub.send_text('Suplantando', 'nadie', 'task',
-                                     self.hub.target['binding_id'], 'msg-2')
+                                     first.target['binding_id'], 'msg-2')
 
     # ----- coming and going -----
 
     async def test_one_browser_leaving_keeps_the_room_and_everyone_else_live(self):
         first, second = self.browser('one'), self.browser('two')
         await self.reply(first, 'shared')
-        revision = self.hub.revision
+        revision = second.revision
         first.disconnect()
         self.assertFalse(first.connected)
         self.assertEqual(list(self.hub.clients), ['two'])
         self.assertTrue(second.connected)
-        self.assertEqual(self.hub.revision, revision)
-        self.assertEqual(self.hub.target['thread_id'], 'task')
+        self.assertEqual(second.revision, revision)
+        self.assertEqual(second.target['thread_id'], 'task')
         self.assertEqual(self.hub.utterances['shared'].clients['one']['status'], 'disconnected')
         # The row still reports the browser that is actually still playing it.
         self.assertEqual(self.row('shared', first.id)['status'], 'synthesizing')
@@ -237,7 +235,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         first = self.browser('one')
         first.disconnect()
         result = await self.hub.publish(Speech(thread_id='task', session_id='one',
-                                               revision=self.hub.revision, text='Nadie escucha',
+                                               revision=first.revision, text='Nadie escucha',
                                                utterance_id='alone'))
         self.assertEqual((result['status'], result['reason']), ('text_only', 'call_ended'))
         self.assertTrue(result['text_saved'])
@@ -269,7 +267,7 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         # A later utterance with the same words and voice is not paid for twice either.
         for client in (first, second, third):
             client.transition('shared', 'playing')
-            await client.playback_finished('shared', self.hub.revision)
+            await client.playback_finished('shared', client.revision)
         await self.reply(first, 'again', text='Esto lo paga la sala una sola vez')
         self.assertEqual(len(self.renders), 1)
 
@@ -322,10 +320,10 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
     async def test_a_snapshot_shows_the_room_to_all_and_playback_only_to_its_owner(self):
         first, second = self.browser('one'), self.browser('two')
         await self.reply(first, 'shared')
-        second.browser_cancelled('shared', self.hub.revision, True)
+        second.browser_cancelled('shared', second.revision, True)
         mine = self.hub.snapshot('one')
         self.assertEqual(mine['call']['id'], 'one')
-        self.assertEqual(mine['call']['utterances'], [{'utterance_id': 'shared', 'revision': self.hub.revision,
+        self.assertEqual(mine['call']['utterances'], [{'utterance_id': 'shared', 'revision': first.revision,
                                                        'session_id': 'one', 'status': 'synthesizing'}])
         self.assertEqual(mine['room']['clients'], 2)
         self.assertEqual({entry['id'] for entry in mine['clients']}, {'one', 'two'})
@@ -416,3 +414,84 @@ class SharedRenderTests(IsolatedAsyncioTestCase):
             await cache.obtain(self.choice(), word)
         self.assertEqual(cache.stats()['items'], 2)
         self.assertLessEqual(cache.stats()['bytes'], 250)
+
+
+class PerBrowserSelectionTests(IsolatedAsyncioTestCase):
+    """Which conversation a browser talks to is that browser's state; the room only routes."""
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.hub = Room(RoomHistory(Path(self.temp.name) / 'history.sqlite3'), SynthesisCache(renderer=self.render))
+        voices = patch('sidevoice.language_settings.resolve_voice', side_effect=lambda *a, **k: dict(KOKORO))
+        voices.start(); self.addCleanup(voices.stop)
+        for thread, title in (('a', 'Conversación A'), ('b', 'Conversación B')):
+            self.hub.journal.register_binding('conn', harness='claude', thread=thread, title=title)
+
+    async def render(self, choice, text):
+        return {'mime_type': 'audio/mpeg', 'audio_base64': 'YQ==', 'timings_ms': {}, 'alignment': {'characters': []}}
+
+    def browser(self, session_id):
+        client = RoomClient(session_id, self.hub, worker=AsyncMock())
+        client.connected = True
+        client.heard = []
+        client.on_browser_event = client.heard.append
+        return client
+
+    async def test_selecting_in_one_browser_moves_nobody_else_and_each_hears_its_own_conversation(self):
+        one, two = self.browser('one'), self.browser('two')
+        self.assertIsNone(self.hub.snapshot('one')['binding'])
+        await self.hub.select('one', 'a', 'Conversación A')
+        await self.hub.select('two', 'b', 'Conversación B')
+        self.assertEqual(self.hub.snapshot('one')['binding']['thread_id'], 'a')
+        self.assertEqual(self.hub.snapshot('two')['binding']['thread_id'], 'b')
+        # Switching one tab interrupts that tab only; the other keeps its epoch and its selection.
+        before, heard = two.revision, len(two.heard)
+        await self.hub.select('one', 'b', 'Conversación B')
+        self.assertEqual(two.revision, before)
+        self.assertEqual(two.target['thread_id'], 'b')
+        self.assertEqual(one.heard[-1]['type'], 'voice-cancel')
+        self.assertEqual(len(two.heard), heard, 'the other tab heard nothing about it')
+        # A reply for B reaches every browser on B and no browser elsewhere.
+        await self.hub.select('one', 'a', 'Conversación A')
+        two.user_started(); two.speaking = False
+        result = await self.hub.publish(Speech(thread_id='b', session_id='two', revision=two.revision, text='Para B', utterance_id='u-b'))
+        self.assertIn(result['status'], {'queued', 'synthesizing'})
+        self.assertEqual(set(self.hub.utterances['u-b'].clients), {'two'})
+        # A reply is judged by the epoch of the browser it answers, not by anyone else's turns.
+        one.user_started(); one.speaking = False
+        self.assertIn(self.hub.utterances['u-b'].clients['two']['status'], {'queued', 'synthesizing'}, "untouched by another tab's turn")
+        # A reply for a conversation this tab is not on is text only for it, whatever another tab is doing.
+        elsewhere = await self.hub.publish(Speech(thread_id='b', session_id='one', revision=one.revision, text='Para B otra vez', utterance_id='u-b2'))
+        self.assertEqual((elsewhere['status'], elsewhere['reason']), ('text_only', 'focus_changed'))
+
+    async def test_input_goes_to_the_browsers_own_conversation_and_text_needs_its_own_selection(self):
+        one, two = self.browser('one'), self.browser('two')
+        await self.hub.select('one', 'a'); await self.hub.select('two', 'b')
+        one.user_started(); one.speaking = False; one.enqueue_input('Para A')
+        two.user_started(); two.speaking = False; two.enqueue_input('Para B')
+        self.assertEqual([(row['session'], row['thread']) for row in self.hub.journal.pending()], [('one', 'a'), ('two', 'b')])
+        with self.assertRaises(HTTPException):
+            await self.hub.send_text('Ajeno', 'one', 'b', two.target['binding_id'], 'm-1')
+        result = await self.hub.send_text('Escrito para A', 'one', 'a', one.target['binding_id'], 'm-2')
+        self.assertEqual(result['revision'], one.revision)
+        self.assertEqual(self.hub.journal.get(result['id'])['thread'], 'a')
+
+    async def test_closing_a_conversation_clears_it_only_in_the_browsers_that_had_it(self):
+        one, two = self.browser('one'), self.browser('two')
+        await self.hub.select('one', 'a'); await self.hub.select('two', 'b')
+        await self.hub.close_channel('a')
+        self.assertIsNone(self.hub.snapshot('one')['binding'])
+        self.assertEqual(self.hub.snapshot('two')['binding']['thread_id'], 'b')
+        self.assertIsNone(self.hub.journal.binding_for_thread('a'))
+        one.user_started(); one.speaking = False; one.enqueue_input('Sin destino')
+        self.assertIn('Selecciona una conversación', one.error)
+
+    async def test_deselecting_needs_the_browsers_current_binding_and_touches_only_that_browser(self):
+        one, two = self.browser('one'), self.browser('two')
+        await self.hub.select('one', 'a'); await self.hub.select('two', 'a')
+        with self.assertRaises(HTTPException):
+            await self.hub.deselect('one', two.target['binding_id'])
+        await self.hub.deselect('one', one.target['binding_id'])
+        self.assertIsNone(self.hub.snapshot('one')['binding'])
+        self.assertEqual(two.target['thread_id'], 'a')

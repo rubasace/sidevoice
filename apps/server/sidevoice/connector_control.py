@@ -158,9 +158,9 @@ class ConnectorControl:
             await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': str(error)})
             return
         self.live[binding['id']] = connector_id
+        # A conversation joining the room selects itself for nobody: which conversation a browser
+        # talks to is that browser's choice (and the reason a call must never jump on a connect).
         await socket.send_json({'type': 'binding.registered', 'client_ref': client_ref, 'binding_id': binding['id'], 'thread': binding['thread']})
-        if message.get('focus', True):
-            await self.hub.activate({'thread_id': binding['thread'], 'title': binding['title']})
 
     async def close_binding(self, record):
         """The user closed this conversation's voice from the room: its connector forgets the binding."""

@@ -43,7 +43,7 @@ class FakeTranscriber:
         return result
 
 
-TIMER_HELLO = {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 1.0},
+TIMER_HELLO = {'conversation': 'thread-a', 'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 1.0},
                'transcription': {'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}}
 
 
@@ -52,15 +52,10 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         from sidevoice.room import Room
         from sidevoice.room_history import RoomHistory
         self.temp = tempfile.TemporaryDirectory()
-        self.binding = Path(self.temp.name) / 'binding.json'
-        self.binding.write_text(json.dumps({'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}))
-        self.patches = [
-            patch('sidevoice.room.BINDING', self.binding),
-        ]
-        for active in self.patches: active.start()
         self.hub = Room(RoomHistory(Path(self.temp.name) / 'history.sqlite3'))
-        self.patches.append(patch('sidevoice.app.hub', self.hub))
-        self.patches[-1].start()
+        self.hub.journal.register_binding('connector-a', harness='claude', thread='thread-a', title='A')
+        self.patches = [patch('sidevoice.app.hub', self.hub)]
+        for active in self.patches: active.start()
 
     async def asyncTearDown(self):
         for active in self.patches: active.stop()
@@ -224,6 +219,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         sent = []
         client = RoomClient(session_id, self.hub)
         client.connected = True
+        client.target = {'thread_id': 'thread-a', 'title': 'A', 'binding_id': 'bind-a'}
         voice = VoiceCall(client, FakeTranscriber(results), sent.append, settings=LanguageSettings(), mic=MicSettings(),
                           choice={'provider': 'browser', 'model': 'onnx-community/whisper-tiny', 'reason': 'explicit'},
                           runtime={'model': 'onnx-community/whisper-tiny', 'device': 'webgpu'})
@@ -325,21 +321,22 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertTrue(first.connected and second.connected)
         self.assertEqual(first_socket.application_state, WebSocketState.CONNECTED)
 
-        # A microphone turn on one device moves the room's epoch on both.
+        # A microphone turn on one device is that device's alone: the other keeps its epoch and its audio.
         second.voice.turn_started()
         self.assertEqual((await self.received(second_socket, 'voice-cancel'))['data'],
                          {'session_id': second.id, 'revision': 1})
-        self.assertEqual((await self.received(first_socket, 'voice-cancel'))['data'],
-                         {'session_id': first.id, 'revision': 1})
-        self.assertEqual(second.turn_revision, 1)
-        self.assertEqual(first.turn_revision, 0)
+        await self.settled()
+        self.assertFalse(any(json.loads(raw)['type'] == 'voice-cancel' for raw in list(first_socket.sent._queue)
+                             if not isinstance(raw, (bytes, bytearray))))
+        self.assertEqual((second.turn_revision, second.revision), (1, 1))
+        self.assertEqual((first.turn_revision, first.revision), (0, 0))
 
         # One device leaving takes nothing else with it.
         await self.leave(first_socket, first_task)
         self.assertFalse(first.connected)
         self.assertTrue(second.connected)
         self.assertEqual(list(self.hub.clients), [second.id])
-        self.assertEqual(self.hub.revision, 1)
+        self.assertEqual(second.revision, 1, 'the other device kept its own epoch')
         await self.leave(second_socket, second_task)
         self.assertEqual(self.hub.clients, {})
 

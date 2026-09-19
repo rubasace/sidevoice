@@ -260,6 +260,13 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
             await transport.output().send_message(OutputTransportMessageUrgentFrame(message=message))
 
     call = RoomClient(str(uuid.uuid4()), hub)
+    wanted = hello.get('conversation')
+    if isinstance(wanted, str) and wanted:
+        # The browser names the conversation it was talking to (its own state, kept across a reload);
+        # it is honoured only if that conversation is still connected to the room.
+        record = hub.journal.binding_for_thread(wanted) if hub.journal else None
+        if record:
+            call.target = {'thread_id': wanted, 'title': record.get('title'), 'binding_id': str(uuid.uuid4())}
     provider = transcription.build(settings, choice, config=config, send=send, session_id=call.id)
     transcriber = TurnTranscriber(provider, language=None if settings.stt_language == 'auto' else settings.stt_language)
     runtime, runtime_problem = None, None

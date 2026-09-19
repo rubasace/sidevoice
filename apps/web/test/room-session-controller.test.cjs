@@ -777,3 +777,26 @@ test('The stages view lists the last turn in order with bars scaled to the longe
  assert.equal(JSON.stringify(read[4]),JSON.stringify(['Entregado → leído por la conversación','5.80 s']));
  assert.equal(JSON.stringify(read[5]),JSON.stringify(['Leído → primera respuesta','4.20 s']));
 });
+
+test('Selecting a conversation is this tab\'s own choice: it names the session, is remembered per tab and comes back on reconnect',async()=>{
+ const s=setup();const store={};const posted=[];
+ s.context.sessionStorage={getItem:k=>store[k]??null,setItem(k,v){store[k]=v},removeItem(k){delete store[k]}};s.context.window.sidevoiceUI={setParticipants(){}};
+ s.context.fetch=async(path,init)=>{posted.push([path,init?.body?JSON.parse(init.body):null]);
+  if(path.includes('/select'))return {ok:true,json:async()=>({status:'activated',binding:{thread_id:'t-1',title:'Uno',binding_id:'b-1'}})};
+  return {ok:true,json:async()=>({binding:{thread_id:'t-1',title:'Uno',binding_id:'b-1'},room:{revision:1},clients:[],call:null})}};
+ s.run("sessionId='sess-1';ws={readyState:1};roomBinding=null;people=[{thread_id:'t-1',title:'Uno',available:true,reach:{state:'listening'}},{thread_id:'t-2',title:'Dos',available:true,reach:{state:'listening'}}]");
+ await s.run('select')('t-1');
+ const select=posted.find(([path])=>path.endsWith('/api/presentation/select'));
+ assert.deepEqual(select[1],{thread_id:'t-1',session_id:'sess-1'},'the room is told which browser chose');
+ assert.equal(store['sidevoice.selected'],'t-1','remembered for this tab only');
+ assert.equal(s.run('rememberedThread')(),'t-1');
+ // A new socket for this tab (reload, reconnect) goes back to the same conversation and never picks another.
+ posted.length=0;s.run("roomBinding=null;sessionId='sess-2'");
+ assert.equal(await s.run('reselectRemembered')(),true);
+ assert.deepEqual(posted.find(([path])=>path.endsWith('/api/presentation/select'))[1],{thread_id:'t-1',session_id:'sess-2'});
+ // With two conversations listening and nothing remembered, the tab chooses nothing by itself.
+ delete store['sidevoice.selected'];posted.length=0;s.run("roomBinding=null");
+ assert.equal(await s.run('reselectRemembered')(),false);
+ assert.equal(await s.run('selectOnlyListeningConversation')(),false);
+ assert.equal(posted.some(([path])=>path.endsWith('/api/presentation/select')),false);
+});

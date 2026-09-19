@@ -12,20 +12,15 @@ listener wants to hear. See `docs/MULTI_CLIENT_ROOM.md`.
 """
 import asyncio
 import json
-import os
 import uuid
 from collections import deque
-from pathlib import Path
 
 from fastapi import HTTPException
 from pipecat.frames.frames import InterruptionFrame
 
 from .latency import CallLatency
-from .paths import RUNTIME_ROOT
 from .pipeline_frames import PresentationBoundary, PresentationSpeech
 from .synthesis_cache import SynthesisCache
-
-BINDING = Path(os.getenv('VOICE_PRESENTATION_BINDING_FILE', str(RUNTIME_ROOT / 'presentation.json')))
 
 # A client's own playback verdict, past which no later event of its own may move it.
 CLIENT_TERMINAL = {'interrupted', 'failed', 'disconnected', 'playback_finished'}
@@ -33,14 +28,6 @@ CLIENT_TERMINAL = {'interrupted', 'failed', 'disconnected', 'playback_finished'}
 RANK = {'disconnected': 1, 'failed': 2, 'interrupted': 3, 'queued': 4,
         'waiting_for_turn': 5, 'waiting_for_pause': 5, 'synthesizing': 6,
         'playing': 7, 'playback_finished': 8}
-
-
-def binding():
-    try:
-        data = json.loads(BINDING.read_text())
-        return {key: data.get(key) for key in ('thread_id', 'title', 'binding_id')}
-    except (OSError, ValueError, KeyError):
-        return None
 
 
 class Utterance:
@@ -102,9 +89,14 @@ class RoomClient:
         self.quiet_until = 0
         self.dispatch_timer = None
         self.audio_grace_seconds = 2.0
-        self.turn_target = dict(room.target) if room else {}
-        self.turn_revision = room.revision if room else 0
-        self.turn_binding_id = (room.target if room else {}).get('binding_id')
+        # Which conversation this browser talks to is this browser's own state (issue: the room
+        # used to hold one selection for everyone). The room only routes.
+        self.target = {}
+        self.revision = 0          # this browser's turn epoch; only its own turns and selections advance it
+        self.switching = False
+        self.turn_target = {}
+        self.turn_revision = 0
+        self.turn_binding_id = None
         self.cancelled_turn = None
         self.on_input_receipt = None
         self.on_browser_event = None
@@ -119,15 +111,6 @@ class RoomClient:
             room.join(self)
 
     # ----- identity and reporting -----
-
-    @property
-    def target(self):
-        return self.room.target if self.room else {}
-
-    @property
-    def revision(self):
-        """The room epoch this client is living in. Only the room advances it."""
-        return self.room.revision if self.room else 0
 
     @property
     def journal(self):
@@ -211,7 +194,7 @@ class RoomClient:
 
     async def finish_user_turn(self):
         self.speaking = False
-        self.room.quiet_all()
+        self.room.quiet(self)
         await self.room.dispatch_all()
 
     # ----- playback, which is this browser's alone -----
@@ -377,9 +360,6 @@ class Room:
         self.clients = {}
         self.sessions = deque(maxlen=64)   # ids we have known, so an older reply can be told apart
         self.utterances = {}
-        self.revision = 0
-        self.switching = False
-        self.target = binding() or {}
         self.journal = journal
         self.assets = assets if assets is not None else SynthesisCache()
         self.activation_lock = asyncio.Lock()
@@ -399,9 +379,6 @@ class Room:
         if len(self.clients) >= self.MAX_CLIENTS:
             raise RuntimeError('La sala ya tiene el máximo de navegadores conectados.')
         client.room = self
-        client.turn_target = dict(self.target)
-        client.turn_revision = self.revision
-        client.turn_binding_id = self.target.get('binding_id')
         self.clients[client.id] = client
         if client.id not in self.sessions:
             self.sessions.append(client.id)
@@ -412,7 +389,7 @@ class Room:
         client.closed = True
         if self.clients.get(client.id) is client:
             del self.clients[client.id]
-        # The room, its target, its revision and every other browser survive this.
+        # The room and every other browser survive this; the selection left with the browser that held it.
         client.halt('disconnected', 'call_ended', announce=False)
 
     def listeners(self):
@@ -422,28 +399,23 @@ class Room:
     def speaking(self):
         return any(client.speaking for client in self.clients.values())
 
-    @property
-    def turn_revision(self):
-        return max((client.turn_revision for client in self.clients.values()), default=0)
+    def audience(self, thread_id):
+        """The connected browsers whose selected conversation is this one."""
+        return [client for client in self.listeners() if thread_id and client.target.get('thread_id') == thread_id]
 
-    # ----- the room epoch -----
+    # ----- a browser's turn epoch -----
 
     def begin_turn(self, client):
-        self.revision += 1
+        """A browser's own turn interrupts that browser's playback and nobody else's."""
+        client.revision += 1
         client.speaking = True
-        client.turn_target = dict(self.target)
-        client.turn_revision = self.revision
-        client.turn_binding_id = self.target.get('binding_id')
-        self.invalidate('interrupted', 'user_interrupted', preserve_waiting=True)
+        client.turn_target = dict(client.target)
+        client.turn_revision = client.revision
+        client.turn_binding_id = client.target.get('binding_id')
+        client.halt('interrupted', 'user_interrupted', preserve_waiting=True)
 
-    def invalidate(self, status, reason=None, preserve_waiting=False):
-        for client in list(self.clients.values()):
-            client.halt(status, reason, preserve_waiting=preserve_waiting)
-
-    def quiet_all(self):
-        now = asyncio.get_running_loop().time()
-        for client in self.clients.values():
-            client.quiet_until = now + client.audio_grace_seconds
+    def quiet(self, client):
+        client.quiet_until = asyncio.get_running_loop().time() + client.audio_grace_seconds
 
     async def dispatch_all(self):
         await self.fan_out(self.listeners())
@@ -486,17 +458,20 @@ class Room:
             return previous.result(session_id)
         if session_id not in self.sessions:
             raise HTTPException(409, 'La llamada cambió; esta respuesta pertenece a otra sesión.')
-        if revision != self.revision:
-            raise HTTPException(409, 'Respuesta obsoleta: el usuario ya inició otro turno.')
-        listeners = self.listeners()
-        if not listeners or self.switching:
+        asker = self.clients.get(session_id)
+        if not asker or not asker.connected or asker.switching:
             raise HTTPException(409, 'No hay llamada conectada; no se guarda audio para más tarde.')
-        if self.speaking and not wait_for_quiet:
+        if revision != asker.revision:
+            raise HTTPException(409, 'Respuesta obsoleta: el usuario ya inició otro turno.')
+        thread_id = thread_id or asker.target.get('thread_id')
+        listeners = self.audience(thread_id)
+        if asker not in listeners:
+            raise HTTPException(409, 'Ese navegador ya no está en esa conversación.')
+        if asker.speaking and not wait_for_quiet:
             raise HTTPException(409, 'El usuario está hablando. Espera su mensaje antes de responder.')
         if len(self.utterances) >= self.MAX_UTTERANCES or any(len(c.pending) >= self.MAX_PENDING for c in listeners):
             raise HTTPException(429, 'Cola o historial de locuciones lleno.')
-        utterance = Utterance(utterance_id, text, language=language,
-                              thread_id=thread_id or self.target.get('thread_id'), revision=revision,
+        utterance = Utterance(utterance_id, text, language=language, thread_id=thread_id, revision=revision,
                               row_id=row_id or (session_id + ':voice:' + utterance_id))
         for client in listeners:
             utterance.clients[client.id] = {
@@ -512,25 +487,28 @@ class Room:
     async def publish(self, payload):
         row_id = payload.session_id + ':voice:' + payload.utterance_id
         # Store the conversational text even if its audio epoch has expired.
-        name = (self.target.get('title') if self.target.get('thread_id') == payload.thread_id else None) or 'Conversación'
+        asker = self.clients.get(payload.session_id)
+        record = self.journal.binding_for_thread(payload.thread_id) if self.journal else None
+        name = (record or {}).get('title') or (
+            asker.target.get('title') if asker and asker.target.get('thread_id') == payload.thread_id else None) or 'Conversación'
         record = self.journal.put(id=row_id, thread=payload.thread_id, role='assistant',
                                   text=payload.text, name=name, session=payload.session_id,
                                   revision=payload.revision, status='text_only', language=payload.language)
         if record.get('_existing'):
             return {'status': record['status'], 'text_saved': True, 'utterance_id': payload.utterance_id}
-        # Every listener traces the same reply on its own clock.
-        for client in self.listeners():
+        # Every browser on that conversation traces the same reply on its own clock.
+        for client in self.audience(payload.thread_id):
             client.latency.reply(payload.utterance_id, payload.thread_id, payload.revision)
         reason = None
-        if not self.listeners():
-            reason = 'call_ended'
-        elif payload.session_id not in self.sessions:
+        if payload.session_id not in self.sessions:
             reason = 'session_changed'
-        elif self.target.get('thread_id') != payload.thread_id or self.switching:
+        elif not asker or not asker.connected:
+            reason = 'call_ended'
+        elif asker.target.get('thread_id') != payload.thread_id or asker.switching:
             reason = 'focus_changed'
-        elif payload.revision != self.revision:
-            reason = 'newer_turn' if self.turn_revision > payload.revision else 'focus_changed'
-        elif self.speaking:
+        elif payload.revision != asker.revision:
+            reason = 'newer_turn' if asker.turn_revision > payload.revision else 'focus_changed'
+        elif asker.speaking:
             reason = 'user_speaking'
         may_wait = reason in {'newer_turn', 'user_speaking'}
         if reason and not may_wait:
@@ -538,7 +516,7 @@ class Room:
             return {'status': 'text_only', 'text_saved': True, 'reason': reason}
         try:
             result = await self.speak(payload.text, payload.utterance_id, payload.session_id,
-                                      self.revision if may_wait else payload.revision, payload.language,
+                                      asker.revision if may_wait else payload.revision, payload.language,
                                       wait_for_quiet=may_wait, thread_id=payload.thread_id, row_id=row_id)
         except HTTPException as error:
             if error.status_code not in {409, 429}:
@@ -560,20 +538,20 @@ class Room:
             return {'accepted': True, 'id': row_id, 'revision': previous['revision']}
         client = self.clients.get(session_id)
         if (not client or not client.connected
-                or self.target.get('thread_id') != thread_id
-                or self.target.get('binding_id') != binding_id):
+                or client.target.get('thread_id') != thread_id
+                or client.target.get('binding_id') != binding_id):
             raise HTTPException(409, 'La conexión o conversación cambió. El texto no se envió.')
         if not text.strip():
             raise HTTPException(422, 'Escribe un mensaje.')
-        # Typed submissions get their own turn without changing anyone's ongoing mic turn.
-        self.revision += 1
-        self.invalidate('interrupted', 'user_interrupted', preserve_waiting=True)
-        client.enqueue_input(text, target=dict(self.target), revision=self.revision,
+        # A typed submission is this browser's own turn: it interrupts this browser's playback only.
+        client.revision += 1
+        client.halt('interrupted', 'user_interrupted', preserve_waiting=True)
+        client.enqueue_input(text, target=dict(client.target), revision=client.revision,
                              message_id=message_id, history_id=row_id)
-        if not self.speaking:
-            self.quiet_all()
-        await self.dispatch_all()
-        return {'accepted': True, 'id': row_id, 'revision': self.revision}
+        if not client.speaking:
+            self.quiet(client)
+        await self.fan_out([client])
+        return {'accepted': True, 'id': row_id, 'revision': client.revision}
 
     def delivery_status(self, row_id, status):
         # Receipts go to the browser that produced the input and to no other:
@@ -586,7 +564,7 @@ class Room:
         if not client or not client.connected:
             return
         client.input_receipt(payload, status)
-        if status == 'delivered' and self.target.get('thread_id') == payload.get('thread_id'):
+        if status == 'delivered' and client.target.get('thread_id') == payload.get('thread_id'):
             client.sent += 1
 
     # ----- which conversation the room is pointed at -----
@@ -609,47 +587,52 @@ class Room:
             for row in self.journal.pending():
                 if row['thread'] == thread_id:
                     self.journal.update(row['id'], 'not_sent', 'channel_closed')
-            for client in self.clients.values():
+            for client in list(self.clients.values()):
                 if client.turn_target.get('thread_id') == thread_id:
                     client.cancelled_turn = client.turn_revision
-            if (binding() or {}).get('thread_id') == thread_id:
-                await self._activate({})
+                if client.target.get('thread_id') == thread_id:
+                    await self._retarget(client, {})
             return {'status': 'closed', 'binding_id': record['id'] if record else None}
 
-    async def activate(self, target):
+    async def select(self, session_id, thread_id, title=None):
+        """One browser chooses which conversation it talks to. No other browser moves."""
+        client = self.clients.get(session_id)
+        if not client or not client.connected:
+            raise HTTPException(409, 'Ese navegador no está en la sala.')
         async with self.activation_lock:
-            return await self._activate(target)
+            current = client.target
+            if current.get('thread_id') == thread_id and (not title or current.get('title') == title):
+                return {'status': 'already_active', 'binding': dict(current)}
+            new = await self._retarget(client, {'thread_id': thread_id, 'title': title})
+            return {'status': 'activated', 'binding': new}
 
-    async def _activate(self, target):
-        current = binding()
-        if current and current.get('thread_id') == target.get('thread_id') and (not target.get('title') or current.get('title') == target.get('title')):
-            self.target = current
-            return {'status': 'already_active', 'binding': current}
-        new = {key: target.get(key) for key in ('thread_id', 'title')}
-        new['binding_id'] = str(uuid.uuid4())
-        BINDING.parent.mkdir(parents=True, exist_ok=True)
-        temporary = BINDING.with_name(BINDING.name + '.' + new['binding_id'] + '.tmp')
-        temporary.write_text(json.dumps(new))
+    async def deselect(self, session_id, binding_id):
+        client = self.clients.get(session_id)
+        if not client or not client.connected:
+            raise HTTPException(409, 'Ese navegador no está en la sala.')
+        async with self.activation_lock:
+            if binding_id != client.target.get('binding_id'):
+                raise HTTPException(409, 'La conversación cambió. Actualiza la sala.')
+            return {'status': 'activated', 'binding': await self._retarget(client, {})}
+
+    async def _retarget(self, client, target):
+        """Move one browser to another conversation (or to none): its own playback stops, its own epoch advances."""
+        new = {'thread_id': target.get('thread_id'), 'title': target.get('title'), 'binding_id': str(uuid.uuid4())}
         try:
-            self.switching = True
-            self.revision += 1
-            self.invalidate('interrupted', 'focus_changed')
-            for client in self.clients.values():
-                # Interrupt only the audio pipelines; every browser and the task work survive.
-                if client.worker is not None:
-                    await client.worker.queue_frame(InterruptionFrame())
-                else:
-                    client.speaking = False
-            temporary.replace(BINDING)
-            self.target = new
-            for client in self.clients.values():
-                client.sent = 0
-                client.last_delivery = None
-                client.error = None
+            client.switching = True
+            client.revision += 1
+            client.halt('interrupted', 'focus_changed')
+            if client.worker is not None:
+                await client.worker.queue_frame(InterruptionFrame())
+            else:
+                client.speaking = False
+            client.target = new
+            client.sent = 0
+            client.last_delivery = None
+            client.error = None
         finally:
-            self.switching = False
-            temporary.unlink(missing_ok=True)
-        return {'status': 'activated', 'binding': new}
+            client.switching = False
+        return dict(new)
 
     # ----- reporting -----
 
@@ -657,8 +640,9 @@ class Room:
         # `call` is the asking browser's own state; a page that has not joined,
         # or asks about someone else, is told about the room and nothing more.
         client = self.clients.get(session_id)
-        return {'binding': binding(),
-                'room': {'revision': self.revision, 'speaking': self.speaking, 'switching': self.switching,
+        return {'binding': (dict(client.target) if client.target.get('thread_id') else None) if client else None,
+                'room': {'revision': client.revision if client else 0, 'speaking': client.speaking if client else self.speaking,
+                         'switching': client.switching if client else False,
                          'clients': len(self.clients), 'audio': self.assets.stats(),
                          'utterances': [u.snapshot() for u in self.utterances.values()]},
                 'clients': [c.identity() for c in self.clients.values()],

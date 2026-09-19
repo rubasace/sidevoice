@@ -103,10 +103,11 @@ class LatencyIntegrationTest(unittest.IsolatedAsyncioTestCase):
         from sidevoice.presentation import Speech
         from sidevoice.room import Room, RoomClient
         hub = Room(MagicMock())
-        hub.target = {'thread_id': 'a'}
         hub.journal.put.return_value = {}
+        hub.journal.binding_for_thread.return_value = None
         call = RoomClient('s', hub, worker=AsyncMock())
         call.connected = True
+        call.target = {'thread_id': 'a'}
         events = []
         call.on_browser_event = events.append
         call.user_started()
@@ -135,10 +136,10 @@ class LatencyIntegrationTest(unittest.IsolatedAsyncioTestCase):
         from sidevoice.presentation import mount_presentation
         from sidevoice.room import Room, RoomClient, Utterance
         hub = Room(MagicMock())
-        hub.target = {'thread_id': 'a'}
-        hub.revision = 2
         call = RoomClient('s', hub, worker=AsyncMock())
         call.connected = True
+        call.target = {'thread_id': 'a'}
+        call.revision = 2
         call.on_browser_event = lambda event: None
         call.active = 'u'
         utterance = Utterance('u', 'texto', thread_id='a', revision=2, row_id='s:voice:u')
