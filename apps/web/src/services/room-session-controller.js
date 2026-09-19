@@ -282,7 +282,8 @@ function statsMedian(values){
 }
 function statsCell(tag,value){const node=document.createElement(tag);node.textContent=String(value??'—');return node}
 function renderLatencyStats(snapshot,thread){
- const replies=(Array.isArray(snapshot?.replies)?snapshot.replies:[]).filter(r=>r&&r.thread_id===thread);
+ const measured=(Array.isArray(snapshot?.replies)?snapshot.replies:[]).filter(Boolean);
+ const replies=measured.filter(r=>r.thread_id===thread);
  const firstReplies=new Map();
  for(const reply of replies){const key=reply.reply_revision,value=reply.server_ms?.input_queued_to_reply_received_ms;
   if(statsNumber(value)&&(!firstReplies.has(key)||value<firstReplies.get(key)))firstReplies.set(key,value)}
@@ -304,19 +305,21 @@ function renderLatencyStats(snapshot,thread){
  $('stats-rows').replaceChildren(...rows);
  $('stats-empty').textContent=replies.length?'':'Aún no hay respuestas medidas para esta conversación.';
  renderLatencyStages(replies.at(-1));
+ renderLatencyAggregates(measured);
 }
 // The last turn, stage by stage in the order they happen; each measured on its own clock, so bars compare, they do not add up.
+// The third entry is the stage's stable name: it identifies the row in the aggregates and is what a metric will be called.
 const LATENCY_STAGES=[
- ['Silencio hasta cerrar el turno',r=>r.input_ms?.endpoint_silence_ms],
- ['Turno cerrado → texto',r=>r.input_ms?.recognition_ms],
- ['Whisper en este navegador',r=>r.input_ms?.request_to_transcript_ms],
- ['Texto → entregado al agente',r=>r.input_ms?.transcript_to_delivery_ms],
- ['Entregado → leído por la conversación',r=>r.server_ms?.delivery_accepted_to_read_ms??r.server_ms?.input_queued_to_read_ms],
- ['Leído → primera respuesta',r=>r.server_ms?.read_to_reply_received_ms],
- ['Agente: entrega → primera respuesta',r=>r.server_ms?.input_queued_to_reply_received_ms],
- ['Respuesta → inicio de síntesis',r=>r.server_ms?.reply_received_to_synthesis_started_ms],
- ['Síntesis en el proveedor',r=>r.provider_ms?.request_to_complete_ms],
- ['Audio recibido → reproducción',r=>r.browser_ms?.audio_received_to_playback_scheduled_ms],
+ ['Silencio hasta cerrar el turno',r=>r.input_ms?.endpoint_silence_ms,'endpoint_silence'],
+ ['Turno cerrado → texto',r=>r.input_ms?.recognition_ms,'recognition'],
+ ['Whisper en este navegador',r=>r.input_ms?.request_to_transcript_ms,'request_to_transcript'],
+ ['Texto → entregado al agente',r=>r.input_ms?.transcript_to_delivery_ms,'transcript_to_delivery'],
+ ['Entregado → leído por la conversación',r=>r.server_ms?.delivery_accepted_to_read_ms??r.server_ms?.input_queued_to_read_ms,'delivery_to_read'],
+ ['Leído → primera respuesta',r=>r.server_ms?.read_to_reply_received_ms,'read_to_reply'],
+ ['Agente: entrega → primera respuesta',r=>r.server_ms?.input_queued_to_reply_received_ms,'input_queued_to_reply'],
+ ['Respuesta → inicio de síntesis',r=>r.server_ms?.reply_received_to_synthesis_started_ms,'reply_to_synthesis'],
+ ['Síntesis en el proveedor',r=>r.provider_ms?.request_to_complete_ms,'provider_synthesis'],
+ ['Audio recibido → reproducción',r=>r.browser_ms?.audio_received_to_playback_scheduled_ms,'audio_received_to_playback'],
 ];
 function renderLatencyStages(reply){
  const list=$('stats-stages');if(!list)return;list.replaceChildren();
@@ -324,6 +327,82 @@ function renderLatencyStages(reply){
  const values=LATENCY_STAGES.map(([label,pick])=>[label,pick(reply)]),max=Math.max(1,...values.map(([,v])=>statsNumber(v)?v:0));
  for(const [label,value] of values){const item=document.createElement('li');const name=document.createElement('span');name.textContent=label;const bar=document.createElement('i');if(statsNumber(value))bar.style.width=Math.max(1,Math.round(value/max*100))+'%';else bar.hidden=true;const amount=document.createElement('b');amount.textContent=statsDuration(value);item.append(name,bar,amount);list.append(item)}
  $('stats-stages-note').textContent='Turno '+reply.reply_revision+' · el tramo más largo marca la escala.';
+}
+// Aggregates over the whole call, from the same snapshot the dialog already polls. Percentiles are
+// nearest-rank: every number shown is a measurement that happened, never an interpolation between two.
+// A stage nobody measured keeps its row with no numbers; a missing observation is never a zero.
+function statsPercentile(sorted,fraction){
+ return sorted.length?sorted[Math.min(sorted.length-1,Math.max(0,Math.ceil(fraction*sorted.length)-1))]:null;
+}
+function statsSummary(values){
+ const sample=(Array.isArray(values)?values:[]).filter(statsNumber).sort((a,b)=>a-b),count=sample.length;
+ if(!count)return {count:0,mean:null,p50:null,p90:null,max:null};
+ return {count,mean:sample.reduce((total,value)=>total+value,0)/count,p50:statsPercentile(sample,0.5),p90:statsPercentile(sample,0.9),max:sample[count-1]};
+}
+function statsAggregate(replies,stages=LATENCY_STAGES){
+ const measured=(Array.isArray(replies)?replies:[]).filter(Boolean);
+ return stages.map(([label,pick,key])=>({key,label,...statsSummary(measured.map(reply=>pick(reply)))}));
+}
+const AGGREGATE_COLUMNS=['Tramo','n','Media','p50','p90','Máx'];
+function statsThreads(replies){return [...new Set(replies.map(reply=>reply.thread_id).filter(Boolean))]}
+function statsConversationName(threadId){return people.find(person=>person.thread_id===threadId)?.title||threadId}
+function statsAggregateCaption(count){return count+(count===1?' respuesta medida':' respuestas medidas')}
+function statsAggregateTable(caption,rows){
+ const wrap=document.createElement('div');wrap.className='stats-table-wrap';
+ const table=document.createElement('table');table.className='stats-table';
+ const title=document.createElement('caption');title.textContent=caption;
+ const head=document.createElement('thead'),headRow=document.createElement('tr');
+ headRow.append(...AGGREGATE_COLUMNS.map(text=>statsCell('th',text)));head.append(headRow);
+ const body=document.createElement('tbody');
+ for(const row of rows){
+  const line=document.createElement('tr');
+  line.append(statsCell('td',row.label),statsCell('td',row.count||'—'),...[row.mean,row.p50,row.p90,row.max].map(value=>statsCell('td',statsDuration(value))));
+  body.append(line);
+ }
+ table.append(title,head,body);wrap.append(table);return wrap;
+}
+// Whatever the dialog is aggregating right now, so the copy button and the tables never disagree.
+let statsReplies=[];
+function renderLatencyAggregates(replies){
+ const host=$('stats-aggregates');if(!host)return;
+ statsReplies=(Array.isArray(replies)?replies:[]).filter(Boolean);
+ $('stats-aggregates-copied').textContent='';
+ $('stats-aggregates-copy').disabled=!statsReplies.length;
+ if(!statsReplies.length){host.replaceChildren();$('stats-aggregates-note').textContent='Aún no hay respuestas medidas en esta llamada.';return}
+ const threads=statsThreads(statsReplies);
+ const tables=[statsAggregateTable('Toda la sesión · '+statsAggregateCaption(statsReplies.length),statsAggregate(statsReplies))];
+ // The agent side dominates and differs per harness, so a call that talked to two conversations gets one table each.
+ if(threads.length>1)for(const thread of threads){
+  const own=statsReplies.filter(reply=>reply.thread_id===thread);
+  tables.push(statsAggregateTable(statsConversationName(thread)+' · '+statsAggregateCaption(own.length),statsAggregate(own)));
+ }
+ host.replaceChildren(...tables);
+ $('stats-aggregates-note').textContent='Recuento, media, p50, p90 y máximo por tramo sobre '+statsAggregateCaption(statsReplies.length)+'. Los tramos se solapan: no se deben sumar. Percentiles por rango más cercano.';
+}
+function statsTextTable(caption,rows){
+ const cells=[AGGREGATE_COLUMNS,...rows.map(row=>[row.label,row.count?String(row.count):'—',statsDuration(row.mean),statsDuration(row.p50),statsDuration(row.p90),statsDuration(row.max)])];
+ const widths=AGGREGATE_COLUMNS.map((_,column)=>Math.max(...cells.map(row=>row[column].length)));
+ const line=row=>row.map((cell,column)=>column?cell.padStart(widths[column]):cell.padEnd(widths[column])).join('  ').trimEnd();
+ return [caption,line(cells[0]),widths.map(width=>'-'.repeat(width)).join('  '),...cells.slice(1).map(line)].join('\n');
+}
+function statsAggregatesText(replies){
+ const measured=(Array.isArray(replies)?replies:[]).filter(Boolean),threads=statsThreads(measured);
+ const blocks=[statsTextTable('Toda la sesión · '+statsAggregateCaption(measured.length),statsAggregate(measured))];
+ if(threads.length>1)for(const thread of threads){
+  const own=measured.filter(reply=>reply.thread_id===thread);
+  blocks.push(statsTextTable(statsConversationName(thread)+' · '+statsAggregateCaption(own.length),statsAggregate(own)));
+ }
+ return ['Sidevoice · agregados de latencia · los tramos se solapan, no se suman',...blocks].join('\n\n');
+}
+async function copyLatencyAggregates(){
+ const status=$('stats-aggregates-copied');
+ if(!statsReplies.length){status.textContent='Aún no hay nada que copiar.';return}
+ try{
+  const clipboard=globalThis.navigator?.clipboard;
+  if(!clipboard?.writeText)throw Error('sin portapapeles');
+  await clipboard.writeText(statsAggregatesText(statsReplies));
+  status.textContent='Copiado como texto.';
+ }catch{status.textContent='Este navegador no dejó copiar; selecciona la tabla a mano.'}
 }
 // The output's notable moments go to the room, so a phone that gets stuck can be read from the other end.
 const REPORTED_OUTPUT_EVENTS=new Set(['cancel','stall','fail','complete','attach-refused','resume-refused','element-refused','audio-while-stopped','unlock-refused']);
@@ -426,6 +505,7 @@ function openConnectionStats(){
  if(!$('connection-stats').open)$('connection-stats').showModal();
  return refreshConnectionStats();
 }
+$('stats-aggregates-copy').onclick=copyLatencyAggregates;
 $('stats-open').onclick=openConnectionStats;
 $('stats-close').onclick=()=>$('connection-stats').close();
 $('stats-refresh').onclick=()=>{clearTimeout(statsTimer);return refreshConnectionStats()};

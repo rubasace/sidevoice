@@ -778,6 +778,94 @@ test('The stages view lists the last turn in order with bars scaled to the longe
  assert.equal(JSON.stringify(read[5]),JSON.stringify(['Leído → primera respuesta','4.20 s']));
 });
 
+test('Aggregates summarize with nearest-rank percentiles and never turn a missing value into a zero',()=>{
+ const s=setup();
+ assert.equal(JSON.stringify(s.run('statsSummary([400,100,300,200])')),JSON.stringify({count:4,mean:250,p50:200,p90:400,max:400}));
+ assert.equal(JSON.stringify(s.run('statsSummary([700])')),JSON.stringify({count:1,mean:700,p50:700,p90:700,max:700}));
+ // Nearest rank: p50 and p90 are values that were measured, never the midpoint between two of them.
+ assert.equal(s.run('statsSummary([10,20,30,40,50,60,70,80,90,100]).p90'),90);
+ assert.equal(s.run('statsSummary([10,20,30,40,50,60,70,80,90,100,110]).p90'),100);
+ assert.equal(s.run('statsSummary([10,20,30]).p50'),20);
+ // Whatever is not a finite, non-negative number is not an observation, so it does not enter the sample.
+ assert.equal(JSON.stringify(s.run("statsSummary([null,undefined,NaN,Infinity,-1,'20',true,20])")),JSON.stringify({count:1,mean:20,p50:20,p90:20,max:20}));
+ assert.equal(JSON.stringify(s.run('statsSummary([])')),JSON.stringify({count:0,mean:null,p50:null,p90:null,max:null}));
+ assert.equal(JSON.stringify(s.run('statsSummary(null)')),JSON.stringify({count:0,mean:null,p50:null,p90:null,max:null}));
+ assert.equal(JSON.stringify(s.run('statsSummary([0,0])')),JSON.stringify({count:2,mean:0,p50:0,p90:0,max:0}),'a measured zero is a measurement');
+});
+test('Aggregates keep one row per stage, named as the last-turn view names them',()=>{
+ const s=setup();
+ const rows=s.run(`statsAggregate([
+ {thread_id:'a',input_ms:{endpoint_silence_ms:600,recognition_ms:400},server_ms:{input_queued_to_reply_received_ms:3000,input_queued_to_read_ms:900},provider_ms:{request_to_complete_ms:200}},
+ {thread_id:'a',input_ms:{endpoint_silence_ms:1000},server_ms:{input_queued_to_reply_received_ms:9000,delivery_accepted_to_read_ms:100}},
+ null
+ ]).map(row=>[row.key,row.count,row.mean,row.p50,row.p90,row.max])`);
+ assert.equal(rows.length,s.run('LATENCY_STAGES.length'),'every stage keeps its row');
+ assert.equal(JSON.stringify(rows[0]),JSON.stringify(['endpoint_silence',2,800,600,1000,1000]));
+ assert.equal(JSON.stringify(rows[1]),JSON.stringify(['recognition',1,400,400,400,400]));
+ assert.equal(JSON.stringify(rows[2]),JSON.stringify(['request_to_transcript',0,null,null,null,null]),'a stage nobody measured stays empty, not zero');
+ assert.equal(JSON.stringify(rows[4]),JSON.stringify(['delivery_to_read',2,500,100,900,900]),'the read stage falls back to queued → read, as the last-turn view does');
+ assert.equal(JSON.stringify(rows[6]),JSON.stringify(['input_queued_to_reply',2,6000,3000,9000,9000]));
+ assert.equal(s.run("statsAggregate([]).every(row=>row.count===0&&row.max===null)"),true);
+});
+test('The aggregates section covers the whole session and splits per conversation only when there was more than one',()=>{
+ const s=setup();
+ const snapshot=`{replies:[
+ {thread_id:'a',reply_revision:1,input_ms:{endpoint_silence_ms:600},server_ms:{input_queued_to_reply_received_ms:3000}},
+ {thread_id:'a',reply_revision:2,input_ms:{endpoint_silence_ms:1000},server_ms:{input_queued_to_reply_received_ms:9000}},
+ {thread_id:'b',reply_revision:3,server_ms:{input_queued_to_reply_received_ms:21000}}
+ ]}`;
+ s.run("people=[{thread_id:'a',title:'Claude'},{thread_id:'b',title:'Astra'}]");
+ s.run('renderLatencyStats('+snapshot+",'a')");
+ const captions=s.run("$('stats-aggregates').children.map(wrap=>wrap.children[0].children[0].textContent)");
+ assert.equal(JSON.stringify(captions),JSON.stringify(['Toda la sesión · 3 respuestas medidas','Claude · 2 respuestas medidas','Astra · 1 respuesta medida']));
+ const header=s.run("$('stats-aggregates').children[0].children[0].children[1].children[0].children.map(cell=>cell.textContent)");
+ assert.equal(JSON.stringify(header),JSON.stringify(['Tramo','n','Media','p50','p90','Máx']));
+ const session=s.run("$('stats-aggregates').children[0].children[0].children[2].children.map(row=>row.children.map(cell=>cell.textContent))");
+ assert.equal(session.length,s.run('LATENCY_STAGES.length'));
+ assert.equal(JSON.stringify(session[0]),JSON.stringify(['Silencio hasta cerrar el turno','2','800 ms','600 ms','1.00 s','1.00 s']));
+ assert.equal(JSON.stringify(session[6]),JSON.stringify(['Agente: entrega → primera respuesta','3','11.00 s','9.00 s','21.00 s','21.00 s']),'the session table counts every conversation, not the selected one');
+ assert.equal(JSON.stringify(session[2]),JSON.stringify(['Whisper en este navegador','—','—','—','—','—']),'what nobody measured stays a dash');
+ assert.match(s.run("$('stats-aggregates-note').textContent"),/no se deben sumar/);
+ assert.equal(s.run("$('stats-aggregates-copy').disabled"),false);
+ // One conversation, one table.
+ s.run("renderLatencyStats({replies:[{thread_id:'a',reply_revision:1,server_ms:{input_queued_to_reply_received_ms:3000}}]},'a')");
+ assert.equal(s.run("$('stats-aggregates').children.length"),1);
+ // No call, nothing measured: no invented rows and nothing to copy.
+ s.run('renderLatencyStats(null,null)');
+ assert.equal(s.run("$('stats-aggregates').children.length"),0);
+ assert.match(s.run("$('stats-aggregates-note').textContent"),/Aún no hay respuestas medidas/);
+ assert.equal(s.run("$('stats-aggregates-copy').disabled"),true);
+});
+test('Copying the aggregates puts a plain-text table on the clipboard and says so',async()=>{
+ const s=setup();const copied=[];
+ s.context.navigator={clipboard:{writeText:async text=>{copied.push(text)}}};
+ s.run("people=[{thread_id:'a',title:'Claude'},{thread_id:'b',title:'Astra'}]");
+ s.run(`renderLatencyStats({replies:[
+ {thread_id:'a',reply_revision:1,input_ms:{endpoint_silence_ms:600},server_ms:{input_queued_to_reply_received_ms:3000}},
+ {thread_id:'b',reply_revision:2,server_ms:{input_queued_to_reply_received_ms:21000}}
+ ]},'a')`);
+ await s.run('copyLatencyAggregates()');
+ assert.equal(copied.length,1);
+ const lines=copied[0].split('\n');
+ assert.match(lines[0],/no se suman/);
+ assert.match(lines[3],/^Tramo +n +Media +p50 +p90 +Máx$/);
+ assert.match(lines[5],/^Silencio hasta cerrar el turno +1 +600 ms +600 ms +600 ms +600 ms$/);
+ assert.equal(lines[3].length,lines[5].length,'the columns line up so the table reads as a table');
+ assert.match(lines[4],/^-+ +-+ +-+ +-+ +-+ +-+$/);
+ assert.match(copied[0],/Toda la sesión · 2 respuestas medidas/);
+ assert.match(copied[0],/Claude · 1 respuesta medida/);
+ assert.match(copied[0],/Astra · 1 respuesta medida/);
+ assert.equal(s.run("$('stats-aggregates-copied').textContent"),'Copiado como texto.');
+ // A browser that refuses the clipboard says so instead of pretending it copied.
+ s.context.navigator={};
+ await s.run('copyLatencyAggregates()');
+ assert.match(s.run("$('stats-aggregates-copied').textContent"),/no dejó copiar/);
+ s.run('renderLatencyStats(null,null)');
+ await s.run('copyLatencyAggregates()');
+ assert.equal(copied.length,1,'nothing measured, nothing copied');
+ assert.match(s.run("$('stats-aggregates-copied').textContent"),/nada que copiar/);
+});
+
 test('Selecting a conversation is this tab\'s own choice: it names the session, is remembered per tab and comes back on reconnect',async()=>{
  const s=setup();const store={};const posted=[];
  s.context.sessionStorage={getItem:k=>store[k]??null,setItem(k,v){store[k]=v},removeItem(k){delete store[k]}};s.context.window.sidevoiceUI={setParticipants(){}};

@@ -18,6 +18,16 @@ The table shows the last 12 responses, including follow-ups and failures, withou
 summing overlapping intervals. Missing observations appear as a dash. Older
 servers without this endpoint show an explicit upgrade/restart message.
 
+**Agregados de la sesión** summarizes the same snapshot: count, mean, p50, p90 and
+maximum per stage, over every reply the call has measured, not only the selected
+conversation. When the call talked to more than one conversation there is a table
+per conversation as well, because the agent side dominates and differs per harness.
+Percentiles are nearest-rank, so every number shown is a measurement that happened;
+a stage nobody measured keeps its row with dashes. The stages still overlap and must
+not be added. "Copiar como texto" puts the same tables on the clipboard as plain
+text, ready to paste into an issue. All of it is computed in the browser from the
+snapshot already polled: the server aggregates nothing and stores nothing extra.
+
 Connection details include local WebSocket/audio/microphone state, reported AEC,
 capture sample rate, received mic frame/byte counters, output selection, wake lock,
 the latest/largest observed microphone packet gap, gaps over 250 ms, and an
