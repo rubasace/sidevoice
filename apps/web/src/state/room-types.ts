@@ -22,6 +22,8 @@ export interface ChatMessage {
   /** How the room got this message when it did not hear it happen: `buffered`, or `truncated`. */
   offline?: string | null;
   offlineNote?: string;
+  /** Said on a reply the room is repeating because this browser never heard it through (#52). */
+  replayNote?: string;
   karaoke?: KaraokeRange | null;
   playback?: "pending" | "playing" | "complete";
 }

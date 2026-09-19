@@ -78,3 +78,12 @@ test("says under the bubble that a message was captured while there was no conne
   expect(screen.getByText("Capturado sin conexión")).toBeInTheDocument();
   expect(screen.getByText("Capturado sin conexión · solo se guardaron los últimos 30 s")).toBeInTheDocument();
 });
+
+test("says under the bubble that a reply is being repeated because this browser never heard it", () => {
+  render(<MessageList conversation={view([
+    message({ segment: "call:voice:u1", role: "assistant", name: "Conversación", text: "Lo último que te dije", replayNote: "Repitiendo lo que no oíste" }),
+    message({ segment: "call:voice:u2", role: "assistant", name: "Conversación", text: "Y esto no se pudo", time: base + 1_000, replayNote: "No se pudo repetir · la sala ya no tiene ese audio" }),
+  ])} />);
+  expect(screen.getByText("Repitiendo lo que no oíste")).toBeInTheDocument();
+  expect(screen.getByText("No se pudo repetir · la sala ya no tiene ese audio")).toBeInTheDocument();
+});

@@ -38,6 +38,10 @@ HELLO_TIMEOUT = 10.0
 # the last 30 s of it; this leaves room for that and refuses anything that is not a gap.
 CATCHUP_MAX_SECONDS = 35
 CATCHUP_SLICE_BYTES = 128 * 1024
+# How many earlier session ids of its own a page may name in its hello (#52). A reconnection mints a
+# new client id, so this is how a tab says which entries in the journal were its own; naming one can
+# only take a reply out of the catch-up, never put somebody else's in.
+MAX_PRIOR_SESSIONS = 8
 
 
 def catchup_time(value):
@@ -46,6 +50,13 @@ def catchup_time(value):
         return None
     now = time.time() * 1000
     return int(value) if now - 3600_000 <= value <= now + 60_000 else None
+
+
+def prior_sessions(value):
+    """The ids this tab used before, as it named them: strings, bounded, and nothing else."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and 0 < len(item) <= 64][-MAX_PRIOR_SESSIONS:]
 
 
 async def room_is_full(websocket):
@@ -412,6 +423,7 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
         await websocket.send_text(json.dumps({'type': 'error', 'data': {'message': str(error)}}))
         await websocket.close(code=1013)  # Try again later.
         return
+    returning = prior_sessions(hello.get('sessions'))
     wanted = hello.get('conversation')
     if isinstance(wanted, str) and wanted:
         # The browser names the conversation it was talking to (its own state, kept across a reload);
@@ -472,6 +484,14 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
         # Only now can anything reach the browser: what its hello got wrong goes right after the session.
         for message in problems:
             send({'type': 'error', 'data': {'message': message}})
+        # A person coming back from a tunnel cannot read the transcript. What this browser never heard
+        # through goes to it now, oldest first and ahead of anything new, for as long back as this
+        # device asked for (#52). Nothing is stored for it: the room already had every one of them.
+        caught_up = await call.room.replay(call, seconds=settings.replay_on_return_seconds,
+                                           sessions=returning)
+        if caught_up['replayed'] or caught_up['skipped']:
+            logger.info('Call {}: replaying {} replies this browser never heard, {} without audio',
+                        call.id[:8], len(caught_up['replayed']), len(caught_up['skipped']))
 
     @transport.event_handler('on_client_disconnected')
     async def disconnected(transport, client):

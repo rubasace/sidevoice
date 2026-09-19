@@ -100,7 +100,13 @@ socket closed
        └─ the room and every other client are untouched; the selection left with the tab
 ```
 
-Reconnecting is joining again with a new id. So is changing a setting the
+Reconnecting is joining again with a new id — which is why a page names the ids it has already used
+when it says hello: that is how the room can answer, from the entries inside each utterance, which
+replies *that* browser never heard through, and play them back before anything new (#52). Declaring a
+session id can only take a reply out of that catch-up, never put another browser's in. A repetition is
+queued as an utterance of its own, at the returning browser's epoch and writing nothing to the journal;
+being an ordinary entry in that one queue is what keeps it from ever sounding over a live reply, and
+what makes the next turn cancel it through the same halt that interrupts anything else. So is changing a setting the
 pipeline was built from: the browser holds both sockets until the room answers
 the second, and the two are clients like any other pair — separate ids, separate
 selections, separate epochs — so the one being dropped settles its own playback
