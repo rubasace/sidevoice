@@ -99,9 +99,13 @@ socket closed
        └─ the room and every other client are untouched; the selection left with the tab
 ```
 
-Reconnecting is joining again with a new id. Nothing is replayed: audio the
-previous session did not finish is not resurrected, which is the pre-existing
-rule and still holds per client. Two browsers may resolve to different
+Reconnecting is joining again with a new id. So is changing a setting the
+pipeline was built from: the browser holds both sockets until the room answers
+the second, and the two are clients like any other pair — separate ids, separate
+selections, separate epochs — so the one being dropped settles its own playback
+entries as `disconnected` and touches nothing of the one that replaced it.
+Nothing is replayed: audio the previous session did not finish is not
+resurrected, which is the pre-existing rule and still holds per client. Two browsers may resolve to different
 transcription engines — one local, one cloud — at the same time; the transport is
 chosen per connection and the room does not care which one produced the words.
 

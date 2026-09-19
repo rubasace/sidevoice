@@ -63,6 +63,16 @@ sentence is finished, asked only after a minimum silence, with a maximum silence
 as a safety net) or a fixed silence timer. Two browsers in the same room may use
 different settings.
 
+The rest of them — who transcribes, in which language and with what context, and
+how this device's turns are detected — are the shape of that pipeline, and the
+room builds one per socket. Changing them does not hang up: the browser prepares
+whatever has to load (a local Whisper model, its GPU→CPU fallback) while the call
+goes on, opens a second socket with the new hello, and lets the first go only once
+the room has answered the second. The microphone stream, the unlocked output and
+the tab's chosen conversation cross unchanged; a refusal leaves the call exactly
+as it was and says why. For as long as the swap takes, one device counts as two
+browsers against `Room.MAX_CLIENTS`.
+
 Transcribing the finished turn is a provider behind that pipeline, and the
 pipeline does not know which one it has: OpenAI is called from the room with the
 stored key; the browser provider sends the turn's WAV back to the browser that

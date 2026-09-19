@@ -242,6 +242,36 @@ class MultiClientRoomTests(IsolatedAsyncioTestCase):
         second = self.browser('two')
         self.assertEqual(self.spoken(second), [])
 
+    async def test_a_browser_swapping_pipelines_holds_two_clients_and_the_one_it_drops_takes_nothing(self):
+        """One device, two sockets, for as long as a settings change takes.
+
+        The second is a client like any other: its own id, its own selection, its own epoch. When
+        the first goes, its playback entries settle as `disconnected` and the second keeps playing
+        the same utterance, because nothing in the room was ever shared between the two.
+        """
+        old, new = self.browser('before'), self.browser('after')
+        await self.reply(old, 'shared')
+        self.assertEqual(set(self.hub.utterances['shared'].clients), {'before', 'after'})
+
+        old.disconnect()
+        self.assertEqual(list(self.hub.clients), ['after'])
+        self.assertEqual(self.hub.utterances['shared'].clients['before']['status'], 'disconnected')
+        self.assertEqual(self.hub.utterances['shared'].clients['after']['status'], 'synthesizing',
+                         'the session that replaced it keeps playing what it was given')
+        self.assertEqual(new.target['thread_id'], 'task', 'the selection travelled in the new hello, not from the old client')
+        # The row follows the browser that is actually still playing it.
+        self.assertEqual(self.row('shared', old.id)['status'], 'synthesizing')
+        await new.playback_finished('shared', new.revision)
+        self.assertEqual(self.row('shared', old.id)['status'], 'playback_finished')
+
+        # And the new session's epoch is its own: the one it replaced never moved it.
+        new.user_started(); new.speaking = False
+        self.assertEqual((new.revision, new.turn_revision), (1, 1))
+        self.assertEqual(old.revision, 0)
+        new.enqueue_input('Sigo aquí con los ajustes nuevos')
+        self.assertEqual(self.hub.journal.pending()[-1]['text'], 'Sigo aquí con los ajustes nuevos')
+        self.assertEqual(self.hub.journal.pending()[-1]['session'], 'after')
+
     async def test_the_room_refuses_more_browsers_than_it_bounds_without_dropping_any(self):
         clients = [self.browser('client-%d' % index) for index in range(self.hub.MAX_CLIENTS)]
         with self.assertRaises(RuntimeError):

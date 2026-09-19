@@ -127,8 +127,10 @@ class VoiceCall:
         """What a connected browser tells the room about itself, beyond audio.
 
         A switched local Whisper is recorded if the room can run it; new settings
-        apply to this call at once for what needs no pipeline (voice, speed, grace),
-        while transcription and microphone changes wait for the next connection.
+        apply to this call at once for what needs no pipeline (voice, speed, grace).
+        Transcription and microphone changes are this pipeline's own shape: the browser
+        brings them in the hello of another socket, and lets this one go once that
+        one answers.
         """
         if not isinstance(message, dict) or message.get('type') not in {'voice-stt-ready', 'voice-settings', 'voice-audio-health'}:
             return
@@ -256,6 +258,11 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
     """One pipeline for every call: PCM in, the device's turn detection, and a transcription provider.
 
     The provider is OpenAI or the browser itself; the pipeline never knows which.
+
+    A device that changes a setting this pipeline was built from opens a second socket instead of
+    hanging up, so the same browser may hold two of these at once for as long as the swap takes.
+    Nothing here is shared between them: each has its own client id, its own selection and its own
+    epoch, and the one being replaced leaves without touching the one that replaced it.
     """
     from .language_settings import mic_settings
     mic, problem = mic_settings(settings, hello.get('mic'))
@@ -277,7 +284,15 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
             message = await outbox.get()
             await transport.output().send_message(OutputTransportMessageUrgentFrame(message=message))
 
-    call = RoomClient(str(uuid.uuid4()), hub)
+    try:
+        call = RoomClient(str(uuid.uuid4()), hub)
+    except RuntimeError as error:
+        # The room filled up between the check before the hello and this join. A browser changing a
+        # setting that needs another pipeline holds two sockets for a moment, so the race is real:
+        # refusing the newcomer is the whole point, and it disturbs nobody already in the room.
+        await websocket.send_text(json.dumps({'type': 'error', 'data': {'message': str(error)}}))
+        await websocket.close(code=1013)  # Try again later.
+        return
     wanted = hello.get('conversation')
     if isinstance(wanted, str) and wanted:
         # The browser names the conversation it was talking to (its own state, kept across a reload);

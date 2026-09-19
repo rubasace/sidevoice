@@ -162,6 +162,20 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {'tts_speed': 9}}})
         self.assertEqual(client.settings.spanish_voice, 'ef_dora')
         self.assertIn('no válidos', (await self.received(socket, 'error'))['data']['message'])
+        # A voice or an engine is resolved per utterance out of these settings, so the change lands on
+        # the next reply over this very socket: no second pipeline, and nothing to reconnect.
+        from sidevoice.language_settings import resolve_voice
+        self.assertEqual(resolve_voice(client.settings, 'es')['voice'], 'ef_dora')
+        client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {
+            'default_model': 'eleven_flash_v2_5', 'default_voice': 'una-voz', 'spanish_voice': 'inherit', 'tts_speed': 1.1}}})
+        chosen = resolve_voice(client.settings, 'es')
+        self.assertEqual((chosen['provider'], chosen['voice'], chosen['speed']), ('elevenlabs', 'una-voz', 1.1))
+        self.assertEqual(list(self.hub.clients), [client.id], 'a voice change never opens a second session')
+        # And a provider key is read where the audio is made, not where the pipeline was built.
+        from sidevoice import synthesis
+        with patch.object(synthesis, 'key', return_value=None):
+            with self.assertRaises(ValueError):
+                await synthesis.synthesize('Hola', model='eleven_flash_v2_5', voice='una-voz', speed=1.0)
         await self.leave(socket, task)
 
     async def test_invalid_device_settings_fall_back_to_the_room_defaults(self):
@@ -366,6 +380,68 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(second.revision, 1, 'the other device kept its own epoch')
         await self.leave(second_socket, second_task)
         self.assertEqual(self.hub.clients, {})
+
+    async def test_one_device_may_hold_two_sockets_while_it_changes_what_the_pipeline_is_built_from(self):
+        """Changing the transcription provider or the turn detection must not hang up.
+
+        The browser opens the second socket with the new hello while the first still carries the
+        call, and only lets the first go once the room has answered the second.
+        """
+        old_socket, new_socket = FakeWebSocket(), FakeWebSocket()
+        old_task, old = await self.join(old_socket)
+        self.assertEqual(old.transcription['provider'], 'browser')
+        self.assertEqual(old.mic_settings['turn_end_mode'], 'timer')
+
+        choice = {'provider': 'openai', 'available': True, 'model': 'gpt-4o-transcribe', 'reason': 'explicit'}
+        with patch('sidevoice.app.transcription.resolve', return_value=choice), \
+                patch('sidevoice.transcription.stored_key', return_value='sk-test-not-used'):
+            new_task, new = await self.join(new_socket, {
+                'conversation': 'thread-a',
+                'settings': {'stt_provider': 'openai', 'stt_model': 'gpt-4o-transcribe',
+                             'turn_end_mode': 'smart_turn', 'vad_confidence': 0.8}})
+
+        # Two sockets, two pipelines, two clients: the second is built from the new hello alone.
+        self.assertNotEqual(old.id, new.id)
+        self.assertEqual(len(self.hub.clients), 2)
+        self.assertTrue(old.connected and new.connected)
+        self.assertEqual(new.transcription['provider'], 'openai')
+        self.assertEqual((new.mic_settings['turn_end_mode'], new.mic_settings['vad_confidence']), ('smart_turn', 0.8))
+        self.assertEqual(old.transcription['provider'], 'browser', 'the call still running is untouched')
+        # The tab's conversation travelled in the hello, so the new session is already on it.
+        self.assertEqual(new.target['thread_id'], 'thread-a')
+        self.assertNotEqual(new.target['binding_id'], old.target['binding_id'])
+
+        # The old one leaving is the end of the swap, and it disturbs nothing.
+        new.user_started()
+        await self.leave(old_socket, old_task)
+        self.assertFalse(old.connected)
+        self.assertEqual(list(self.hub.clients), [new.id])
+        self.assertTrue(new.connected)
+        self.assertEqual((new.revision, new.turn_revision), (1, 1))
+        self.assertEqual(new.target['thread_id'], 'thread-a')
+        new.speaking = False
+        new.enqueue_input('Sigo hablando después del cambio')
+        self.assertEqual(self.hub.journal.pending()[-1]['text'], 'Sigo hablando después del cambio')
+        await self.leave(new_socket, new_task)
+
+    async def test_a_swap_that_would_overflow_the_room_is_refused_and_the_call_it_came_from_survives(self):
+        from sidevoice.app import browser_call
+        joined = []
+        for _ in range(self.hub.MAX_CLIENTS):
+            socket = FakeWebSocket()
+            joined.append((socket, *await self.join(socket)))
+        # The room filled up after the check that precedes the hello: the join itself must refuse.
+        refused = FakeWebSocket()
+        with patch('sidevoice.app.room_is_full', return_value=False):
+            self.hello(refused)
+            await browser_call(refused)
+        error = await self.received(refused, 'error')
+        self.assertIn('máximo de navegadores', error['data']['message'])
+        self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
+        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertTrue(all(client.connected for _, _, client in joined))
+        for socket, task, _ in joined:
+            await self.leave(socket, task)
 
     async def test_a_browser_over_the_limit_is_refused_without_disturbing_the_room(self):
         from sidevoice.app import browser_call

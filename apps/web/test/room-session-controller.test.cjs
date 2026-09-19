@@ -658,7 +658,7 @@ test('Stats renders device and session values as text and does not mislabel HTTP
  assert.ok(values.includes('OpenAI solicitado sin clave · fallback local'));
 });
 
-test('Changed STT settings hot-swap the active browser runtime',async()=>{
+test('Changing only the local Whisper model swaps it on the socket the call already has',async()=>{
  const s=setup({strictDOM:true});
  s.run(`
   var actions=[];
@@ -670,15 +670,132 @@ test('Changed STT settings hot-swap the active browser runtime',async()=>{
    start(options){actions.push(['start',options.language])}
   };
  `);
- const previous={stt_model:'tiny',stt_device:'wasm',stt_language:'auto'};
- const next={stt_model:'small',stt_device:'webgpu',stt_language:'es'};
- assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),true);
+ // The room never runs this model, so its pipeline does not change: no second socket, no reconnection.
+ const previous={stt_provider:'browser',stt_model:'tiny',stt_device:'wasm',stt_language:'es'};
+ const next={stt_provider:'browser',stt_model:'small',stt_device:'webgpu',stt_language:'es'};
+ assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),'local');
  assert.equal(JSON.stringify(s.run('actions')),JSON.stringify([['stop',true],['prepare','small','webgpu'],['start','es']]));
  assert.equal(s.run('ws.sent[0].type'),'voice-stt-ready');
  assert.equal(s.run('ws.sent[0].data.model'),'small');
  assert.equal(s.run('ws.sent[0].data.session_id'),'call-1');
  assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(next)+','+JSON.stringify(next)+')'),false);
  assert.equal(s.run('actions.length'),3);
+ // What the room does own is a new pipeline every time, and the local model alone never is.
+ assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),false);
+ for(const change of [{stt_provider:'openai'},{stt_language:'auto'},{stt_context:'Sidevoice'},{turn_end_mode:'timer'},{vad_confidence:0.8},{user_speech_timeout:4}])
+  assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify({...previous,...change})+')'),true,JSON.stringify(change));
+ // Voices, speed and grace travel live over the socket: they must never open a second one.
+ for(const change of [{default_model:'eleven_flash_v2_5'},{spanish_voice:'em_alex'},{tts_speed:1.2},{audio_grace_seconds:4}]){
+  assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify({...previous,...change})+')'),false,JSON.stringify(change));
+  assert.equal(await s.run('applyTranscriptionSettings('+JSON.stringify(previous)+','+JSON.stringify({...previous,...change})+')'),false);
+ }
+ assert.equal(s.run('actions.length'),3,'nothing was prepared or restarted for a voice change');
+});
+
+/* A pipeline change (who transcribes, in what language, how the turn ends) used to hang up. Now the
+ * page opens a second socket while the first one is still carrying the call. */
+function switching(){
+ const s=setup();const sockets=[],errors=[];
+ s.context.WebSocket=class{
+  constructor(url){this.url=url;this.readyState=0;this.sent=[];this.closed=false;sockets.push(this)}
+  send(value){this.sent.push(value)}
+  close(){this.closed=true;this.readyState=3;this.onclose?.({code:1000})}
+ };
+ s.context.WebSocket.OPEN=1;
+ // The join line is where a swap says which step it is on, and where its failure lands.
+ const status=[];
+ s.context.window.sidevoiceUI=new Proxy({},{get:(target,name)=>name==='setJoinStatus'?value=>status.push(value):()=>{}});
+ s.context.crypto={randomUUID:()=>'hello-id'};
+ s.context.fetch=async()=>({ok:true,json:async()=>({binding:null,room:{revision:0},clients:[],call:null,participants:[]})});
+ s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
+ s.run(`
+  var prepared=[],started=[],stopped=0;
+  startMeter=()=>{};stopMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};
+  window.roomVoice={unlock:async()=>{},cancel(){},context:{state:'running'}};
+  window.roomTranscription={
+   capabilities:async()=>({webgpu:false,wasm:true,models:['onnx-community/whisper-tiny']}),
+   prepare:async options=>{prepared.push(options.model);return {model:options.model,device:'wasm'}},
+   start(options){started.push(options.language)},stop(){stopped++}
+  };
+  stream={getAudioTracks:()=>[{enabled:true}]};
+  ws=new WebSocket('wss://room.example/old');ws.readyState=1;sessionId='old-session';
+ `);
+ return {s,sockets,old:sockets[0],status};
+}
+const OLD_SETTINGS={stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',stt_device:'auto',stt_language:'es',stt_context:'',turn_end_mode:'smart_turn'};
+function apply(s,next){s.run('voicePreferences='+JSON.stringify(next));return s.run('applyTranscriptionSettings('+JSON.stringify(OLD_SETTINGS)+','+JSON.stringify(next)+')')}
+
+test('Changing the transcription provider swaps sessions without ending the call',async()=>{
+ const {s,sockets,old,status}=switching();
+ const pending=apply(s,{...OLD_SETTINGS,stt_provider:'openai',stt_model:'gpt-4o-transcribe'});
+ await new Promise(resolve=>setTimeout(resolve,5));
+ // While the room has not answered, the call is still the old one: same socket, same session, mic untouched.
+ assert.equal(sockets.length,2,'a second socket is opened');
+ assert.equal(s.run('ws'),old);
+ assert.equal(old.closed,false);
+ assert.equal(s.run('sessionId'),'old-session');
+ assert.match(status.at(-1).text,/Cambiando de transcripción/);
+ assert.equal(s.run('prepared.length'),0,'OpenAI transcribes in the room: nothing is loaded here');
+ const next=sockets[1];next.readyState=1;next.onopen();
+ const hello=JSON.parse(next.sent[0]);
+ assert.equal(hello.data.conversation,'t-1','the tab keeps the conversation it had chosen');
+ assert.equal(hello.data.settings.stt_provider,'openai','the new hello carries the new settings');
+ next.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'new-session',sample_rate:16000,channels:1}})});
+ assert.equal(await pending,'switched');
+ assert.equal(status.at(-1),null,'the line goes away once the new session is up');
+ assert.equal(s.run('ws'),next);
+ assert.equal(s.run('sessionId'),'new-session');
+ assert.equal(old.closed,true,'the old socket is closed once the new session exists');
+ assert.equal(old.onclose,null,'and its close is not read as the room going away');
+ assert.equal(s.run('stream')!==null,true,'the microphone stream was kept');
+ assert.equal(s.run('stopped')>0,true,'the local runtime stops when the room takes over transcription');
+ assert.equal(s.run('switchingSession'),false);
+});
+
+test('A microphone threshold rebuilds the pipeline the same way, loading the local model before the swap',async()=>{
+ const {s,sockets,old,status}=switching();
+ const pending=apply(s,{...OLD_SETTINGS,vad_confidence:0.8,user_speech_timeout:4});
+ await new Promise(resolve=>setTimeout(resolve,5));
+ assert.equal(s.run('JSON.stringify(prepared)'),'["onnx-community/whisper-tiny"]','the runtime is ready before the socket is swapped');
+ assert.match(status.at(-1).text,/micrófono/);
+ assert.equal(s.run('ws'),old,'the call runs on the old pipeline while the new one is prepared');
+ const next=sockets[1];next.readyState=1;next.onopen();
+ assert.equal(JSON.parse(next.sent[0]).data.settings.vad_confidence,0.8);
+ next.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'new-session',sample_rate:16000,channels:1}})});
+ assert.equal(await pending,'switched');
+ assert.equal(s.run('ws'),next);
+ assert.equal(s.run('JSON.stringify(started)'),'["es"]','the browser transcribes again, on the new socket');
+});
+
+test('A room that refuses the new session leaves the call exactly as it was, and says why',async()=>{
+ const {s,sockets,old,status}=switching();
+ const pending=apply(s,{...OLD_SETTINGS,stt_provider:'openai',stt_model:'gpt-4o-transcribe'});
+ await new Promise(resolve=>setTimeout(resolve,5));
+ const next=sockets[1];next.readyState=1;next.onopen();
+ next.onmessage({data:JSON.stringify({type:'error',data:{message:'OpenAI necesita una clave de API antes de conectar.'}})});
+ next.close();
+ assert.equal(await pending,false);
+ assert.equal(s.run('ws'),old,'the call never left the socket it was on');
+ assert.equal(old.closed,false);
+ assert.equal(s.run('sessionId'),'old-session');
+ assert.equal(status.at(-1).failed,true);
+ assert.match(status.at(-1).text,/No se pudo aplicar el cambio: OpenAI necesita una clave de API/);
+ assert.match(status.at(-1).text,/sigue con los ajustes anteriores/);
+ assert.equal(s.run('switchingSession'),false);
+});
+
+test('Cancelling the preparation abandons the swap and not the call',async()=>{
+ const {s,sockets,old}=switching();
+ s.run("window.roomTranscription.prepare=()=>new Promise(()=>{})");
+ const pending=apply(s,{...OLD_SETTINGS,stt_model:'onnx-community/whisper-tiny',stt_language:'auto'});
+ await new Promise(resolve=>setTimeout(resolve,5));
+ assert.equal(s.run('switchingSession'),true);
+ s.run('cancelPreparation()');
+ assert.equal(s.run('switchingSession'),false);
+ assert.equal(s.run('ws'),old,'the call stays up');
+ assert.equal(old.closed,false);
+ assert.equal(sockets.length,1,'the swap never got as far as a second socket');
+ assert.equal(await Promise.race([pending,new Promise(resolve=>setTimeout(()=>resolve('pending'),5))]),'pending');
 });
 
 test('Every room query names the browser asking, so the answer is never another device\'s',async()=>{

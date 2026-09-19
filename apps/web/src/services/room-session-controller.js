@@ -21,7 +21,9 @@ window.addEventListener('voice-preparation',({detail:d})=>{showPreparation(d);no
  * It reuses the events that already existed — the engine's preparation, the room's hello, the
  * conversation this tab goes back to — and measures nothing of its own. A step that fails leaves
  * its reason, and what to do about it, in the same place. */
-const JOIN_STEPS={audio:'Preparando audio',whisper:'Cargando Whisper',voice:'Cargando el modelo de voz',microphone:'Pidiendo el micrófono',room:'Entrando en la sala',conversation:'Volviendo a ',reconnect:'Reconectando con la sala…'};
+const JOIN_STEPS={audio:'Preparando audio',whisper:'Cargando Whisper',voice:'Cargando el modelo de voz',microphone:'Pidiendo el micrófono',room:'Entrando en la sala',conversation:'Volviendo a ',reconnect:'Reconectando con la sala…',
+ // A settings change that needs another pipeline is a join too: the same line, without leaving the call.
+ transcription:'Cambiando de transcripción…',mic:'Aplicando los ajustes del micrófono…'};
 let joinStep=null,joinFailure='',joinProgress=null,joinDetail='',joinSubject='';
 function joinStatusText(){
  if(joinFailure)return joinFailure;
@@ -41,7 +43,7 @@ function clearJoinStatus(){if(!joinStep&&!joinFailure)return;joinStep=null;joinF
 function failJoin(text){joinStep=null;joinProgress=null;joinDetail='';joinSubject='';joinFailure=text||'';renderJoinStatus()}
 // The engine's own progress refines the model step the join is already on; anywhere else it belongs to the modal alone.
 function noteJoinPreparation(d){
- if(!d||d.phase!=='loading'||!['audio','whisper','voice'].includes(joinStep))return;
+ if(!d||d.phase!=='loading'||!['audio','whisper','voice','transcription','mic'].includes(joinStep))return;
  joinStatus(d.kind==='transcription'?'whisper':'voice',{progress:d.progress==null?null:d.progress});
 }
 // What this tab already calls the conversation it is going back to; the room is not asked again for a title.
@@ -62,7 +64,7 @@ function joinFailureText(step,error){
    :'El modelo no se pudo cargar en este dispositivo ('+message+'). Elige uno más pequeño en Configuración, o OpenAI para transcribir.';
  return message+(/[.!?…]$/.test(message)?'':'.');
 }
-function cancelPreparation(){if(activeSpeech){const d=activeSpeech;post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status:'failed'}).catch(()=>{});cancelBrowserSpeech()}else if(previewJob)stopPreview();else if(connecting||switchingTranscription)disconnect();else window.roomVoice?.cancel();$('voice-loading').close()}
+function cancelPreparation(){if(activeSpeech){const d=activeSpeech;post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status:'failed'}).catch(()=>{});cancelBrowserSpeech()}else if(previewJob)stopPreview();else if(switchingSession)abortSwitch();else if(connecting||switchingTranscription)disconnect();else window.roomVoice?.cancel();$('voice-loading').close()}
 $('loading-cancel').onclick=cancelPreparation;$('voice-loading').addEventListener('cancel',e=>{e.preventDefault();cancelPreparation()});
 
 // The room holds several browsers at once, so every question this page asks the
@@ -73,6 +75,9 @@ const SELECTED_KEY='sidevoice.selected';
 function rememberedThread(){try{return sessionStorage.getItem(SELECTED_KEY)||null}catch{return null}}
 function rememberThread(id){try{if(id)sessionStorage.setItem(SELECTED_KEY,id);else sessionStorage.removeItem(SELECTED_KEY)}catch{}}
 let ws=null,stream=null,sessionId=null,connecting=false,connectEpoch=0,micEnabled=true,roomBinding=null,people=[],switching=false,switchingTranscription=false,roomInfo=null;
+// A setting the room can only honour with another pipeline opens a second socket while the first
+// one still carries the call. Until the room answers it, that socket is nobody's: `ws` is the call.
+let openingSocket=null,switchingSession=false,switchEpoch=0;
 window.sidevoiceSessionId=()=>sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false,userLive=false,botLive=false,pendingUser=null,pendingUserText='';
 let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0;
@@ -608,7 +613,7 @@ function measureMic(samples,enabled){
 function startMeter(rate){try{audioContext=window.roomVoice?.context||roomAudioContext(rate);analyser=audioContext.createAnalyser();analyser.fftSize=1024;micSource=audioContext.createMediaStreamSource(stream);micSource.connect(analyser);const data=new Float32Array(1024);let clipUntil=0,lastWave=0;function tick(){if(!analyser)return;analyser.getFloatTimeDomainData(data);const enabled=!!stream?.getAudioTracks()[0]?.enabled,level=measureMic(data,enabled);if(level.state==='clip')clipUntil=Date.now()+600;const state=enabled&&Date.now()<clipUntil?'clip':level.state;$('mute').style.setProperty('--mic-fill',level.value+'%');const meter=$('mic-level-meter'),mic=$('mic-control');mic.dataset.signal=state;if(Date.now()-lastWave>=80){updateWave(level.value);lastWave=Date.now()}meter.setAttribute('aria-valuenow',String(level.value));const description=state==='clip'?'Posible saturación del micrófono':state==='high'?'Nivel de micrófono alto':'Nivel de micrófono';if(meter.dataset.signal!==state){meter.dataset.signal=state;meter.setAttribute('title',description);meter.setAttribute('aria-label',description)}meterFrame=requestAnimationFrame(tick)}tick()}catch{}}
 function roomSocketUrl(){return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/presentation/ws'}
 // The room speaks first: its call id and the PCM format it expects. Anything else arriving meanwhile is an ordinary room event.
-function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>fail('La sala no respondió'),10000);socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));socket.onerror=()=>fail('No se pudo conectar con la sala');socket.onclose=event=>fail(event?.code===1013?'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.':'La sala rechazó la conexión');socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});noteJoinPreparation(m.data||{});return}if(m.type!=='voice-session'){message(e.data);return}roomInfo=m.data?.room||roomInfo;clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
+function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>fail('La sala no respondió'),10000),refusal=null;socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));socket.onerror=()=>fail('No se pudo conectar con la sala');socket.onclose=event=>fail(event?.code===1013?'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.':refusal||'La sala rechazó la conexión');socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});noteJoinPreparation(m.data||{});return}if(m.type!=='voice-session'){if(m.type==='error')refusal=m.data?.message||m.data?.error||refusal;message(e.data);return}roomInfo=m.data?.room||roomInfo;clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
 // Capturing at the room's rate lets the browser resample; the worklet covers browsers that refuse the rate.
 function roomAudioContext(rate){try{return new AudioContext({sampleRate:rate})}catch{return new AudioContext()}}
 async function startCapture(socket,session){if(!micSource)throw Error('No se pudo capturar el micrófono');
@@ -626,31 +631,54 @@ function disconnect(){
  releaseScreenWakeLock();audioSession(false);++deviceEpoch;
  window.roomVoice?.cancel();window.roomTranscription?.stop();if($('voice-loading').open)$('voice-loading').close();clearJoinStatus();
  cancelBrowserSpeech();stopPreview();
- const socket=ws;ws=null;socket?.close();showEngineBadge('');showEchoCover();
+ ++switchEpoch;switchingSession=false;const socket=ws,opening=openingSocket;ws=openingSocket=null;socket?.close();opening?.close();showEngineBadge('');showEchoCover();
  stream?.getTracks().forEach(t=>t.stop());stream=null;
  stopMeter();sessionId=null;userLive=botLive=holding=spaceDown=false;userTurn=null;pendingPhase='';pendingBotText=[];partial('');
  $('connect').disabled=false;$('connect').classList.remove('joined');
  $('connect').title='Entrar en la sala';$('connect').setAttribute('aria-label','Entrar en la sala');
- $('mute').classList.remove('holding');updateMic();
+ $('mute').classList.remove('holding');$('connect').classList.remove('reconnecting');updateMic();
 }
-$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;const browserStt=voicePreferences.stt_provider!=='openai';let sttRuntime=null;if(browserStt){joinStatus('whisper');let {stt_model:model,stt_device:device}=voicePreferences;const caps=await window.roomTranscription.capabilities();if(!caps.models.includes(model)){const fallback=caps.models[0];if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');$('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();model=fallback;device='auto'}sttRuntime=await prepareLocalWhisper(model,device)}if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);keepScreenAwake();refreshAudioDevices();showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();showEchoCover();live();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
+$('connect').onclick=async()=>{if(ws||connecting){disconnect();return}connecting=true;const epoch=++connectEpoch;keepScreenAwake();$('connect').classList.add('joined');$('connect').title='Salir de la sala';$('connect').setAttribute('aria-label','Salir de la sala');setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}stream=acquiredStream;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);keepScreenAwake();refreshAudioDevices();showEngineBadge(engineBadgeText(voicePreferences,sttRuntime));joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;$('connect').setAttribute('aria-label','Salir de la sala');$('connect').title='Salir de la sala';$('connect').classList.add('joined');$('mute').disabled=false;updateMic();showEchoCover();live();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch){connecting=false;$('connect').disabled=false}}};
 // ----- the socket: opened on join, reopened by itself when the room goes away -----
 // A room restart or a network blip must not end the call: the microphone permission, the media stream
 // and the unlocked output all survive it; only the socket needs reopening, with the same hello.
 const RECONNECT_DELAYS_MS=[1000,2000,5000,10000,10000,20000];
 let reconnecting=false;
 function shouldReconnect(event){return ![1008,1013].includes(event?.code)}   // refused by policy or full: do not insist
+// The room replays nothing into a new session: the one being replaced is over the moment the new
+// one exists, so this page drops what belonged to it instead of pretending it is still running.
+function dropReplacedSession(socket){
+ socket.onclose=socket.onmessage=socket.onerror=null;
+ try{socket.close()}catch{}
+ window.roomTranscription?.stop();
+ cancelBrowserSpeech();userLive=botLive=false;pendingUser=null;pendingUserText='';pendingPhase='';renderHistory();
+}
+// `context.keepCurrent` is a swap: the call in progress keeps this page's socket, its audio and its
+// microphone until the room has answered the new hello, so a refusal costs the call nothing.
 async function joinRoom(epoch,context){
- const socket=new WebSocket(roomSocketUrl());ws=socket;socket.binaryType='arraybuffer';
- const session=await openSession(socket,{conversation:rememberedThread(),settings:voicePreferences,transcription:context.sttRuntime});
- if(epoch!==connectEpoch)return null;
+ const socket=new WebSocket(roomSocketUrl());socket.binaryType='arraybuffer';
+ if(context.keepCurrent)openingSocket=socket;else ws=socket;
+ let session;
+ try{session=await openSession(socket,{conversation:rememberedThread(),settings:voicePreferences,transcription:context.sttRuntime})}
+ // A swap that failed leaves nothing behind: this socket never became the call's, and a refusal
+ // that timed out could still be open and still be talking to a page that is not listening.
+ catch(error){if(context.keepCurrent){socket.onclose=socket.onmessage=socket.onerror=null;try{socket.close()}catch{}}throw error}
+ finally{if(openingSocket===socket)openingSocket=null}
+ if(epoch!==connectEpoch){socket.close();return null}
  socket.onerror=null;
- socket.onclose=event=>{if(ws===socket)lostConnection(event,epoch,context)};
- socket.onmessage=e=>{if(ws===socket)message(e.data)};
+ // Nothing is swapped over a socket that is already gone: the call keeps the one it has.
  if(socket.readyState!==WebSocket.OPEN)throw Error('La sala cerró la conexión');
+ const replaced=context.keepCurrent&&ws&&ws!==socket?ws:null;
+ ws=socket;
+ if(replaced)dropReplacedSession(replaced);
+ // What reopens this socket by itself is the call, never the swap that opened it.
+ const again={browserStt:context.browserStt,sttRuntime:context.sttRuntime};
+ socket.onclose=event=>{if(ws===socket)lostConnection(event,epoch,again)};
+ socket.onmessage=e=>{if(ws===socket)message(e.data)};
  sessionId=session.session_id;roomRevision=0;
  if(context.browserStt)window.roomTranscription.start({socket,language:voicePreferences.stt_language});
- startMeter(session.sample_rate);await startCapture(socket,session);
+ else window.roomTranscription?.stop();
+ stopMeter();startMeter(session.sample_rate);await startCapture(socket,session);
  return session;
 }
 async function lostConnection(event,epoch,context){
@@ -857,7 +885,7 @@ $('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('setting
 async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;$('elevenlabs-key-state').textContent=state.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.';$('elevenlabs-key-clear').disabled=!state.configured||state.source==='environment'}
 $('elevenlabs-key-save').onclick=async()=>{const key=$('elevenlabs-key').value.trim();if(!key)return;$('elevenlabs-key-save').disabled=true;$('settings-error').textContent='';$('elevenlabs-key-state').textContent='Comprobando la clave con ElevenLabs…';try{const result=await post('/api/presentation/synthesis/credential',{key});$('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=result.credentials||{};renderDefaultVoices($('default-voice').value);renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{$('elevenlabs-key-save').disabled=false;await loadElevenLabs()}};
 $('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
-$('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para conservarlo; los cambios de transcripción y micrófono se aplican al volver a entrar.'};
+$('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para aplicarlo; la llamada en curso no se interrumpe.'};
 $('settings-close').onclick=()=>{stopPreview();$('language-settings').close()};$('language-settings').addEventListener('close',stopPreview);
 const MIC_KEYS=['turn_end_mode','user_speech_timeout','smart_turn_min_silence','smart_turn_max_silence','vad_confidence','vad_min_volume','vad_start_secs'];
 // Every setting belongs to this device. The room answers with its defaults and keeps no copy; what this browser saved wins.
@@ -898,11 +926,79 @@ async function prepareLocalWhisper(model,device){
   return {...runtime,fallback_from:device,fallback_error:String(error?.message||error).slice(0,300)};
  }
 }
+// What this device runs before it can transcribe locally: the model it saved, or the best one this
+// browser can actually load, with the GPU→CPU fallback and the preparation indicator behind it.
+async function prepareTranscription(preferences){
+ if(preferences?.stt_provider==='openai')return {browserStt:false,sttRuntime:null};
+ let {stt_model:model,stt_device:device}=preferences||{};
+ const caps=await window.roomTranscription.capabilities();
+ if(!caps.models.includes(model)){
+  const fallback=caps.models[0];
+  if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');
+  $('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();
+  model=fallback;device='auto';
+ }
+ return {browserStt:true,sttRuntime:await prepareLocalWhisper(model,device)};
+}
 function micSettingsChanged(previous,next){return MIC_KEYS.some(key=>String(previous?.[key]??'')!==String(next?.[key]??''))}
 function sttSettingsChanged(previous,next){return ['stt_provider','stt_model','stt_device','stt_language','stt_context'].some(key=>String(previous?.[key]??'')!==String(next?.[key]??''))}
+// The room builds its pipeline once per socket, out of the hello: who transcribes, in which language
+// and with what context, and how this device's turns are detected, are fixed for that call. The local
+// Whisper model is not one of them — the room never runs it — unless OpenAI is the one being asked.
+function pipelineSettingsChanged(previous,next){
+ return micSettingsChanged(previous,next)
+  ||['stt_provider','stt_language','stt_context'].some(key=>String(previous?.[key]??'')!==String(next?.[key]??''))
+  ||(next?.stt_provider==='openai'&&String(previous?.stt_model??'')!==String(next?.stt_model??''));
+}
+// Only the model this page itself runs changed: the room's pipeline stays as it is.
+function localModelSwap(previous,next){return !!ws&&next?.stt_provider!=='openai'&&!pipelineSettingsChanged(previous,next)&&sttSettingsChanged(previous,next)}
+/* Changing the pipeline used to hang up, and a hang-up in the middle of a conversation is not a
+ * setting taking effect. The page opens a second socket instead: whatever has to load (a local
+ * Whisper model, its GPU→CPU fallback) loads while the call goes on over the socket it already has,
+ * the new session only replaces the old one once the room has answered it, and a refusal leaves the
+ * call exactly as it was — with the room's own reason for it said out loud. */
+async function switchSession(previous,next){
+ if(!ws)return false;
+ // The last save wins: a swap still in flight is abandoned, never queued behind this one.
+ if(switchingSession)abortSwitch();
+ const epoch=connectEpoch,attempt=++switchEpoch;
+ const step=sttSettingsChanged(previous,next)?'transcription':'mic';
+ const stale=()=>epoch!==connectEpoch||attempt!==switchEpoch;
+ switchingSession=true;$('connect').classList.add('reconnecting');joinStatus(step);
+ // The two things that can fail here fail differently: a model this device cannot load, and a room
+ // that refuses the new session. Each one is told the way joining already tells it.
+ let phase='whisper';
+ try{
+  const context=await prepareTranscription(next);
+  if(stale())return false;
+  phase='room';joinStatus(step);
+  const session=await joinRoom(epoch,{...context,keepCurrent:true});
+  if(stale()||!session)return false;
+  await window.roomVoice?.unlock();
+  showEngineBadge(engineBadgeText(next,context.sttRuntime));showEchoCover();
+  rosterSignature='';live();await refresh();await refreshPeople();
+  setRoomError('');clearJoinStatus();
+  return true;
+ }catch(error){
+  if(stale())return false;
+  // Nothing was swapped: `ws` is still the socket the call was already on.
+  showPreparation({phase:'hidden'});
+  failJoin('No se pudo aplicar el cambio: '+joinFailureText(phase,error)+' La llamada sigue con los ajustes anteriores.');
+  live();
+  return false;
+ }finally{if(attempt===switchEpoch){switchingSession=false;$('connect').classList.remove('reconnecting')}}
+}
+// Cancelling the preparation abandons the swap, not the call: the old session was never touched.
+function abortSwitch(){
+ if(!switchingSession)return;
+ ++switchEpoch;switchingSession=false;$('connect').classList.remove('reconnecting');
+ const opening=openingSocket;openingSocket=null;opening?.close();
+ showPreparation({phase:'hidden'});clearJoinStatus();live();
+}
 async function applyTranscriptionSettings(previous,next){
- if(!ws||!sttSettingsChanged(previous,next))return false;
- if(previous?.stt_provider!==next.stt_provider||next.stt_provider==='openai'){disconnect();return 'reconnect'}
+ if(!ws)return false;
+ if(pipelineSettingsChanged(previous,next))return await switchSession(previous,next)&&'switched';
+ if(!localModelSwap(previous,next))return false;
  const socket=ws,epoch=connectEpoch;switchingTranscription=true;
  window.roomTranscription.stop({cancelTurn:true});
  try{
@@ -910,10 +1006,10 @@ async function applyTranscriptionSettings(previous,next){
   if(ws!==socket||connectEpoch!==epoch)return false;
   socket.send(JSON.stringify({type:'voice-stt-ready',data:{session_id:sessionId,...runtime}}));showEngineBadge(engineBadgeText(next,runtime));
   window.roomTranscription.start({socket,language:next.stt_language});
-  return true;
+  return 'local';
  }finally{switchingTranscription=false}
 }
-$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();const previous=voicePreferences,p={...voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds',...MIC_KEYS])p[key]=['tts_speed','audio_grace_seconds','user_speech_timeout','smart_turn_min_silence','smart_turn_max_silence','vad_confidence','vad_min_volume','vad_start_secs'].includes(key)?Number($(key.replaceAll('_','-')).value):$(key.replaceAll('_','-')).value;if(key==='stt_device'&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.stt_device)?previous.stt_device:'auto';p.stt_provider=$('stt-provider').value||'browser';p.stt_model=$('stt-model').value;let hotSwap=false;try{storePreferences(p);if(ws&&ws.readyState===WebSocket.OPEN&&sessionId)ws.send(JSON.stringify({type:'voice-settings',data:{session_id:sessionId,settings:p}}));hotSwap=!!ws&&sttSettingsChanged(previous,p);voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);const micChanged=!!ws&&micSettingsChanged(previous,p);$('live').textContent=applied==='reconnect'||micChanged?'Preferencias guardadas · Vuelve a entrar para aplicar los ajustes de micrófono':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
+$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();const previous=voicePreferences,p={...voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds',...MIC_KEYS])p[key]=['tts_speed','audio_grace_seconds','user_speech_timeout','smart_turn_min_silence','smart_turn_max_silence','vad_confidence','vad_min_volume','vad_start_secs'].includes(key)?Number($(key.replaceAll('_','-')).value):$(key.replaceAll('_','-')).value;if(key==='stt_device'&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.stt_device)?previous.stt_device:'auto';p.stt_provider=$('stt-provider').value||'browser';p.stt_model=$('stt-model').value;let hotSwap=false;try{storePreferences(p);if(ws&&ws.readyState===WebSocket.OPEN&&sessionId)ws.send(JSON.stringify({type:'voice-settings',data:{session_id:sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);$('live').textContent=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
 window.sidevoiceActions={
  cancelInput:cancelCurrentInput,
  selectParticipant(threadId){
