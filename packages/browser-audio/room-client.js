@@ -49,6 +49,15 @@ class RoomVoice {
   element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;
   try{await element.play()}catch(error){this.note('element-refused',error?.message||'play');return}
   this.output={sink,element};this.note('element-ready');
+  // The destination never runs out of inputs: a silent source stays connected for the life of the
+  // output, so stopping the last voice source (a barge-in) cannot leave the stream starved — which
+  // is what iOS turns into the last instant on a loop.
+  try{
+   let keepalive=null;
+   if(typeof this.context.createConstantSource==='function'){keepalive=this.context.createConstantSource();keepalive.offset.value=0}
+   else if(typeof this.context.createBufferSource==='function'){keepalive=this.context.createBufferSource();keepalive.buffer=this.context.createBuffer(1,this.context.sampleRate||48000,this.context.sampleRate||48000);keepalive.loop=true}
+   if(keepalive){keepalive.connect(sink);keepalive.start();this.output.keepalive=keepalive;this.note('keepalive')}
+  }catch(error){this.note('keepalive-failed',error?.message||'keepalive')}
   // iOS interrupts the page's audio when the user pulls down notifications, switches apps, or the
   // microphone takes the audio route over — which is what an interruption while we speak looks
   // like in a car. An element left playing through that comes back as a stuck buzz, so it is
@@ -88,6 +97,24 @@ class RoomVoice {
   catch(error){this.note('attach-refused',error?.message||'attach');return Promise.resolve()}
  }
  get destination(){return this.output?.sink||this.context.destination}
+ /* Where a job's sources connect: a gain of its own when the context has one, so cancelling fades it out
+  * over a few milliseconds instead of stopping the sink's last input dead. */
+ outlet(job){
+  if(job.gain!==undefined)return job.gain||this.destination;
+  job.gain=null;
+  if(typeof this.context.createGain==='function'){try{job.gain=this.context.createGain();job.gain.connect(this.destination)}catch{job.gain=null}}
+  return job.gain||this.destination;
+ }
+ /* Stop a job's sources softly: gain to zero over 30 ms, sources stopped just after, the gain released later. */
+ silence(job){
+  const now=this.context?.currentTime||0,gain=job.gain;
+  if(gain&&gain.gain&&typeof gain.gain.setValueAtTime==='function'){
+   try{gain.gain.setValueAtTime(gain.gain.value,now);gain.gain.linearRampToValueAtTime(0,now+.03)}catch{}
+   for(const source of job.sources){source.onended=null;try{source.stop(now+.04)}catch{try{source.stop()}catch{}}}
+   setTimeout(()=>{try{gain.disconnect()}catch{}},200);
+  }else for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}
+  job.sources.clear();
+ }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
  async setOutputDevice(id){
   await this.unlock();
@@ -138,12 +165,12 @@ class RoomVoice {
   job.clock.timer=setTimeout(check,this.stallCheckMs);
  }
  stopClock(job){if(job.clock?.timer)clearTimeout(job.clock.timer);if(job.clock)job.clock.timer=null}
- cancel(){this.announce('','hidden');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;this.note('cancel',job.playing?'playing':'pending');this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}
+ cancel(){this.announce('','hidden');const job=this.job;this.job=null;this.worker?.postMessage({type:'cancel'});if(!job)return;this.note('cancel',job.playing?'playing':'pending');this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);this.silence(job);
   // A cancel that lands while the context is stopped would leave the element looping its last instant.
   if(this.output?.element&&this.context?.state!=='running'){try{this.output.element.pause()}catch{}}
   job.reject(new DOMException('Audio cancelado','AbortError'))}
  ensure(device){if(this.worker&&this.device===device)return;this.worker?.terminate();this.ready=false;this.device=device;this.worker=new Worker('/voice-browser/worker.js',{type:'module'});this.worker.onmessage=({data})=>this.receive(data);this.worker.onerror=e=>this.fail(Error(e.message||'No se pudo iniciar el motor de voz'))}
- fail(error){this.announce(error.message,this.ready?'inline':'error');this.ready=false;const job=this.job;this.note('fail',error?.message||'error');if(!job)return;this.job=null;this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}this.worker?.terminate();this.worker=null;job.reject(error)}
+ fail(error){this.announce(error.message,this.ready?'inline':'error');this.ready=false;const job=this.job;this.note('fail',error?.message||'error');if(!job)return;this.job=null;this.stopProgress(job);this.stopClock(job);clearTimeout(job.timer);this.silence(job);this.worker?.terminate();this.worker=null;job.reject(error)}
  receive(d){const job=this.job;if(!job||d.id!==job.id)return;
   clearTimeout(job.timer);job.timer=setTimeout(()=>this.fail(Error('El modelo tardó demasiado. Vuelve a prepararlo.')),180000);
   if(d.type==='progress'){const p=d.progress;const text=p.status==='voice'?'Cargando la voz seleccionada…':p.status==='generating'?'Preparando el primer audio…':'Cargando modelo'+(p.file?' · '+p.file:'')+(p.progress!=null?' · '+Math.round(p.progress)+'%':'');job.status(text);if(!this.ready&&!job.playing)this.announce(text,'loading',p.progress??null)}
@@ -152,7 +179,7 @@ class RoomVoice {
   if(d.type==='error')this.fail(Error(d.error));
   if(d.type==='audio'){this.announce('','hidden');if(this.context.state!=='running'){this.note('audio-while-stopped',this.context.state);this.resumeOutput()}
    const buffer=this.context.createBuffer(1,d.samples.length,d.sampleRate);buffer.copyToChannel(d.samples,0);
-   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.outlet(job));
    const start=Math.max(this.context.currentTime+.03,job.end);job.end=start+buffer.duration;job.sources.add(source);
    source.onended=()=>{job.sources.delete(source);if(this.job===job&&job.done&&!job.sources.size)this.complete(job)};
    const range=chunkTextRange(job.text,d.text,job.textCursor);
@@ -162,7 +189,7 @@ class RoomVoice {
   }
   if(d.type==='done'){clearTimeout(job.timer);job.done=true;if(!job.sources.size)this.complete(job)}
  }
- complete(job){if(this.job!==job)return;this.stopProgress(job);this.stopClock(job);this.announce('','hidden');clearTimeout(job.timer);this.job=null;this.note('complete');job.resolve()}
+ complete(job){if(this.job!==job)return;this.stopProgress(job);this.stopClock(job);this.announce('','hidden');clearTimeout(job.timer);this.job=null;if(job.gain){const gain=job.gain;setTimeout(()=>{try{gain.disconnect()}catch{}},200)}this.note('complete');job.resolve()}
  run(type,options={},status=()=>{},onPlaying=()=>{},onProgress){
   this.cancel();const device=options.device||'auto';this.ensure(device);const message=type==='load'?'Cargando modelo…':'Preparando voz…';status(message);if(!this.ready)this.announce(message);
   return new Promise((resolve,reject)=>{const id=++this.serial;this.job={id,resolve,reject,status,onPlaying,onProgress,text:options.text||'',textCursor:0,cues:[],load:type==='load',sources:new Set(),end:0,done:false};this.job.timer=setTimeout(()=>this.fail(Error('No se pudo preparar el modelo a tiempo.')),180000);this.worker.postMessage({type,id,...options,device})})
@@ -179,7 +206,7 @@ class RoomVoice {
     const buffer=await this.context.decodeAudioData(bytes.buffer);
     if(this.job!==job)return;
     clearTimeout(job.timer);
-    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);job.sources.add(source);
+    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.outlet(job));job.sources.add(source);
     source.onended=()=>{job.sources.delete(source);if(this.job===job)this.complete(job)};
     const start=this.context.currentTime;
     const aligned=alignedWordCues(text,alignment,buffer.duration);
