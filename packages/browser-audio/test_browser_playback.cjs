@@ -185,6 +185,26 @@ test('A frozen audio clock during playout asks the output back, and one that sta
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['fail','tail']),'a failed voice is followed by the same silent tail as a cut one');
  assert.ok(s.voice.health().stalls>=3);
 });
+test('A phone whose screen locks mid-utterance is not a stuck device',async()=>{
+ // We pause the element ourselves while the page is hidden, so the clock stands still on purpose: counting
+ // that as a stall declared good replies failed when the screen locked (2026-09-20, from the room's reports).
+ const s=setup();const {context}=mediaOutput(s);await s.voice.unlock();
+ s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;s.voice.stallLimit=3;
+ s.context.document={hidden:true,addEventListener(){}};
+ context.state='suspended';
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});
+ const rejected=assert.rejects(speech,/se detuvo en este dispositivo/);
+ await settle(30);
+ assert.equal(s.voice.health().stalls,0,'a page that went away is not a device that froze');
+ assert.equal(s.voice.job?.clock?.away,true);
+ assert.equal(s.voice.health().events.some(e=>e.kind==='clock-away'),true,'and the room can read that it happened');
+ // Back on screen and running: the watchdog counts again.
+ s.context.document.hidden=false;context.state='running';
+ await settle(40);
+ await rejected;
+ assert.ok(s.voice.health().stalls>=3);
+});
+
 test('A clock that advances raises no alarm, and cancelling while the context is stopped pauses the element',async()=>{
  const s=setup();const {context,counters}=mediaOutput(s);await s.voice.unlock();
  s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;

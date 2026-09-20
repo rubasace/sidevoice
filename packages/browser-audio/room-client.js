@@ -294,6 +294,15 @@ class RoomVoice {
   const check=()=>{
    if(this.job!==job)return;
    const now=wall(),elapsed=now-job.clock.wallAt,advanced=this.context.currentTime-job.clock.timeAt;
+   // A page that went away is not a stuck device: the element is paused on purpose while the page is hidden
+   // (see the settle handler), so nothing can advance. Counting it as a stall declared perfectly good replies
+   // failed when the phone's screen locked mid-utterance (2026-09-20, read from the room's audio reports).
+   if(typeof document!=='undefined'&&document.hidden){
+    if(!job.clock.away){job.clock.away=true;this.note('clock-away',this.context.state)}
+    job.clock.wallAt=now;job.clock.timeAt=this.context.currentTime;
+    job.clock.timer=setTimeout(check,this.stallCheckMs);return;
+   }
+   job.clock.away=false;
    if(elapsed>=this.stallAfterMs){
     if(advanced<.05){
      job.clock.stalls++;this.stalls++;
