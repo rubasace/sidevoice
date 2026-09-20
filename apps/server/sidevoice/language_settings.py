@@ -57,7 +57,10 @@ class LanguageSettings(BaseModel):
     smart_turn_min_silence: float = Field(default=0.9, ge=0.1, le=3)
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
-    vad_min_volume: float = Field(default=0.35, ge=0, le=1)
+    # How loud a sound must be to count as speech at all. The room's own voice, out of a phone's speaker
+    # and back into its microphone, arrives well under a person talking into it: at 0.35 it opened turns
+    # and cut the reply that was still playing (2026-09-20, the room answering itself word for word).
+    vad_min_volume: float = Field(default=0.5, ge=0, le=1)
     # How long the detector must hear voice before it opens a turn (and interrupts a reply). 80 ms opened turns
     # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
     # Half a second held the blips off but made interrupting feel heavy from a moving car, so 0.4 (2026-09-20).
@@ -135,7 +138,10 @@ class MicSettings(BaseModel):
     smart_turn_min_silence: float = Field(default=0.9, ge=0.1, le=3)
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
-    vad_min_volume: float = Field(default=0.35, ge=0, le=1)
+    # How loud a sound must be to count as speech at all. The room's own voice, out of a phone's speaker
+    # and back into its microphone, arrives well under a person talking into it: at 0.35 it opened turns
+    # and cut the reply that was still playing (2026-09-20, the room answering itself word for word).
+    vad_min_volume: float = Field(default=0.5, ge=0, le=1)
     # How long the detector must hear voice before it opens a turn (and interrupts a reply). 80 ms opened turns
     # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
     # Half a second held the blips off but made interrupting feel heavy from a moving car, so 0.4 (2026-09-20).
