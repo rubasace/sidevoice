@@ -1243,10 +1243,9 @@ $('settings-open').onclick=async()=>{try{
  $('speed-value').textContent=Number(p.tts_speed).toFixed(2)+'×';$('settings-error').textContent='Cargando catálogos…';
  if(!$('language-settings').open)$('language-settings').showModal();
  const [catalog]=await Promise.all([api('/api/presentation/voice-catalog'),loadTranscription()]);
- voiceCatalog=catalog;const eleven=voiceCatalog.providers?.elevenlabs||{};elevenCredentials={configured:!!eleven.configured};
+ voiceCatalog=catalog;const eleven=voiceCatalog.providers?.elevenlabs||{};
  populateVoiceSettings(p);renderDefaultVoices(p.default_voice);renderLanguageRows();
- $('elevenlabs-key-state').textContent=eleven.configured?'Clave guardada':'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.';
- $('elevenlabs-key-clear').disabled=!eleven.configured;
+ await loadElevenLabs().catch(()=>{});
  $('settings-error').textContent=eleven.error||'';
 }catch(e){$('settings-error').textContent=e.message;setRoomError(e.message)}};
 $('tts-speed').oninput=()=>{$('speed-value').textContent=Number($('tts-speed').value).toFixed(2)+'×';if(voiceCatalog){storeLanguage();renderLanguageRows()}};
@@ -1292,7 +1291,7 @@ function renderTranscription(){
   $("stt-model-note").textContent=enabled.length?"":"Ningún modelo local puede correr con este procesamiento en este navegador.";
  }else{
   const models=entry?.models||[],state=sttCredentials.openai,remote=sttRemote.openai;
-  $('stt-key-state').textContent=state?.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: OpenAI no podrá transcribir hasta que guardes una.';
+  $('stt-key-state').textContent=credentialLine(state,'Sin clave: OpenAI no podrá transcribir hasta que guardes una.');
   $('stt-key-clear').disabled=!state?.configured||state.source==='environment';
   modelSelect.disabled=remote.loading;
   const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(saved||entry?.default_model||models[0]?.id);
@@ -1324,7 +1323,14 @@ $('stt-provider').onchange=()=>{$('stt-model').replaceChildren();renderTranscrip
 $('stt-device').onchange=renderTranscription;$('stt-model').onchange=renderTranscription;
 $('stt-key-save').onclick=async()=>{const key=$('stt-key').value.trim();if(!key)return;$('stt-key-save').disabled=true;$('settings-error').textContent='';$('stt-key-state').textContent='Comprobando la clave con OpenAI…';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key});sttCredentials=result.credentials||{};$('stt-key').value='';sttRemote.openai.loaded=false;await loadTranscriptionModels('openai',true)}catch(e){$('settings-error').textContent=e.message}finally{$('stt-key-save').disabled=false;renderTranscription()}};
 $('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{};const entry=sttProvider('openai');if(entry)entry.models=[];Object.assign(sttRemote.openai,{loaded:false,loading:false,error:null})}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
-async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;$('elevenlabs-key-state').textContent=state.configured?'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':''):'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.';$('elevenlabs-key-clear').disabled=!state.configured||state.source==='environment'}
+/* What a stored key looks like, said the same way for every provider: the last four digits the room
+ * returns as a hint, and where the key came from. Three places wrote this sentence by hand and one of
+ * them forgot the hint, so ElevenLabs looked less trustworthy than OpenAI for no reason (#64). */
+function credentialLine(state,missing){
+ if(!state?.configured)return missing;
+ return 'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':'');
+}
+async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;$('elevenlabs-key-state').textContent=credentialLine(state,'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.');$('elevenlabs-key-clear').disabled=!state.configured||state.source==='environment'}
 $('elevenlabs-key-save').onclick=async()=>{const key=$('elevenlabs-key').value.trim();if(!key)return;$('elevenlabs-key-save').disabled=true;$('settings-error').textContent='';$('elevenlabs-key-state').textContent='Comprobando la clave con ElevenLabs…';try{const result=await post('/api/presentation/synthesis/credential',{key});$('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=result.credentials||{};renderDefaultVoices($('default-voice').value);renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{$('elevenlabs-key-save').disabled=false;await loadElevenLabs()}};
 $('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
 $('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para aplicarlo; la llamada en curso no se interrumpe.'};

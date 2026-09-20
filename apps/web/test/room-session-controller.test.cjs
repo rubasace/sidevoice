@@ -93,7 +93,11 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
  const s=setup({strictDOM:true});
  s.context.fetch=async()=>({ok:true,json:async()=>({credentials:{configured:true,source:'stored',hint:'…test'}})});
  await s.run('loadElevenLabs()');
- assert.match(s.run("$('elevenlabs-key-state').textContent"),/Clave guardada/);
+ assert.match(s.run("$('elevenlabs-key-state').textContent"),/Clave guardada …test/,'every provider shows the same four digits');
+ // The same sentence, from the same place, for the transcription key.
+ assert.equal(s.run("credentialLine({configured:true,source:'environment',hint:'…9f2a'},'nada')"),
+  'Clave guardada …9f2a · viene del entorno de la sala');
+ assert.equal(s.run("credentialLine({configured:false},'Sin clave')"),'Sin clave');
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),false);
  s.context.fetch=async()=>({ok:true,json:async()=>({credentials:{configured:false,source:null,hint:null}})});
  await s.run('loadElevenLabs()');
