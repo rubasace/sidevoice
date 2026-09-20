@@ -1545,23 +1545,7 @@ function publishSessionView(view = roomStore.getState()) {
     // The join line has one owner: JoinStatus renders it from this same store. Writing its textContent
     // from here removed React's own children, and the next render threw NotFoundError trying to replace
     // a node that was no longer there — which unmounts the whole root and leaves the room blank (#58).
-    const badge = $('engine-badge');
-    if (badge) {
-        badge.textContent = view.engine.text;
-        badge.title = view.engine.title;
-        badge.dataset.output = view.engine.output;
-        badge.hidden = !view.engine.text;
-    }
-    const echo = view.echo, light = $('echo-cover');
-    if (light) {
-        light.hidden = !echo.state;
-        light.dataset.state = echo.state;
-        light.title = echo.note;
-    }
-    if ($('echo-cover-text'))
-        $('echo-cover-text').textContent = echo.state ? 'Eco: ' + echo.note : '';
-    if ($('echo-note'))
-        $('echo-note').textContent = echo.note;
+    // The badge, the echo light and the notes are React's, rendered from this same store (#53).
     updateComposer();
 }
 roomStore.subscribe(reconcileSession);

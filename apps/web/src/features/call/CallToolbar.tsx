@@ -1,12 +1,11 @@
 import { MicrophoneIcon, SettingsIcon } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
 import { JoinStatus } from "./JoinStatus";
-import { AudioDeviceSelects, CallButton, CapabilityCard, DeviceNotes, EngineBadge, MicControl, MuteButton } from "./CallIndicators";
+import { AudioDeviceSelects, CallButton, DeviceNotes, MicControl, MuteButton } from "./CallIndicators";
 
 export function CallToolbar() {
   return (
     <footer className="call-bar">
-      <CapabilityCard />
       <div className="controls" id="call-controls">
         <JoinStatus />
         <div id="audio-device-panel" className="audio-devices-panel" hidden>
@@ -24,7 +23,6 @@ export function CallToolbar() {
           <CallButton />
         </div>
       </div>
-      <EngineBadge />
     </footer>
   );
 }

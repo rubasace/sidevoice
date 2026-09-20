@@ -127,14 +127,12 @@ export function enginePanel(s) {
 /** What this call has switched on right now, as lights: the browser's own hardware, echo coverage, the
  *  screen. Facts about the device, not choices, which is why they sit apart from the models. */
 export function capabilityPanel(s) {
-    const rows = [], runtime = s.sttRuntime, p = s.enginePreferences || s.voicePreferences;
+    const rows = [], runtime = s.sttRuntime;
     if (runtime?.device)
         rows.push({ id: 'device', label: runtime.device === 'webgpu' ? 'GPU' : 'CPU',
             value: runtime.device === 'webgpu' ? 'La transcripción usa la GPU' : 'La transcripción usa la CPU',
             state: runtime.fallback_from ? 'warn' : 'ok',
             note: runtime.fallback_from ? 'Se pidió GPU y no pudo con el modelo.' : '' });
-    else if (p?.stt_provider === 'openai')
-        rows.push({ id: 'device', label: 'Nube', value: 'La transcripción no corre en este dispositivo', state: 'ok', note: '' });
     const echo = echoCoverage({ ...s.echoFacts, connected: !!s.ws, track: !!s.stream });
     if (echo.state)
         rows.push({ id: 'echo', label: 'Eco',

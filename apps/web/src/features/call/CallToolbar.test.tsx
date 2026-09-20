@@ -52,23 +52,6 @@ test("the call bar says what the session facts say, and asks the runtime to act"
   expect(document.getElementById("screen-note")).toHaveTextContent("No se pudo mantener la pantalla encendida");
   expect(document.getElementById("audio-device-note")).toHaveTextContent("Micrófono seleccionado.");
 
-  // Two cards: what is switched on, on the left; who answers, on the right.
-  act(() => {
-    store.patch({ stream: {}, echoFacts: { aec: false },
-      enginePreferences: { stt_provider: "openai", stt_model: "gpt-transcribe", default_model: "eleven_flash_v2_5" },
-      roomBinding: { thread_id: "t-1", binding_id: "b-1", title: "Sidevoice" },
-      people: [{ thread_id: "t-1", title: "Sidevoice", available: true, engine: { model: "claude-opus-5", effort: "high" } }] });
-  });
-  const capabilities = document.querySelector('#capability-card .status-panel');
-  expect(capabilities?.textContent).toMatch(/Eco/);
-  expect(capabilities?.textContent).toMatch(/Sin cancelación/);
-  expect(capabilities?.querySelector('[data-state="fail"]')).not.toBeNull();
-  const engines = document.querySelector('#engine-summary .status-panel');
-  expect(engines?.textContent).toMatch(/OpenAI · gpt-transcribe/);
-  expect(engines?.textContent).toMatch(/ElevenLabs/);
-  expect(engines?.textContent).toMatch(/claude-opus-5 · esfuerzo high/);
-  expect(engines?.textContent).not.toMatch(/smart-turn/);
-
   mute().click();
   screen.getByRole("button", { name: "Salir de la sala" }).click();
   expect(toggleMic).toHaveBeenCalledTimes(1);

@@ -943,7 +943,10 @@ test('The engine badge says what this call uses, in a few words',()=>{
  assert.equal(s.run("engineBadgeText({stt_provider:'openai',stt_model:'gpt-4o-transcribe',turn_end_mode:'smart_turn'},null)"),'OpenAI · gpt-4o-transcribe · smart-turn');
  assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-base',turn_end_mode:'timer',user_speech_timeout:2.5},{model:'onnx-community/whisper-base',device:'wasm'})"),'Whisper base · CPU · silencio 2,5 s');
  assert.equal(s.run("engineBadgeText({stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',turn_end_mode:'smart_turn'},{model:'onnx-community/whisper-tiny',device:'wasm',fallback_from:'webgpu'})"),'Whisper tiny · CPU (GPU falló) · smart-turn');
- s.run("roomStore.patch({engineReady:true,voicePreferences:{stt_provider:'openai',stt_model:'x'}})");assert.equal(s.run("$('engine-badge').hidden"),false);s.run("state.engineReady=false");assert.equal(s.run("$('engine-badge').hidden"),true);
+ s.run("roomStore.patch({engineReady:true,voicePreferences:{stt_provider:'openai',stt_model:'x'}})");
+ assert.ok(s.run('SessionState.engineView(state).text'),'an engine that is ready has something to say');
+ s.run("state.engineReady=false");
+ assert.equal(s.run('SessionState.engineView(state).text'),'','and one that is not says nothing, which is what hides it');
 });
 
 test('One bubble per turn: bars while listening, slower while transcribing, kept through a merge, replaced by the text',()=>{
@@ -1149,18 +1152,18 @@ test('When the room goes away the call stays up: the socket is reopened by itsel
 test('The engine badge carries the audio output health: recovering on a stall, failed on a refusal, clean once something plays',()=>{
  const s=setup();
  s.run("roomStore.patch({engineReady:true,voicePreferences:{stt_provider:'openai',stt_model:'gpt-4o'}})");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn');
+ assert.equal(s.run('SessionState.engineView(state).text'),'OpenAI · gpt-4o · smart-turn');
  s.run("noteOutputHealth('stall')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn · audio ↻');
- assert.equal(s.run("$('engine-badge').dataset.output"),'recovering');
+ assert.equal(s.run('SessionState.engineView(state).text'),'OpenAI · gpt-4o · smart-turn · audio ↻');
+ assert.equal(s.run('SessionState.engineView(state).output'),'recovering');
  s.run("noteOutputHealth('complete')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn');
+ assert.equal(s.run('SessionState.engineView(state).text'),'OpenAI · gpt-4o · smart-turn');
  s.run("noteOutputHealth('attach-refused')");
- assert.equal(s.run("$('engine-badge').textContent"),'OpenAI · gpt-4o · smart-turn · audio ✕');
+ assert.equal(s.run('SessionState.engineView(state).text'),'OpenAI · gpt-4o · smart-turn · audio ✕');
  s.run("noteOutputHealth('cancel')");
- assert.equal(s.run("$('engine-badge').dataset.output"),'failed','a cancel says nothing about health');
+ assert.equal(s.run('SessionState.engineView(state).output'),'failed','a cancel says nothing about health');
  s.run("noteOutputHealth('play-encoded')");
- assert.equal(s.run("$('engine-badge').dataset.output"),'ok');
+ assert.equal(s.run('SessionState.engineView(state).output'),'ok');
 });
 
 test('The echo light says whether the page can expect its own voice to be cancelled: mic AEC on and voice through the media element',()=>{
@@ -1170,18 +1173,18 @@ test('The echo light says whether the page can expect its own voice to be cancel
  s.context.window.roomVoice={health:()=>({output:'element',element:{paused:false}})};
  s.context.__settings=settings;
  s.run("stream={getAudioTracks:()=>[{enabled:true,getSettings:()=>globalThis.__settings}]}");
+ const echo=()=>s.run('SessionState.capabilityPanel(state)').find(row=>row.id==='echo');
  s.run('showEchoCover')();
- assert.equal(s.run("$('echo-cover').hidden"),false);
- assert.equal(s.run("$('echo-cover').dataset.state"),'on');
+ assert.equal(echo().state,'ok');
  s.context.window.roomVoice={health:()=>({output:'context',element:null})};
  s.run('showEchoCover')();
- assert.equal(s.run("$('echo-cover').dataset.state"),'partial');
- assert.match(s.run("$('echo-note').textContent"),/elemento de audio/);
+ assert.equal(echo().state,'warn');
+ assert.match(echo().note,/elemento de audio/);
  settings.echoCancellation=false;
  s.run('showEchoCover')();
- assert.equal(s.run("$('echo-cover').dataset.state"),'off');
+ assert.equal(echo().state,'fail');
  s.run("ws=null");s.run('showEchoCover')();
- assert.equal(s.run("$('echo-cover').hidden"),true,'no call, no light');
+ assert.equal(echo(),undefined,'no call, no light');
 });
 
 /* One indicator from the tap to the room: these two tests are the sequence a person reads, and what

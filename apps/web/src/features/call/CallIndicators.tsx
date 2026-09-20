@@ -8,47 +8,6 @@ import { cn } from "../../lib/cn";
  * writes them: the runtime records the fact, React paints it (#53). The microphone level is the one
  * exception, and it is not here — it changes per animation frame and the meter owns its own pixels. */
 
-/* The two corners of the call bar. Left: one light per thing this call has switched on, each with its
- * name, so nobody has to remember what a green dot meant. Right: one line per model — what listens, what
- * speaks, what thinks. Both are readable without opening anything; opening adds the why. Where there is
- * no width, they shrink to their lights (#64). */
-type StatusRow = { id: string; label: string; value: string; state: "ok" | "warn" | "fail"; note: string };
-
-function StatusCard({ id, rows, side, label, lights }: { id: string; rows: StatusRow[]; side: "start" | "end"; label: string; lights: boolean }) {
-  if (!rows.length) return null;
-  return (
-    <details id={id} className="status-card" data-side={side} data-kind={lights ? "lights" : "models"}>
-      <summary className="status-summary" aria-label={label}>
-        {rows.map((row) => (
-          <span className="status-chip" key={row.id} data-state={row.state} title={row.note || row.value}>
-            <i className="engine-dot" data-state={row.state} aria-hidden="true" />
-            <span className="status-chip-label">{lights ? row.label : row.value}</span>
-          </span>
-        ))}
-      </summary>
-      <dl className="status-panel">
-        {rows.map((row) => (
-          <div className="status-row" key={row.id} data-state={row.state}>
-            <i className="engine-dot" data-state={row.state} aria-hidden="true" />
-            <dt>{row.label}</dt>
-            <dd>{row.value}{row.note ? <small>{row.note}</small> : null}</dd>
-          </div>
-        ))}
-      </dl>
-    </details>
-  );
-}
-
-export function CapabilityCard() {
-  const rows = useRoomStore((state) => state.capabilityPanel);
-  return <StatusCard id="capability-card" rows={rows} side="start" label="Lo que está activo en esta llamada" lights />;
-}
-
-export function EngineBadge() {
-  const rows = useRoomStore((state) => state.enginePanel);
-  return <StatusCard id="engine-summary" rows={rows} side="end" label="Qué modelos responden" lights={false} />;
-}
-
 export function ScreenLock() {
   const lock = useRoomStore((state) => state.screenLock);
   return (
