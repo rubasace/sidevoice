@@ -656,6 +656,23 @@ class ReplayOnReturnTests(RoomFixture):
         self.assertEqual(self.row('missed', 'one')['status'], 'playback_finished',
                          'the row carries the furthest any listener got, and now someone got to the end')
 
+    async def test_a_reply_nobody_was_there_to_hear_waits_for_the_first_who_returns(self):
+        # Published against a session this room no longer knows (a restart, a reload), with nobody on the
+        # conversation: it used to be text for ever. It is a first delivery delayed, so it is kept and the
+        # returning browser hears it through the ordinary replay — rendered now, for the first time (#17).
+        self.voice = ELEVEN
+        result = await self.hub.publish(Speech(thread_id='task', session_id='ghost', revision=3,
+                                               text='Llegó cuando no estabas', utterance_id='parked'))
+        self.assertEqual((result['status'], result['reason']), ('text_only', 'session_changed'))
+        self.assertTrue(self.hub.utterances['parked'].parked)
+        self.assertEqual(self.renders, [], 'nothing is rendered for nobody')
+        back, summary = await self.returning('back', sessions=[])
+        self.assertEqual([item['history_id'] for item in summary['replayed']], ['ghost:voice:parked'])
+        self.assertEqual(summary['skipped'], [], 'a reply never bought is bought once, not refused as gone')
+        await self.heard_to_the_end(back, 'parked:replay:back')
+        self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Llegó cuando no estabas')])
+        self.assertEqual(self.row('parked', 'ghost')['status'], 'playback_finished')
+
     async def test_a_paid_render_the_room_no_longer_has_is_said_and_never_bought_again(self):
         self.voice = ELEVEN
         first = self.browser('one')

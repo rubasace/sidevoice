@@ -263,7 +263,9 @@ export function offlineNote(r) {
         : 'Capturado sin conexión';
 }
 export function audioNote(r) {
-    const reasons = { newer_turn: 'Empezaste otra intervención', user_speaking: 'Estabas hablando', focus_changed: 'Cambiaste de conversación', call_ended: 'Llamada desconectada', session_changed: 'La llamada había cambiado', expired_audio_turn: 'El turno de audio había caducado', queue_full: 'Cola de audio llena', user_interrupted: 'Interrumpiste el audio', playback_failed: 'Falló la reproducción', service_restarted: 'Se reinició el servicio', channel_closed: 'Canal de voz cerrado' };
+    // Three of these mean nobody was listening when the reply arrived; the room keeps it and repeats it when
+    // someone returns to the conversation, and the note says so instead of describing a socket.
+    const reasons = { newer_turn: 'Empezaste otra intervención', user_speaking: 'Estabas hablando', focus_changed: 'No estabas en esta conversación · Se repite al volver', call_ended: 'No estabas en la llamada · Se repite al volver', session_changed: 'No estabas en la llamada · Se repite al volver', expired_audio_turn: 'El turno de audio había caducado', queue_full: 'Cola de audio llena', user_interrupted: 'Interrumpiste el audio', playback_failed: 'Falló la reproducción', service_restarted: 'Se reinició el servicio', channel_closed: 'Canal de voz cerrado' };
     const reason = reasons[r.audio_reason];
     if (r.audio === 'waiting_for_pause')
         return 'Audio pendiente · Breve pausa antes de hablar';

@@ -31,6 +31,8 @@ CLIENT_TERMINAL = {'interrupted', 'failed', 'disconnected', 'playback_finished'}
 # reply either ran to the end, or that listener stopped it on purpose. Everything else — queued,
 # waiting, synthesizing, cut off mid-sentence when the socket went, failed — it never got through.
 HEARD = {'playback_finished', 'interrupted'}
+# Denials that mean "nobody on this conversation was listening", as opposed to "someone was and chose otherwise".
+PARKABLE = {'session_changed', 'call_ended', 'focus_changed'}
 # What the journal row says about an utterance: the furthest any listener got.
 RANK = {'disconnected': 1, 'failed': 2, 'interrupted': 3, 'queued': 4,
         'waiting_for_turn': 5, 'waiting_for_pause': 5, 'synthesizing': 6,
@@ -46,6 +48,8 @@ class Utterance:
         self.row_id = row_id
         self.at = time.time() if at is None else at   # when the room published it: what "recent enough" reads
         self.replay_of = None   # the reply this one repeats, when it is a catch-up rather than an answer
+        self.parked = False     # published when nobody on its conversation was listening: never rendered, never heard
+        self.first_render = False  # a catch-up of a parked reply: its render is a first purchase, not a repeat
         self.clients = {}       # client id -> {'status': ..., 'reason': ...}
         self.published = None   # last (status, reason) written to the journal
 
@@ -380,11 +384,12 @@ class RoomClient:
             self.telemetry.synthesis(uid, provider=choice['provider'], model=choice.get('model'))
             self.on_browser_event({'type': 'voice-speech', 'data': {**common, **choice}})
             return
-        if utterance.replay_of:
+        if utterance.replay_of and not utterance.first_render:
             # A paid engine renders once and the room keeps that render in a bounded cache. Repeating
             # what someone missed must not bill the account again, so a catch-up uses the render the
             # room already has or nothing at all: between the offer and this moment the cache may have
-            # dropped it, and then this one is let go and the queue carries on.
+            # dropped it, and then this one is let go and the queue carries on. A parked reply is the
+            # exception by definition: nobody ever heard it, so nothing was ever bought for it.
             audio, fresh = self.room.stored_audio(utterance, choice), False
             if audio is None:
                 self.transition(uid, 'failed', 'replay_audio_gone')
@@ -606,14 +611,16 @@ class Room:
                 choice = resolve_voice(client.settings or load_settings(), original.language)
             except ValueError:
                 choice = {'provider': 'kokoro'}
-            if choice['provider'] != 'kokoro' and self.stored_audio(original, choice) is None:
-                # The room no longer has that audio and will not invent it or buy it again.
+            if choice['provider'] != 'kokoro' and not original.parked and self.stored_audio(original, choice) is None:
+                # The room no longer has that audio and will not invent it or buy it again. A parked reply
+                # was never bought at all: rendering it now is its first time, not a second.
                 skipped.append({'history_id': original.row_id, 'reason': 'audio_gone'})
                 continue
             echo = Utterance(original.id + ':replay:' + client.id, original.text,
                              language=original.language, thread_id=original.thread_id,
                              revision=client.revision, row_id=original.row_id, at=original.at)
             echo.replay_of = original.id
+            echo.first_render = original.parked
             echo.clients[client.id] = {'status': 'queued', 'reason': 'replay'}
             self.utterances[echo.id] = echo
             client.pending.append(echo.id)
@@ -698,6 +705,16 @@ class Room:
             client.telemetry.reply_received(payload.utterance_id, payload.thread_id, payload.revision)
         if not decision.can_speak:
             self.journal.update(row_id, 'text_only', decision.reason)
+            # Nobody on this conversation was listening — the asker's session is gone, the call ended, or the
+            # person was looking at another conversation. That is a first delivery delayed, not a reply
+            # answered: it is kept, unrendered and unheard, so the next browser that returns to this
+            # conversation gets it through the same replay as anything else it missed (#17, 2026-09-20).
+            if (decision.reason in PARKABLE and payload.utterance_id not in self.utterances
+                    and len(self.utterances) < self.MAX_UTTERANCES):
+                parked = Utterance(payload.utterance_id, payload.text, language=payload.language,
+                                   thread_id=payload.thread_id, revision=payload.revision, row_id=row_id)
+                parked.parked = True
+                self.utterances[payload.utterance_id] = parked
             return {'status': 'text_only', 'text_saved': True, 'reason': decision.reason}
         try:
             result = await self.speak(payload.text, payload.utterance_id, payload.session_id,

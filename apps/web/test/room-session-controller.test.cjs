@@ -380,7 +380,8 @@ test('Final messages use send timestamps, even when answering an older turn',()=
 test('The UI distinguishes audio suppression reasons without inferring unknown ones',()=>{
  const s=setup();
  assert.equal(s.run("audioNote({audio:'text_only',audio_reason:'newer_turn'})"),'Sin audio · Empezaste otra intervención');
- assert.equal(s.run("audioNote({audio:'text_only',audio_reason:'focus_changed'})"),'Sin audio · Cambiaste de conversación');
+ assert.equal(s.run("audioNote({audio:'text_only',audio_reason:'focus_changed'})"),'Sin audio · No estabas en esta conversación · Se repite al volver');
+ assert.equal(s.run("audioNote({audio:'text_only',audio_reason:'session_changed'})"),'Sin audio · No estabas en la llamada · Se repite al volver','a reply nobody heard says what the room will do, not what a socket did');
  assert.equal(s.run("audioNote({audio:'text_only'})"),'Sin audio · Motivo no registrado');
 });
 
