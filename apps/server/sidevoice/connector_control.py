@@ -26,6 +26,15 @@ HARNESS_CAPABILITIES = ('deliver', 'inspectInbound', 'working', 'endOfTurn', 'se
 CAPABILITY_STATES = {'supported', 'unsupported'}
 
 
+def engine_of(value):
+    """Which model answers this conversation, as its harness read it from its own launch line. Absent
+    rather than guessed: no model is asked to say what it is."""
+    if not isinstance(value, dict):
+        return None
+    kept = {key: str(value[key])[:60] for key in ('model', 'effort', 'thinking') if value.get(key)}
+    return kept or None
+
+
 def harness_capabilities(value):
     """Normalize the wire declaration. Missing and invalid values stay unknown, never false."""
     declared = value if isinstance(value, dict) else {}
@@ -188,7 +197,8 @@ class ConnectorControl:
             binding = self.journal.register_binding(connector_id, harness=str(message.get('harness') or 'unknown')[:40],
                                                     thread=thread, title=(message.get('title') or None) and str(message['title'])[:200],
                                                     binding_id=message.get('binding_id'), inbound=inbound,
-                                                    capabilities=harness_capabilities(message.get('capabilities')))
+                                                    capabilities=harness_capabilities(message.get('capabilities')),
+                                                    engine=engine_of(message.get('engine')))
         except ValueError as error:
             await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': str(error)})
             return

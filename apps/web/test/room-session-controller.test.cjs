@@ -1259,6 +1259,23 @@ function presenceSetup(preferences="{presence_sound:'on'}"){
   flush(){for(const [id,timer] of [...timers]){timers.delete(id);timer.fn()}}};
 }
 const OWN_TURN={revision:1,thread_id:'a',session_id:'s'};
+test('A control the person never saw does not decide anything',async()=>{
+ // A pane that is hidden, or a catalogue still loading, leaves its select empty. Reading that as a choice
+ // turned a saved OpenAI transcription into the browser's, silently (2026-09-20).
+ const s=setup();const stored=[];
+ s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};
+ s.run(`ws=null;voiceCatalog={languages:[],models:[]};
+  voicePreferences={stt_provider:'openai',stt_model:'gpt-4o-transcribe',stt_device:'auto',default_model:'eleven_flash_v2_5',turn_patience:'calm'}`);
+ for(const id of ['stt-provider','stt-model','tts-device','default-model','turn-patience'])s.run(`$('${id}').value=''`);
+ await s.run("$('language-form').onsubmit({preventDefault(){}})");
+ const saved=stored.at(-1)[1];
+ assert.equal(saved.stt_provider,'openai','an empty provider select is not a switch to the browser');
+ assert.equal(saved.stt_model,'gpt-4o-transcribe');
+ assert.equal(saved.default_model,'eleven_flash_v2_5');
+ assert.equal(saved.turn_patience,'calm');
+ assert.equal(saved.tts_device,'auto');
+});
+
 test('Saving the settings form stores every device setting, the ambient bed among them',async()=>{
  const s=setup();const stored=[];
  s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};

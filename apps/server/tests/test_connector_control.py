@@ -54,6 +54,20 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(.05)
         return socket, task
 
+    async def test_a_binding_carries_which_model_answers_it(self):
+        # Read by the harness from its own launch line, never asked of the model itself.
+        socket = FakeSocket([])
+        await self.control.register(self.connector_id, socket, {'type': 'binding.register', 'client_ref': 'thread-a',
+            'thread': 'thread-a', 'harness': 'claude', 'title': 'A',
+            'engine': {'model': 'claude-opus-5', 'effort': 'high', 'thinking': 'adaptive', 'junk': 'x'}})
+        binding = self.control.participants()[0]
+        self.assertEqual(binding['engine'], {'model': 'claude-opus-5', 'effort': 'high', 'thinking': 'adaptive'},
+                         'only the three fields, and nothing invented')
+        # A harness that cannot tell says nothing, and nothing is stored.
+        await self.control.register(self.connector_id, socket, {'type': 'binding.register', 'client_ref': 'thread-b',
+            'thread': 'thread-b', 'harness': 'codex', 'title': 'B', 'engine': 'gpt'})
+        self.assertIsNone(self.control.participants()[1]['engine'])
+
     async def test_pairing_is_one_time_and_credentials_are_checked(self):
         code = self.journal.create_pairing_code()
         first = self.journal.redeem_pairing_code(code)

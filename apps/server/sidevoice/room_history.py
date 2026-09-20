@@ -193,7 +193,7 @@ class RoomHistory:
 
     # ----- bindings: which connector serves which conversation (memory only) -----
 
-    def register_binding(self, connector, *, harness, thread, title=None, binding_id=None, inbound=None, capabilities=None):
+    def register_binding(self, connector, *, harness, thread, title=None, binding_id=None, inbound=None, capabilities=None, engine=None):
         """Server-minted ids. Reusing another connector's binding is refused; an id this room no longer
         knows (it restarted) is simply a fresh registration, so a façade never stays joined to nothing."""
         if not isinstance(thread, str) or not thread or len(thread) > 200:
@@ -212,10 +212,13 @@ class RoomHistory:
                 row['inbound'] = json.dumps(inbound)
             if capabilities is not None:
                 row['capabilities'] = dict(capabilities)
+            if engine is not None:
+                row['engine'] = dict(engine)
             return dict(row)
         new = {'id': str(uuid.uuid4()), 'connector': connector, 'harness': harness, 'thread': thread, 'title': title,
                'created': int(time.time()), 'active': 1, 'inbound': json.dumps(inbound) if inbound is not None else None,
-               'capabilities': dict(capabilities) if capabilities is not None else None}
+               'capabilities': dict(capabilities) if capabilities is not None else None,
+               'engine': dict(engine) if engine is not None else None}
         self._bindings[new['id']] = new
         return dict(new)
 

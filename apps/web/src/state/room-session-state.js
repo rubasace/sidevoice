@@ -101,40 +101,53 @@ export function engineView(s) {
     const base = s.engineReady ? engineBadgeText(s.enginePreferences || s.voicePreferences, s.sttRuntime) : '';
     return { text: base ? base + OUTPUT_MARKS[s.outputHealth] : '', title: base ? base + ' · ' + OUTPUT_TITLES[s.outputHealth] : '', output: s.outputHealth };
 }
-const PATIENCE_LABELS = { fast: 'rápido', normal: 'normal', calm: 'tranquilo' };
-const VOICE_LABELS = { kokoro: 'Este navegador · Kokoro' };
-/** What is doing the work, one line per thing, each with a light. Context for the corner of the call bar:
- *  nobody needs it to talk, and everybody wants it when something sounds wrong. */
+const VOICE_LABELS = { kokoro: 'Kokoro · en este navegador' };
+/** Who is answering: one row per model, and the agent's own when its harness could read it. No row for
+ *  anything that is not a choice — how a turn ends is the room's and the same for everyone. */
 export function enginePanel(s) {
-    const p = s.enginePreferences || s.voicePreferences, runtime = s.sttRuntime;
-    const rows = [];
+    const p = s.enginePreferences || s.voicePreferences, runtime = s.sttRuntime, rows = [];
     if (p) {
         const local = String(runtime?.model || p.stt_model || '').split('/').pop().replace('whisper-', 'Whisper ');
-        const where = runtime?.device === 'webgpu' ? 'GPU' : runtime?.device === 'wasm' ? 'CPU' : '';
-        rows.push({ id: 'stt', label: 'Transcripción',
-            value: p.stt_provider === 'openai' ? 'OpenAI · ' + (p.stt_model || '') : [local, where].filter(Boolean).join(' · '),
+        rows.push({ id: 'stt', label: 'Escucha',
+            value: p.stt_provider === 'openai' ? 'OpenAI · ' + (p.stt_model || '') : local + ' · en este navegador',
             state: runtime?.fallback_from ? 'warn' : 'ok',
             note: runtime?.fallback_from ? 'La GPU no pudo con el modelo; va por CPU.' : '' });
         const model = String(p.default_model || 'kokoro');
-        rows.push({ id: 'tts', label: 'Voz',
+        rows.push({ id: 'tts', label: 'Habla',
             value: VOICE_LABELS[model] || 'ElevenLabs · ' + model.replace(/^eleven_/, '').replace(/_/g, ' '),
             state: 'ok', note: '' });
-        rows.push({ id: 'turn', label: 'Turnos',
-            value: 'smart-turn · ' + (PATIENCE_LABELS[p.turn_patience] || 'normal'), state: 'ok', note: '' });
     }
-    rows.push({ id: 'output', label: 'Salida de audio',
-        value: s.outputHealth === 'failed' ? 'Falló' : s.outputHealth === 'recovering' ? 'Recuperándose' : 'En orden',
-        state: s.outputHealth === 'failed' ? 'fail' : s.outputHealth === 'recovering' ? 'warn' : 'ok',
-        note: OUTPUT_TITLES[s.outputHealth] });
+    const engine = s.people?.find(person => person.thread_id === selectedThread(s))?.engine;
+    if (engine?.model)
+        rows.push({ id: 'agent', label: 'Piensa',
+            value: [engine.model, engine.effort && 'esfuerzo ' + engine.effort].filter(Boolean).join(' · '),
+            state: 'ok', note: '' });
+    return rows;
+}
+/** What this call has switched on right now, as lights: the browser's own hardware, echo coverage, the
+ *  screen. Facts about the device, not choices, which is why they sit apart from the models. */
+export function capabilityPanel(s) {
+    const rows = [], runtime = s.sttRuntime, p = s.enginePreferences || s.voicePreferences;
+    if (runtime?.device)
+        rows.push({ id: 'device', label: runtime.device === 'webgpu' ? 'WebGPU' : 'CPU',
+            value: runtime.device === 'webgpu' ? 'La transcripción usa la GPU' : 'La transcripción usa la CPU',
+            state: runtime.fallback_from ? 'warn' : 'ok',
+            note: runtime.fallback_from ? 'Se pidió GPU y no pudo con el modelo.' : '' });
+    else if (p?.stt_provider === 'openai')
+        rows.push({ id: 'device', label: 'En la nube', value: 'La transcripción no usa este dispositivo', state: 'ok', note: '' });
     const echo = echoCoverage({ ...s.echoFacts, connected: !!s.ws, track: !!s.stream });
     if (echo.state)
         rows.push({ id: 'echo', label: 'Eco',
-            value: echo.state === 'on' ? 'Cubierto' : echo.state === 'partial' ? 'Parcial' : 'Sin cancelación',
+            value: echo.state === 'on' ? 'Cancelación activa' : echo.state === 'partial' ? 'Cobertura parcial' : 'Sin cancelación',
             state: echo.state === 'on' ? 'ok' : echo.state === 'partial' ? 'warn' : 'fail', note: echo.note });
     if (s.screenLock?.state)
         rows.push({ id: 'screen', label: 'Pantalla',
             value: s.screenLock.state === 'on' ? 'Se mantiene encendida' : 'No se pudo mantener',
             state: s.screenLock.state === 'on' ? 'ok' : 'warn', note: s.screenLock.note });
+    rows.push({ id: 'output', label: 'Salida',
+        value: s.outputHealth === 'failed' ? 'El audio falló' : s.outputHealth === 'recovering' ? 'Recuperándose' : 'Audio en orden',
+        state: s.outputHealth === 'failed' ? 'fail' : s.outputHealth === 'recovering' ? 'warn' : 'ok',
+        note: OUTPUT_TITLES[s.outputHealth] });
     return rows;
 }
 export function playbackState(r, s) {
@@ -219,7 +232,7 @@ export function createRoomSessionStore(seed = {}) {
         return { facts, session: sessionStatus(facts), conversation: conversationView(facts), participants: participantsView(facts),
             join: joinView(facts), engine: engineView(facts), echo: echoCoverage({ ...facts.echoFacts, connected: !!facts.ws, track: !!facts.stream }), live: liveText(facts),
             mic: micView(facts), call: callView(facts), title: viewedTitle(facts), screenLock: facts.screenLock, deviceNote: facts.deviceNote,
-            enginePanel: enginePanel(facts),
+            enginePanel: enginePanel(facts), capabilityPanel: capabilityPanel(facts),
             audioDevices: facts.audioDevices,
             bootError: facts.bootError, languageModels: facts.languageModels };
     }

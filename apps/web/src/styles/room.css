@@ -103,32 +103,36 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 @media(max-width:600px){.call-bar{padding:10px 12px calc(10px + env(safe-area-inset-bottom))}.call-actions{gap:12px}.audio-devices-panel{grid-template-columns:minmax(0,1fr) 40px;padding:16px 14px 8px}.audio-device-choice{grid-column:1}.device-settings{grid-column:2;grid-row:1/3;align-self:center}.audio-devices-panel select{font-size:13px}.stats-cards{grid-template-columns:1fr}.stats-cards>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:14px}.stats-cards strong{grid-column:2;grid-row:1/3;margin:0;font-size:26px;align-self:center}.stats-cards small{grid-column:1}.connection-facts{grid-template-columns:1fr;gap:3px}.connection-facts dd{margin-bottom:10px}#connection-stats{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);border-radius:18px}.stats-heading,.stats-footer{padding:16px}.stats-body{padding:4px 16px 20px}}
 
 /* Which engine, model and processor this call is using: small, next to the controls, never in the way. */
-/* The corner status card: one light and one line per thing, opening upward so it never moves the call
-   buttons. Collapsed it is a pill; on a narrow screen, the light and three dots. */
-.call-bar .engine-summary{grid-column:3;grid-row:1;justify-self:end;align-self:center;position:relative;margin-inline-end:4px}
-.engine-badge{display:inline-flex;align-items:center;gap:7px;max-width:min(40vw,300px);padding:5px 10px;border-radius:999px;
+/* Two corner cards: what is switched on (left) and who answers (right). Each row is a light and a line;
+   both open upward, and both shrink to the light and three dots when there is no width. */
+.call-bar .status-card{grid-row:1;align-self:center;position:relative;min-width:0}
+.call-bar .status-card[data-side="start"]{grid-column:1;justify-self:start;margin-inline-start:4px}
+.call-bar .status-card[data-side="end"]{grid-column:3;justify-self:end;margin-inline-end:4px}
+.status-pill{display:inline-flex;align-items:center;gap:7px;max-width:min(34vw,260px);padding:5px 10px;border-radius:999px;
  font-size:11px;line-height:1.3;color:#c3ccd6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
  background:#1b1f24;border:1px solid #2a3139;cursor:pointer;list-style:none;transition:border-color .15s ease}
-.engine-badge::-webkit-details-marker{display:none}
-.engine-badge:hover,.engine-summary[open] .engine-badge{border-color:#3f4b5a;color:#e8edf1}
-.engine-badge-text{overflow:hidden;text-overflow:ellipsis}
-.engine-badge-dots{display:none;font-size:15px;line-height:1;letter-spacing:1px}
+.status-pill::-webkit-details-marker{display:none}
+.status-pill:hover,.status-card[open] .status-pill{border-color:#3f4b5a;color:#e8edf1}
+.status-pill-text{overflow:hidden;text-overflow:ellipsis}
+.status-pill-dots{display:none;font-size:15px;line-height:1;letter-spacing:1px}
 .engine-dot{width:7px;height:7px;border-radius:50%;flex:none;background:#64a64d;box-shadow:0 0 6px #64a64d80}
 .engine-dot[data-state="warn"]{background:#e0a640;box-shadow:0 0 6px #e0a64080}
 .engine-dot[data-state="fail"]{background:#ff7272;box-shadow:0 0 6px #ff727280}
-.engine-summary-panel{position:absolute;bottom:calc(100% + 8px);inset-inline-end:0;z-index:5;width:max-content;max-width:min(80vw,340px);
+.status-panel{position:absolute;bottom:calc(100% + 8px);z-index:5;width:max-content;max-width:min(82vw,340px);
  margin:0;padding:10px;border-radius:14px;background:#202124;border:1px solid #2a3139;box-shadow:0 10px 30px #000a;display:grid;gap:2px}
-.engine-row{display:grid;grid-template-columns:auto minmax(88px,auto) 1fr;align-items:baseline;gap:8px;padding:6px 8px;border-radius:10px}
-.engine-row:hover{background:#252b33}
-.engine-row .engine-dot{align-self:center}
-.engine-row dt{color:#96a2b0;font-size:11px;margin:0}
-.engine-row dd{margin:0;color:#e8edf1;font-size:12px;display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
-.engine-row dd small{color:#8e9aa8;font-size:10.5px;line-height:1.35}
-@media(max-width:750px){
- .engine-badge{max-width:none;padding:5px 8px}
- .engine-badge-text{display:none}
- .engine-badge-dots{display:inline}
- .engine-summary-panel{max-width:min(88vw,340px)}
+.status-card[data-side="start"] .status-panel{inset-inline-start:0}
+.status-card[data-side="end"] .status-panel{inset-inline-end:0}
+.status-row{display:grid;grid-template-columns:auto minmax(64px,auto) 1fr;align-items:baseline;gap:8px;padding:6px 8px;border-radius:10px}
+.status-row:hover{background:#252b33}
+.status-row .engine-dot{align-self:center}
+.status-row dt{color:#96a2b0;font-size:11px;margin:0}
+.status-row dd{margin:0;color:#e8edf1;font-size:12px;display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
+.status-row dd small{color:#8e9aa8;font-size:10.5px;line-height:1.35}
+@media(max-width:900px){
+ .status-pill{max-width:none;padding:5px 8px}
+ .status-pill-text{display:none}
+ .status-pill-dots{display:inline}
+ .status-panel{max-width:min(88vw,340px)}
 }
 .screen-lock{display:inline-flex;align-items:center;align-self:center;margin-inline-end:8px}
 .screen-lock[hidden]{display:none}
