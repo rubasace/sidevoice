@@ -1259,6 +1259,23 @@ function presenceSetup(preferences="{presence_sound:'on'}"){
   flush(){for(const [id,timer] of [...timers]){timers.delete(id);timer.fn()}}};
 }
 const OWN_TURN={revision:1,thread_id:'a',session_id:'s'};
+test('A browser that cannot transcribe refuses at once instead of being waited for',()=>{
+ // Ninety seconds of silence and then a timeout is not an answer (2026-09-20, a phone whose Whisper
+ // never loaded: every turn cost a minute and a half and said nothing).
+ const s=setup();const sent=[];
+ s.run("sessionId='call-1';ws={readyState:1,send(value){sentFrame(value)}}");
+ s.context.sentFrame=value=>sent.push(JSON.parse(value));
+ s.context.window.roomTranscription=undefined;
+ s.run("message(JSON.stringify({type:'voice-transcribe',data:{session_id:'call-1',request_id:'r-1'}}))");
+ assert.equal(sent.at(-1).type,'voice-transcript-error');
+ assert.equal(sent.at(-1).data.request_id,'r-1');
+ assert.match(sent.at(-1).data.error,/no tiene lista la transcripción/);
+ // One that throws is reported with its own reason rather than swallowed.
+ s.context.window.roomTranscription={transcribe(){throw Error('WebGPU se cayó')}};
+ s.run("message(JSON.stringify({type:'voice-transcribe',data:{session_id:'call-1',request_id:'r-2'}}))");
+ assert.equal(sent.at(-1).data.error,'WebGPU se cayó');
+});
+
 test('A control the person never saw does not decide anything',async()=>{
  // A pane that is hidden, or a catalogue still loading, leaves its select empty. Reading that as a choice
  // turned a saved OpenAI transcription into the browser's, silently (2026-09-20).

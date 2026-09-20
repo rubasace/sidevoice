@@ -668,6 +668,9 @@ function browserLatency(d,received){
  return Object.fromEntries(Object.entries(durations).filter(([,v])=>Number.isFinite(v)&&v>=0&&v<=3600000));
 }
 function message(raw){return roomStore.batch(()=>recordMessage(raw))}
+function refuseTranscription(d, error) {
+ try{state.ws?.send(JSON.stringify({type:'voice-transcript-error',data:{session_id:state.sessionId,request_id:d.request_id,error}}))}catch{}
+}
 function recordMessage(raw) {
     let m;
     try {
@@ -681,8 +684,15 @@ function recordMessage(raw) {
         return;
     observeLatencyEvent(t, d);
     if (t === 'voice-transcribe') {
-        if (d.session_id === state.sessionId)
-            window.roomTranscription.transcribe(d);
+        // A request this browser cannot serve is refused now, not left for the room to time out ninety
+        // seconds later with nothing to say (2026-09-20, a phone whose Whisper never loaded).
+        if (d.session_id !== state.sessionId)
+            return;
+        const runtime = window.roomTranscription;
+        if (typeof runtime?.transcribe !== 'function')
+            return refuseTranscription(d, 'Este navegador no tiene lista la transcripción.');
+        try { runtime.transcribe(d); }
+        catch (error) { refuseTranscription(d, error?.message || 'La transcripción falló en este navegador.'); }
         return;
     }
     if (t === 'voice-speech') {

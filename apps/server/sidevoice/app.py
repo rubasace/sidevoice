@@ -356,6 +356,9 @@ class VoiceCall:
                 result = await self.transcriber.transcribe_turn()
                 if result is not None:
                     text, metrics = result.text.strip(), dict(result.metrics or {})
+            except asyncio.TimeoutError:
+                failed = ('La transcripción de este navegador no contestó. Si el dispositivo no puede con Whisper, '
+                          'cambia el motor de transcripción a OpenAI en los ajustes.')
             except Exception as error:
                 failed = 'No se pudo transcribir tu intervención: ' + (str(error) or type(error).__name__)
             transcript_at = time.monotonic()
