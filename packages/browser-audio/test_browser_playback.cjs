@@ -232,7 +232,7 @@ test('A clock that advances raises no alarm, and cancelling while the context is
  assert.equal(counters.paused,pausedBefore+1,'a cancel while the context is stopped pauses the element so it cannot loop');
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
  const health=s.voice.health();
- assert.deepEqual(Object.keys(health).sort(),['clock','context','element','events','output','playing','presence','resuming','stalls']);
+ assert.deepEqual(Object.keys(health).sort(),['buffer_rate','clock','context','element','events','output','playing','presence','rate','resuming','stalls']);
 });
 
 test('A barge-in fades the voice out through its own gain instead of cutting the sink last input dead',async()=>{

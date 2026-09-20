@@ -213,7 +213,7 @@ class VoiceCall:
             # What the browser's output did lately (stalls, cancels, refusals), so a stuck phone can be read from the room.
             health = data.get('health') if isinstance(data.get('health'), dict) else {}
             self.call.audio_health = {'reason': str(data.get('reason') or '')[:40], 'at': time.time(),
-                                      **{key: health.get(key) for key in ('context', 'clock', 'output', 'element', 'playing', 'stalls', 'resuming')},
+                                      **{key: health.get(key) for key in ('context', 'clock', 'output', 'element', 'playing', 'stalls', 'resuming', 'rate', 'buffer_rate')},
                                       'events': [event for event in (health.get('events') or []) if isinstance(event, dict)][-24:]}
             # The browser that reports a stuck output is usually reloaded seconds later: the report outlives it.
             if self.call.room is not None:

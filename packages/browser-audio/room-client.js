@@ -41,8 +41,19 @@ class RoomVoice {
   const element=this.output?.element;
   return {context:this.context?.state||'none',clock:this.context?Math.round(this.context.currentTime*1000)/1000:null,
    output:element?'element':(this.context?'context':'none'),
+   rate:this.context?.sampleRate||null,buffer_rate:this.lastBufferRate||null,
    element:element?{paused:!!element.paused,readyState:element.readyState??null}:null,
    playing:!!this.job?.playing,presence:this.presence?this.presence.volume:null,stalls:this.stalls,resuming:!!this.resuming,events:this.events.slice(-12)};
+ }
+ /* A voice that starts low and climbs is a rate that changed under it: the phone moved between its speaker
+  * and a Bluetooth headset, or the buffer was made for a rate the output no longer has. The engine cannot
+  * stop the route from moving, but it can say so instead of leaving someone guessing (2026-09-20). */
+ watchRate(bufferRate){
+  const rate=this.context?.sampleRate||null;
+  if(bufferRate)this.lastBufferRate=bufferRate;
+  if(rate&&this.knownRate&&rate!==this.knownRate)this.note('rate-changed',this.knownRate+' → '+rate);
+  if(rate)this.knownRate=rate;
+  if(rate&&bufferRate&&Math.abs(rate-bufferRate)>1&&!this.mismatchNoted){this.mismatchNoted=true;this.note('rate-mismatch',bufferRate+' en un contexto de '+rate)}
  }
  announce(text,phase='loading',progress=null){if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('voice-preparation',{detail:{text,phase,progress}}))}
  async unlock(){this.context??=new AudioContext();await this.context.resume();if(this.context.state!=='running'){this.note('unlock-refused',this.context.state);throw Error('Permite reproducir audio en este navegador.')}await this.ensureOutput();this.greet()}
@@ -339,6 +350,7 @@ class RoomVoice {
   if(d.type==='ready'){this.ready=true;this.announce('','hidden');job.status('Modelo listo · '+(d.device==='webgpu'?'GPU':'CPU'));if(job.load)this.complete(job)}
   if(d.type==='error')this.fail(Error(d.error));
   if(d.type==='audio'){this.announce('','hidden');if(this.context.state!=='running'){this.note('audio-while-stopped',this.context.state);this.resumeOutput()}
+   this.watchRate(d.sampleRate);
    const buffer=this.context.createBuffer(1,d.samples.length,d.sampleRate);buffer.copyToChannel(d.samples,0);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.outlet(job));
    const start=Math.max(this.context.currentTime+.03,job.end);job.end=start+buffer.duration;job.sources.add(source);
@@ -370,6 +382,7 @@ class RoomVoice {
     const buffer=await this.context.decodeAudioData(bytes.buffer);
     if(this.job!==job)return;
     clearTimeout(job.timer);
+    this.watchRate(buffer.sampleRate);
     const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.outlet(job));job.sources.add(source);
     source.onended=()=>{job.sources.delete(source);if(this.job===job)this.complete(job)};
     const start=this.context.currentTime;
