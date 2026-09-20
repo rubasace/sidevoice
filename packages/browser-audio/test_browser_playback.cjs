@@ -257,6 +257,24 @@ test('Cutting a voice mid-utterance leaves half a second of silence in the sink,
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
 });
 
+test('A voice that ends on its own leaves the same silence behind as one that is cut',async()=>{
+ // An empty sink loops its last instant on iPhone Safari: that is the crackle under a quiet room.
+ const s=setup();const {context}=mediaOutput(s);await s.voice.unlock();
+ const made=[];context.createBufferSource=()=>{const src={connect(target){src.target=target},start(when){src.startedAt=when},stop(){src.stopped=true}};made.push(src);s.sources.push(src);return src};
+ context.createBuffer=(channels,frames,rate)=>({duration:frames/rate,channels,frames,rate,copyToChannel(){}});
+ context.sampleRate=48000;
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(made.length,1);assert.equal(s.voice.job.playing,true);
+ context.currentTime=4;
+ made[0].onended();
+ await speech;
+ assert.equal(made.length,2,'the end of the voice is followed into the sink');
+ assert.equal(made[1].target,s.voice.output.sink);
+ assert.equal(made[1].buffer.duration,.5);
+ assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['complete','complete-tail']));
+});
+
 test('A fresh output is greeted once: audible notes first, then silence long enough for the element to start',async()=>{
  const s=setup();const {context}=mediaOutput(s);
  const made=[];let written=null;
