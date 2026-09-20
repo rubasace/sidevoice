@@ -389,6 +389,20 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         voice.turn_started(); await voice.turn_stopped()
         self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')][-1], 'Y esto va aparte.')
 
+    async def test_the_bar_to_open_a_turn_rises_while_this_browser_is_playing_a_reply(self):
+        # The room answered itself on 2026-09-20: its own voice out of the phone's speaker opened a turn,
+        # cut the reply that was still playing and came back as a message with the room's own words.
+        from sidevoice.app import SPEAKING_MIN_VOLUME
+        voice, client, sent = self.voice([])
+        changes = []
+        voice.vad = type('FakeVAD', (), {'set_params': lambda _self, params: changes.append(params.min_volume)})()
+        voice.mic = type('Mic', (), {'vad_start_secs': 0.4, 'vad_confidence': 0.6, 'vad_min_volume': 0.5})()
+        voice.listening_bar(True)
+        voice.listening_bar(True)
+        self.assertEqual(changes, [SPEAKING_MIN_VOLUME], 'raised once, not on every frame of the same reply')
+        voice.listening_bar(False)
+        self.assertEqual(changes, [SPEAKING_MIN_VOLUME, 0.5], 'and it comes back down when the room is quiet')
+
     async def test_a_finished_turn_waits_a_moment_in_case_the_pause_was_a_breath(self):
         # Asked for in the room on 2026-09-20: the detector will sometimes end a turn mid-sentence, and two
         # halves of one thought arriving as two messages is worse than answering a moment later.

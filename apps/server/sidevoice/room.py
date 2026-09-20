@@ -231,6 +231,9 @@ class RoomClient:
             return
         previous = entry['status']
         entry['status'], entry['reason'] = status, reason
+        # While a reply is coming out of this browser's speaker, only a voice clearly over it opens a turn.
+        if self.voice is not None and hasattr(self.voice, 'listening_bar'):
+            self.voice.listening_bar(status == 'playing')
         self.latency.status(uid, status)
         if status == 'playing':
             self.latency.mark(uid, 'playing_receipt')

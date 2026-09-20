@@ -124,6 +124,10 @@ def vad_analyzer(mic, config):
     ))
 
 
+# How loud a voice must be to open a turn while a reply is playing out of this browser's speaker.
+SPEAKING_MIN_VOLUME = 0.8
+
+
 class VoiceCall:
     """What one browser's turns do to the room: open the epoch, transcribe once closed, deliver in order.
 
@@ -131,8 +135,10 @@ class VoiceCall:
     so the same flow serves any turn-end strategy and any transcription provider.
     """
 
-    def __init__(self, call, transcriber, send, *, settings, mic, choice, runtime=None, vad_stop_secs=0.2):
+    def __init__(self, call, transcriber, send, *, settings, mic, choice, runtime=None, vad_stop_secs=0.2, vad=None):
         self.call, self.transcriber, self.send = call, transcriber, send
+        self.vad, self.mic = vad, mic
+        self.bar_raised = False
         self.vad_stop_secs = vad_stop_secs
         self.finishing = set()
         self.lock = asyncio.Lock()
@@ -150,6 +156,26 @@ class VoiceCall:
         call.on_input_receipt = lambda data: send({'type': 'voice-input-receipt', 'data': data})
         call.audio_grace_seconds = settings.audio_grace_seconds
         transcriber.on_message = self.browser_message
+
+    def listening_bar(self, speaking):
+        """How loud a voice must be to open a turn while this browser is playing a reply.
+
+        A phone's speaker feeds its own microphone: at the bar that suits a quiet room, the room heard
+        itself, opened a turn, cut the reply that was still playing and delivered its own words back as a
+        message (2026-09-20, word for word). Interrupting still works — it just has to be someone talking
+        over the room rather than the room talking over itself. The microphone is never paused: that was
+        ruled out the first day, because barge-in is the point.
+        """
+        if self.vad is None or speaking == self.bar_raised:
+            return
+        self.bar_raised = speaking
+        from pipecat.audio.vad.vad_analyzer import VADParams
+        self.vad.set_params(VADParams(
+            start_secs=self.mic.vad_start_secs,
+            stop_secs=self.vad_stop_secs,
+            confidence=self.mic.vad_confidence,
+            min_volume=max(self.mic.vad_min_volume, SPEAKING_MIN_VOLUME) if speaking else self.mic.vad_min_volume,
+        ))
 
     def browser_message(self, message):
         """What a connected browser tells the room about itself, beyond audio.
@@ -466,7 +492,7 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
         logger.warning('Call {}: local Whisper fell back from {} to {}: {}', call.id[:8], runtime['fallback_from'],
                        runtime['device'], runtime['fallback_error'])
     voice = VoiceCall(call, transcriber, send, settings=settings, mic=mic, choice=choice, runtime=runtime,
-                      vad_stop_secs=float(vad.params.stop_secs))
+                      vad_stop_secs=float(vad.params.stop_secs), vad=vad)
     # The hello carries the browser's call span, so the room's turns are inside the browser's call
     # and not a trace of their own. What this call is made of goes on it once, never on every turn.
     told = hello.get('telemetry') if isinstance(hello.get('telemetry'), dict) else {}
