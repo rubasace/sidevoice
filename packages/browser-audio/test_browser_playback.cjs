@@ -272,7 +272,7 @@ test('A voice that ends on its own leaves the same silence behind as one that is
  assert.equal(made.length,2,'the end of the voice is followed into the sink');
  assert.equal(made[1].target,s.voice.output.sink);
  assert.equal(made[1].buffer.duration,.5);
- assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['complete','complete-tail']));
+ assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['complete','tail']));
 });
 
 test('A fresh output is greeted once: audible notes first, then silence long enough for the element to start',async()=>{
@@ -333,7 +333,7 @@ test('The bed loops, fades in and out over at least 200 ms and leaves the sink f
  assert.equal(bed.stopped,true);
  assert.ok(bed.stoppedAt>10+s.voice.presenceFadeSeconds,'the source outlives its own fade');
  assert.equal(s.sources.length,2);
- assert.equal(s.voice.events.at(-1).kind,'presence-tail','a sink left with nothing loops its last instant on iOS');
+ assert.equal(s.voice.events.at(-1).kind,'tail','a sink left with nothing loops its last instant on iOS');
  assert.equal(s.voice.health().presence,null);
  assert.equal(s.voice.stopPresence('reply'),false);
 });

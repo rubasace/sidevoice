@@ -167,19 +167,28 @@ class RoomVoice {
    setTimeout(()=>{try{gain.disconnect()}catch{}},200);
   }else for(const source of job.sources){source.onended=null;try{source.stop()}catch{}}
   job.sources.clear();
-  if(job.playing)this.tail();
+  if(job.playing)this.quiet('cut');
  }
  /* Seen on iPhone Safari (2026-09-19): a voice cut mid-utterance left the media element stuck on its last
   * instant while the graph went on, and the next utterance's first source unstuck it. So a cut is followed
   * by what the next utterance would do: half a second of silence into the same sink. (A permanent silent
   * source was tried first and the phone's echo cancellation stopped covering the voice while it ran.) */
- tail(kind='tail'){
+ /* The sink is never left without a source: iPhone Safari loops the last instant of an empty one, which is
+  * heard as a crackle under a quiet room. Keeping that true is this engine's job and not something every
+  * playback path has to remember: whatever stops making sound says so here, and the silence goes in only if
+  * nobody else is still sounding. */
+ quiet(reason){
+  if(this.job?.sources?.size||this.presence)return false;
+  this.tail(reason);
+  return true;
+ }
+ tail(reason='end'){
   if(!this.context||typeof this.context.createBufferSource!=='function')return;
   try{
    const rate=this.context.sampleRate||48000,buffer=this.context.createBuffer(1,Math.round(rate*this.tailSeconds),rate);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
-   source.start(this.context.currentTime+.05);this.note(kind);
-  }catch(error){this.note(kind+'-failed',error?.message||kind)}
+   source.start(this.context.currentTime+.05);this.note('tail',reason);
+  }catch(error){this.note('tail-failed',error?.message||reason)}
  }
  /* ----- the ambient bed: the conversation is working on the turn this browser sent (#42) -----
   * One loop, generated here, no asset: a band of noise between roughly 110 and 420 Hz mixed with two
@@ -247,9 +256,7 @@ class RoomVoice {
   try{presence.source.stop(now+fade+.02)}catch{try{presence.source.stop()}catch{}}
   setTimeout(()=>{try{presence.gain.disconnect()}catch{}},(fade+.3)*1000);
   this.note('presence-stop',reason);
-  // The bed may have been this sink's only input, and a sink left with nothing is the stuck-last-instant
-  // failure on iPhone Safari. It gets the same silent tail a cut voice gets.
-  this.tail('presence-tail');
+  this.quiet('presence-stop');
   return true;
  }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
@@ -331,7 +338,7 @@ class RoomVoice {
  /* An utterance that ends on its own leaves the sink as empty as a cut one does, and on iPhone Safari an
   * empty sink loops its last instant — the crackle heard under the room while nobody speaks (2026-09-20).
   * So the end of the voice gets the same silent tail the cut has had since 2026-09-19. */
- complete(job){if(this.job!==job)return;this.stopProgress(job);this.stopClock(job);this.note('complete');this.announce('','hidden');clearTimeout(job.timer);this.job=null;if(job.playing)this.tail('complete-tail');if(job.gain){const gain=job.gain;setTimeout(()=>{try{gain.disconnect()}catch{}},200)}job.resolve()}
+ complete(job){if(this.job!==job)return;this.stopProgress(job);this.stopClock(job);this.note('complete');this.announce('','hidden');clearTimeout(job.timer);this.job=null;if(job.playing)this.quiet('complete');if(job.gain){const gain=job.gain;setTimeout(()=>{try{gain.disconnect()}catch{}},200)}job.resolve()}
  run(type,options={},status=()=>{},onPlaying=()=>{},onProgress){
   this.cancel();const device=options.device||'auto';this.ensure(device);const message=type==='load'?'Cargando modelo…':'Preparando voz…';status(message);if(!this.ready)this.announce(message);
   return new Promise((resolve,reject)=>{const id=++this.serial;this.job={id,resolve,reject,status,onPlaying,onProgress,text:options.text||'',textCursor:0,cues:[],load:type==='load',sources:new Set(),end:0,done:false};this.job.timer=setTimeout(()=>this.fail(Error('No se pudo preparar el modelo a tiempo.')),180000);this.worker.postMessage({type,id,...options,device})})
