@@ -82,8 +82,8 @@ test('The controller publishes serializable snapshots through the React store br
 test('The React component tree initializes without inventing missing DOM elements',()=>{
  const s=setup({strictDOM:true});
  assert.equal(s.run("$('missing-element')"),null);
- for(const id of ['elevenlabs-key-save','elevenlabs-key-clear','stt-key-save','stt-key-clear'])
-  assert.equal(s.run("typeof $('"+id+"').onclick"),'function');
+ for(const id of ['elevenlabs-key-clear','stt-key-clear'])
+  assert.equal(s.run("typeof $('"+id+"').onclick"),'function','removing a key is the only thing that cannot wait for the form');
  for(const action of ['toggleCall','toggleMic','cancelInput'])
   assert.equal(s.run("typeof window.sidevoiceActions."+action),'function','React calls '+action+', it does not reach into the DOM');
  for(const id of ['elevenlabs-credential','elevenlabs-key','elevenlabs-key-state','stt-provider','stt-credential','stt-key','stt-key-state'])
@@ -1262,7 +1262,7 @@ const OWN_TURN={revision:1,thread_id:'a',session_id:'s'};
 test('Saving the settings form stores every device setting, the ambient bed among them',async()=>{
  const s=setup();const stored=[];
  s.context.localStorage={getItem:()=>null,setItem:(key,value)=>stored.push([key,JSON.parse(value)]),removeItem(){}};
- s.run("ws=null;voicePreferences={stt_provider:'openai',stt_device:'auto'};voiceCatalog={languages:[],models:[]}");
+ s.run("ws=null;voicePreferences={stt_provider:'openai',stt_device:'auto'};voiceCatalog={languages:[],models:[]};$('stt-key').value='';$('elevenlabs-key').value=''");
  for(const [id,value] of [['stt-language','es'],['stt-device',''],['default-tts-language','es'],['tts-speed','1'],['ui-language','es'],
   ['tts-device','auto'],['default-model','kokoro'],['default-voice','ef_dora'],['audio-grace-seconds','2'],['presence-sound','on'],['presence-volume','5'],['replay-on-return-seconds','300'],
   ['turn-end-mode','smart_turn'],['user-speech-timeout','2.5'],['smart-turn-min-silence','0.6'],['smart-turn-max-silence','3'],

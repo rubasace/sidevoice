@@ -101,6 +101,42 @@ export function engineView(s) {
     const base = s.engineReady ? engineBadgeText(s.enginePreferences || s.voicePreferences, s.sttRuntime) : '';
     return { text: base ? base + OUTPUT_MARKS[s.outputHealth] : '', title: base ? base + ' · ' + OUTPUT_TITLES[s.outputHealth] : '', output: s.outputHealth };
 }
+const PATIENCE_LABELS = { fast: 'rápido', normal: 'normal', calm: 'tranquilo' };
+const VOICE_LABELS = { kokoro: 'Este navegador · Kokoro' };
+/** What is doing the work, one line per thing, each with a light. Context for the corner of the call bar:
+ *  nobody needs it to talk, and everybody wants it when something sounds wrong. */
+export function enginePanel(s) {
+    const p = s.enginePreferences || s.voicePreferences, runtime = s.sttRuntime;
+    const rows = [];
+    if (p) {
+        const local = String(runtime?.model || p.stt_model || '').split('/').pop().replace('whisper-', 'Whisper ');
+        const where = runtime?.device === 'webgpu' ? 'GPU' : runtime?.device === 'wasm' ? 'CPU' : '';
+        rows.push({ id: 'stt', label: 'Transcripción',
+            value: p.stt_provider === 'openai' ? 'OpenAI · ' + (p.stt_model || '') : [local, where].filter(Boolean).join(' · '),
+            state: runtime?.fallback_from ? 'warn' : 'ok',
+            note: runtime?.fallback_from ? 'La GPU no pudo con el modelo; va por CPU.' : '' });
+        const model = String(p.default_model || 'kokoro');
+        rows.push({ id: 'tts', label: 'Voz',
+            value: VOICE_LABELS[model] || 'ElevenLabs · ' + model.replace(/^eleven_/, '').replace(/_/g, ' '),
+            state: 'ok', note: '' });
+        rows.push({ id: 'turn', label: 'Turnos',
+            value: 'smart-turn · ' + (PATIENCE_LABELS[p.turn_patience] || 'normal'), state: 'ok', note: '' });
+    }
+    rows.push({ id: 'output', label: 'Salida de audio',
+        value: s.outputHealth === 'failed' ? 'Falló' : s.outputHealth === 'recovering' ? 'Recuperándose' : 'En orden',
+        state: s.outputHealth === 'failed' ? 'fail' : s.outputHealth === 'recovering' ? 'warn' : 'ok',
+        note: OUTPUT_TITLES[s.outputHealth] });
+    const echo = echoCoverage({ ...s.echoFacts, connected: !!s.ws, track: !!s.stream });
+    if (echo.state)
+        rows.push({ id: 'echo', label: 'Eco',
+            value: echo.state === 'on' ? 'Cubierto' : echo.state === 'partial' ? 'Parcial' : 'Sin cancelación',
+            state: echo.state === 'on' ? 'ok' : echo.state === 'partial' ? 'warn' : 'fail', note: echo.note });
+    if (s.screenLock?.state)
+        rows.push({ id: 'screen', label: 'Pantalla',
+            value: s.screenLock.state === 'on' ? 'Se mantiene encendida' : 'No se pudo mantener',
+            state: s.screenLock.state === 'on' ? 'ok' : 'warn', note: s.screenLock.note });
+    return rows;
+}
 export function playbackState(r, s) {
     if (r.role !== 'assistant')
         return undefined;
@@ -183,6 +219,7 @@ export function createRoomSessionStore(seed = {}) {
         return { facts, session: sessionStatus(facts), conversation: conversationView(facts), participants: participantsView(facts),
             join: joinView(facts), engine: engineView(facts), echo: echoCoverage({ ...facts.echoFacts, connected: !!facts.ws, track: !!facts.stream }), live: liveText(facts),
             mic: micView(facts), call: callView(facts), title: viewedTitle(facts), screenLock: facts.screenLock, deviceNote: facts.deviceNote,
+            enginePanel: enginePanel(facts),
             audioDevices: facts.audioDevices,
             bootError: facts.bootError, languageModels: facts.languageModels };
     }

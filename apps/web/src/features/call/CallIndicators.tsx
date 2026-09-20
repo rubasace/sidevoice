@@ -8,18 +8,30 @@ import { cn } from "../../lib/cn";
  * writes them: the runtime records the fact, React paints it (#53). The microphone level is the one
  * exception, and it is not here — it changes per animation frame and the meter owns its own pixels. */
 
-/* What is doing the work — the transcription engine, the voice, how the turn ends — is context, not a
- * control: it sits in the corner at the height of the call bar, and on a narrow screen it collapses to
- * three dots that open upward instead of pushing the buttons around (#64). */
+/* What is doing the work, in the corner of the call bar: a light and a line per thing — transcription,
+ * voice, turns, the audio output, echo coverage, the screen lock. Collapsed it shows the worst light and
+ * a short line; on a narrow screen, only the light and three dots. It opens upward (#64). */
 export function EngineBadge() {
+  const rows = useRoomStore((state) => state.enginePanel);
   const engine = useRoomStore((state) => state.engine);
+  const worst = rows.some((row) => row.state === "fail") ? "fail" : rows.some((row) => row.state === "warn") ? "warn" : "ok";
+  if (!rows.length) return null;
   return (
-    <details id="engine-summary" className="engine-summary" hidden={!engine.text}>
-      <summary id="engine-badge" className="engine-badge" data-output={engine.output} title={engine.title || undefined} aria-label={"Motores en uso: " + engine.text}>
-        <span className="engine-badge-text">{engine.text}</span>
+    <details id="engine-summary" className="engine-summary">
+      <summary id="engine-badge" className="engine-badge" data-state={worst} aria-label="Estado de los motores">
+        <i className="engine-dot" data-state={worst} aria-hidden="true" />
+        <span className="engine-badge-text">{engine.text || rows[0].value}</span>
         <span className="engine-badge-dots" aria-hidden="true">⋯</span>
       </summary>
-      <div className="engine-summary-panel" role="status">{engine.title || engine.text}</div>
+      <dl className="engine-summary-panel">
+        {rows.map((row) => (
+          <div className="engine-row" key={row.id} data-state={row.state}>
+            <i className="engine-dot" data-state={row.state} aria-hidden="true" />
+            <dt>{row.label}</dt>
+            <dd>{row.value}{row.note ? <small>{row.note}</small> : null}</dd>
+          </div>
+        ))}
+      </dl>
     </details>
   );
 }

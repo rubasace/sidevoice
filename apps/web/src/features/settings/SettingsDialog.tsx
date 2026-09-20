@@ -12,22 +12,20 @@ function GeneralSettings() {
 function VoiceSettings() {
   return (
     <section id="pane-voice" aria-labelledby="settings-voice">
-      <h3>Voces</h3><p className="muted">Elige quién pone la voz, con qué modelo, y personalízala por idioma.</p>
-      <label>Proveedor de voz<NativeSelect id="tts-provider" /></label><p className="muted" id="tts-provider-note" />
+      <h3>Voces</h3>
+      <label>Proveedor de voz<NativeSelect id="tts-provider" /></label>
       <div id="tts-browser-options"><label>Procesamiento de la voz<NativeSelect id="tts-device" defaultValue="auto" /></label><p className="muted" id="tts-device-note" /></div>
       <ModelPicker label="Modelo" id="default-model" infoId="default-model-info" />
       <div id="elevenlabs-credential" hidden>
-        <label>Clave de API de ElevenLabs<input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Sin clave guardada" /></label>
+        <label>Clave de API de ElevenLabs<span className="key-field"><input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Sin clave guardada" /><Button id="elevenlabs-key-clear" variant="ghost" size="icon" className="key-clear" aria-label="Quitar la clave guardada" title="Quitar la clave guardada">✕</Button></span></label>
         <p className="muted" id="elevenlabs-key-state" role="status" />
-        <div className="stt-key-actions"><Button id="elevenlabs-key-save" size="compact">Guardar clave</Button><Button id="elevenlabs-key-clear" size="compact">Quitar clave</Button></div>
-        <p className="muted">La clave es del proveedor, no de un modelo: vale para todos los modelos de ElevenLabs. Se guarda en la sala, y las voces incluyen las personalizadas de tu cuenta.</p>
       </div>
-      <label>Voz por defecto<NativeSelect id="default-voice"><option value="ef_dora">Dora</option><option value="em_alex">Alex</option><option value="em_santa">Santa</option><option value="af_heart">Heart</option><option value="af_bella">Bella</option><option value="bf_emma">Emma</option><option value="bm_george">George</option></NativeSelect></label>
+      <label>Voz por defecto<NativeSelect id="default-voice"><option value="ef_dora">Dora</option></NativeSelect></label>
       <label>Velocidad global <output id="speed-value">1.00×</output><input id="tts-speed" type="range" min="0.5" max="2" step="0.05" defaultValue="1" /></label><p id="speed-note" className="muted" />
-      <Button id="prepare-model">Precargar modelo (opcional)</Button><p id="model-status" role="status" className="muted">Se prepara automáticamente al conectar o probar una voz. Puedes precargarlo aquí si quieres.</p>
-      <h3>Por idioma</h3><p className="muted">Cada idioma hereda modelo, voz compatible y velocidad. Deja la velocidad vacía para usar la global.</p><LanguageModelList />
-      <Button id="reset-languages" className="preview-button">Restablecer idiomas a «Usar por defecto»</Button><p id="preview-status" role="status" className="muted" /><p id="language-support" className="muted" />
-      <label>Idioma de voz si el agente no lo indica<NativeSelect id="default-tts-language"><option value="es">Español</option><option value="en">English</option></NativeSelect></label><p className="muted">Los cambios se aplican a las próximas locuciones.</p>
+      <Button id="prepare-model">Precargar modelo (opcional)</Button><p id="model-status" role="status" className="muted" />
+      <label>Idioma de voz si el agente no lo indica<NativeSelect id="default-tts-language"><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
+      <h3>Por idioma</h3><p className="muted">Cada idioma hereda modelo, voz y velocidad. Deja la velocidad vacía para usar la global.</p><LanguageModelList />
+      <Button id="reset-languages" className="preview-button">Restablecer idiomas a «Usar por defecto»</Button><p id="preview-status" role="status" className="muted" /><p id="language-support" className="muted" hidden />
     </section>
   );
 }
@@ -35,13 +33,13 @@ function VoiceSettings() {
 function TranscriptionSettings() {
   return (
     <section id="pane-transcription" aria-labelledby="settings-transcription" hidden>
-      <h3>Transcripción</h3><p className="muted">Configura cómo se reconoce lo que dices.</p>
+      <h3>Transcripción</h3>
       <label>Motor de transcripción<NativeSelect id="stt-provider" /></label><p className="muted" id="stt-provider-note" />
       <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note" /></div>
       <ModelPicker label="Modelo" id="stt-model" infoId="stt-model-info" /><p className="muted" id="stt-model-note" />
-      <div id="stt-credential" hidden><label>Clave de API de OpenAI<input id="stt-key" type="password" placeholder="Sin clave guardada" autoComplete="off" spellCheck={false} /></label><p className="muted" id="stt-key-state" role="status" /><div className="stt-key-actions"><Button id="stt-key-save" size="compact">Guardar clave</Button><Button id="stt-key-clear" size="compact">Quitar clave</Button></div></div>
+      <div id="stt-credential" hidden><label>Clave de API de OpenAI<span className="key-field"><input id="stt-key" type="password" placeholder="Sin clave guardada" autoComplete="off" spellCheck={false} /><Button id="stt-key-clear" variant="ghost" size="icon" className="key-clear" aria-label="Quitar la clave guardada" title="Quitar la clave guardada">✕</Button></span></label><p className="muted" id="stt-key-state" role="status" /></div>
       <label>Idioma al transcribir<NativeSelect id="stt-language"><option value="auto">Detectar automáticamente</option><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
-      <p className="muted" id="stt-apply-note">Los cambios entre modelos locales se aplican durante la llamada. Cambiar entre navegador y OpenAI requiere volver a entrar. El modelo elegido es de este dispositivo: un móvil puede usar tiny mientras un ordenador usa turbo.</p>
+      <p className="muted" id="stt-apply-note" hidden />
     </section>
   );
 }

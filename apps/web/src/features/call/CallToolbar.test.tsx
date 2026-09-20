@@ -49,13 +49,17 @@ test("the call bar says what the session facts say, and asks the runtime to act"
   expect(screen.getByRole("button", { name: "Salir de la sala" })).toHaveClass("joined");
 
   act(() => { store.patch({ screenLock: { state: "off", note: "No se pudo mantener la pantalla encendida" }, deviceNote: "Micrófono seleccionado." }); });
-  expect(document.getElementById("screen-lock")).toHaveAttribute("data-state", "off");
   expect(document.getElementById("screen-note")).toHaveTextContent("No se pudo mantener la pantalla encendida");
   expect(document.getElementById("audio-device-note")).toHaveTextContent("Micrófono seleccionado.");
 
+  // The lights live in the corner card now: one row each, with its own state.
   act(() => { store.patch({ stream: {}, echoFacts: { aec: false } }); });
-  expect(document.getElementById("echo-cover")).not.toHaveAttribute("hidden");
-  expect(document.getElementById("echo-note")?.textContent).toMatch(/cancelación de eco/i);
+  const panel = document.querySelector(".engine-summary-panel");
+  expect(panel?.textContent).toMatch(/Eco/);
+  expect(panel?.textContent).toMatch(/Sin cancelación/);
+  expect(panel?.textContent).toMatch(/Pantalla/);
+  expect(document.querySelector('.engine-row[data-state="fail"]')).not.toBeNull();
+  expect(document.getElementById("engine-badge")).toHaveAttribute("data-state", "fail");
 
   mute().click();
   screen.getByRole("button", { name: "Salir de la sala" }).click();

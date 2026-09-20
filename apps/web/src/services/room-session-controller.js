@@ -1075,8 +1075,8 @@ function providerFor(model){return modelInfo(model||'kokoro').provider||'kokoro'
  * list of models mixed Kokoro with every ElevenLabs model and had nowhere to put what belongs to the
  * provider itself — its API key, and, when the provider is this browser, where the model runs (#64). */
 const VOICE_PROVIDERS={
- kokoro:{label:'Este navegador',note:'La voz se sintetiza en este dispositivo. No sale nada a internet y no hay clave que guardar.',browser:true},
- elevenlabs:{label:'ElevenLabs',note:'Voces en la nube. La clave es del proveedor y vale para todos sus modelos.',key:'elevenlabs'},
+ kokoro:{label:'Este navegador',browser:true},
+ elevenlabs:{label:'ElevenLabs',key:'elevenlabs'},
 };
 function voiceProviders(){
  const seen=[];
@@ -1108,14 +1108,13 @@ function renderVoiceProvider(savedModel,savedVoice){
  const wanted=select.value||providerFor(savedModel||$('default-model').value);
  entriesFor(select,providers.map(id=>[id,voiceProviderLabel(id)]),providers.includes(wanted)?wanted:providers[0]);
  const provider=select.value,meta=VOICE_PROVIDERS[provider]||{};
- $('tts-provider-note').textContent=meta.note||'';
  $('tts-browser-options').hidden=!meta.browser;
  $('elevenlabs-credential').hidden=meta.key!=='elevenlabs';
  $('prepare-model').hidden=!meta.browser;
  const models=modelsOf(provider),current=$('default-model').value;
  const keep=models.some(model=>model.id===current)?current:(models.some(model=>model.id===savedModel)?savedModel:models[0]?.id);
  entriesFor($('default-model'),models.map(model=>[model.id,model.label]),keep);
- if(meta.browser)renderVoiceDevice();
+ renderVoiceDevice();
  renderDefaultVoices(savedVoice);
 }
 
@@ -1137,7 +1136,7 @@ function renderDefaultVoices(value){
  const model=$('default-model').value,language=$('default-tts-language').value||'es',voices=voiceEntriesFor(model,language,defaultVoicesExpanded);
  setModelInfo($('default-model-info'),model);entriesFor($('default-voice'),voices,validVoice(voices,value));
  const cloud=providerFor(model)==='elevenlabs';updateSpeedRange();
- $('model-status').textContent=cloud?(elevenCredentials.configured?'Voces filtradas por '+language.toUpperCase()+'. Usa «Mostrar todas las voces…» para quitar el filtro.':'Guarda una clave de ElevenLabs para cargar las voces de la cuenta.'):'Kokoro se prepara automáticamente al conectar o probar una voz.';
+ $('model-status').textContent=cloud&&!elevenCredentials.configured?'Guarda una clave de ElevenLabs para cargar las voces de la cuenta.':'';
 }
 function stopPreview(){return roomStore.batch(()=>stopPreviewJob())}
 function stopPreviewJob(){const job=state.previewJob;state.previewJob=null;if(!job)return;job.controller.abort();if(job.browser)window.roomVoice?.cancel();$('preview-audio').pause();$('preview-audio').removeAttribute('src');if(job.url)URL.revokeObjectURL(job.url);for(const item of voiceCatalog?.languages||[])$('preview-'+item.id).textContent='▶'}
@@ -1181,7 +1180,7 @@ function populateVoiceSettings(p){
  entriesFor($('default-model'),voiceCatalog.models.map(item=>[item.id,item.label]),p.default_model);
  if($('tts-provider'))$('tts-provider').value=providerFor(p.default_model);
  for(const id of ['default-tts-language','stt-language']){const select=$(id),preference=p[id.replaceAll('-','_')];select.replaceChildren();const entries=id==='stt-language'?[{id:'auto',label:'Detectar automáticamente'},...voiceCatalog.languages]:voiceCatalog.languages;for(const item of entries){const option=document.createElement('option');option.value=item.id;option.textContent=item.label;select.append(option)}select.value=preference||select.value}
- renderVoiceProvider(p.default_model,p.default_voice);renderLanguageRows();$('language-support').textContent='Las voces de ElevenLabs se filtran por su idioma principal. «Mostrar todas las voces…» quita el filtro para ese selector.';
+ renderVoiceProvider(p.default_model,p.default_voice);renderLanguageRows();
 }
 $('reset-languages').onclick=()=>{stopPreview();voiceDraft={};renderLanguageRows();$('preview-status').textContent='Todos los idiomas usan los valores por defecto. Pulsa Guardar cambios para aplicarlo.'};
 $('prepare-model').onclick=async()=>{if(state.activeSpeech||state.previewJob){$('model-status').textContent='Espera a que termine la voz.';return}const button=$('prepare-model');button.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.prepare({device:$('tts-device').value},text=>$('model-status').textContent=text)}catch(e){$('model-status').textContent=e.message}finally{button.disabled=false}};
@@ -1320,7 +1319,22 @@ async function loadTranscription(){
 }
 $('stt-provider').onchange=()=>{$('stt-model').replaceChildren();renderTranscription();if($('stt-provider').value==='openai')void loadTranscriptionModels('openai',true)};
 $('stt-device').onchange=renderTranscription;$('stt-model').onchange=renderTranscription;
-$('stt-key-save').onclick=async()=>{const key=$('stt-key').value.trim();if(!key)return;$('stt-key-save').disabled=true;$('settings-error').textContent='';$('stt-key-state').textContent='Comprobando la clave con OpenAI…';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key});sttCredentials=result.credentials||{};$('stt-key').value='';sttRemote.openai.loaded=false;await loadTranscriptionModels('openai',true)}catch(e){$('settings-error').textContent=e.message}finally{$('stt-key-save').disabled=false;renderTranscription()}};
+/* A key is saved like every other setting, with the form: no button of its own, because one field with
+ * two buttons under it invites the question of which one applies what (#64). Removing it is the ✕ in
+ * the field, which is the only thing that cannot wait for the form. */
+async function saveCredentials(){
+ const openai=$('stt-key').value.trim(),eleven=$('elevenlabs-key').value.trim();
+ if(openai){
+  const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:openai});
+  sttCredentials=result.credentials||{};$('stt-key').value='';sttRemote.openai.loaded=false;
+  await loadTranscriptionModels('openai',true);
+ }
+ if(eleven){
+  const result=await post('/api/presentation/synthesis/credential',{key:eleven});
+  $('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');
+  elevenCredentials=result.credentials||{};await loadElevenLabs().catch(()=>{});
+ }
+}
 $('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{};const entry=sttProvider('openai');if(entry)entry.models=[];Object.assign(sttRemote.openai,{loaded:false,loading:false,error:null})}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
 /* A stored key shows itself where the key goes: masked, in its own field, with the four digits the room
  * returns. The line underneath is for news — checking, refused, taken from the room's environment — and
@@ -1332,7 +1346,6 @@ function showCredential(field,state,missing){
  if(clear)clear.disabled=!state?.configured||state.source==='environment';
 }
 async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;showCredential('elevenlabs',state,'Sin clave: no hay voces de ElevenLabs')}
-$('elevenlabs-key-save').onclick=async()=>{const key=$('elevenlabs-key').value.trim();if(!key)return;$('elevenlabs-key-save').disabled=true;$('settings-error').textContent='';$('elevenlabs-key-state').textContent='Comprobando la clave con ElevenLabs…';try{const result=await post('/api/presentation/synthesis/credential',{key});$('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=result.credentials||{};renderDefaultVoices($('default-voice').value);renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{$('elevenlabs-key-save').disabled=false;await loadElevenLabs()}};
 $('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
 $('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para aplicarlo; la llamada en curso no se interrumpe.'};
 $('settings-close').onclick=()=>{stopPreview();$('language-settings').close()};$('language-settings').addEventListener('close',stopPreview);
@@ -1452,7 +1465,7 @@ async function applyTranscriptionSettings(previous,next){
   return 'local';
  }finally{state.switchingTranscription=false}
 }
-$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();const previous=state.voicePreferences,p={...state.voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds','presence_sound','replay_on_return_seconds',...MIC_KEYS]){p[key]=['tts_speed','audio_grace_seconds','presence_volume','replay_on_return_seconds'].includes(key)?Number($(key.replaceAll('_','-')).value):$(key.replaceAll('_','-')).value;if(key==='stt_device'&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.stt_device)?previous.stt_device:'auto'}p.stt_provider=$('stt-provider').value||'browser';p.stt_model=$('stt-model').value;let hotSwap=false;try{storePreferences(p);if(state.ws&&state.ws.readyState===WebSocket.OPEN&&state.sessionId)state.ws.send(JSON.stringify({type:'voice-settings',data:{session_id:state.sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);state.voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);state.liveNote=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
+$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();try{await saveCredentials()}catch(error){$('settings-error').textContent=error.message;return}const previous=state.voicePreferences,p={...state.voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds','presence_sound','replay_on_return_seconds',...MIC_KEYS]){p[key]=['tts_speed','audio_grace_seconds','presence_volume','replay_on_return_seconds'].includes(key)?Number($(key.replaceAll('_','-')).value):$(key.replaceAll('_','-')).value;if((key==='stt_device'||key==='tts_device')&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.[key])?previous[key]:'auto'}p.stt_provider=$('stt-provider').value||'browser';p.stt_model=$('stt-model').value;let hotSwap=false;try{storePreferences(p);if(state.ws&&state.ws.readyState===WebSocket.OPEN&&state.sessionId)state.ws.send(JSON.stringify({type:'voice-settings',data:{session_id:state.sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);state.voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);state.liveNote=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
 window.sidevoiceActions={
  cancelInput:cancelCurrentInput,
  toggleMic,
