@@ -1071,6 +1071,54 @@ function modelInfoButton(id){
 document.addEventListener('click',()=>document.querySelectorAll('.model-info[aria-expanded=true]').forEach(button=>button.setAttribute('aria-expanded','false')));
 
 function providerFor(model){return modelInfo(model||'kokoro').provider||'kokoro'}
+/* Voices are chosen the way transcription is: the provider first, then what that provider offers. A flat
+ * list of models mixed Kokoro with every ElevenLabs model and had nowhere to put what belongs to the
+ * provider itself — its API key, and, when the provider is this browser, where the model runs (#64). */
+const VOICE_PROVIDERS={
+ kokoro:{label:'Este navegador',note:'La voz se sintetiza en este dispositivo. No sale nada a internet y no hay clave que guardar.',browser:true},
+ elevenlabs:{label:'ElevenLabs',note:'Voces en la nube. La clave es del proveedor y vale para todos sus modelos.',key:'elevenlabs'},
+};
+function voiceProviders(){
+ const seen=[];
+ for(const model of voiceCatalog?.models||[])if(!seen.includes(model.provider||'kokoro'))seen.push(model.provider||'kokoro');
+ return seen;
+}
+function voiceProviderLabel(id){return VOICE_PROVIDERS[id]?.label||id}
+function modelsOf(provider){return (voiceCatalog?.models||[]).filter(model=>(model.provider||'kokoro')===provider)}
+function selectedVoiceProvider(){return $('tts-provider')?.value||providerFor($('default-model')?.value)}
+/* Where a browser voice runs, said in the same words transcription uses, and disabled when this browser
+ * cannot do it. WebGPU is a property of the browser, so the answer comes from the same probe. */
+function renderVoiceDevice(saved){
+ const device=$('tts-device'),note=$('tts-device-note');
+ if(!device)return;
+ const entries=[['auto','Automático · GPU si está disponible']];
+ if(sttCapabilities?.webgpu)entries.push(["webgpu","GPU · WebGPU"]);
+ entries.push(['wasm','CPU · WebAssembly']);
+ const wanted=saved||device.value||'auto';
+ entriesFor(device,entries,entries.some(([id])=>id===wanted)?wanted:'auto');
+ if(note)note.textContent=device.value==='auto'
+  ?(sttCapabilities?.webgpu?'Automático usará la GPU de este navegador.':'Automático usará la CPU: este navegador no expone WebGPU.')
+  :device.value==='webgpu'?'La voz se generará en la GPU. Si falla, se reintenta en CPU y se te dice.'
+  :'La voz se generará en la CPU. Más lenta, pero funciona en cualquier navegador.';
+}
+function renderVoiceProvider(savedModel,savedVoice){
+ const select=$('tts-provider');
+ if(!select||!voiceCatalog)return;
+ const providers=voiceProviders();
+ const wanted=select.value||providerFor(savedModel||$('default-model').value);
+ entriesFor(select,providers.map(id=>[id,voiceProviderLabel(id)]),providers.includes(wanted)?wanted:providers[0]);
+ const provider=select.value,meta=VOICE_PROVIDERS[provider]||{};
+ $('tts-provider-note').textContent=meta.note||'';
+ $('tts-browser-options').hidden=!meta.browser;
+ $('elevenlabs-credential').hidden=meta.key!=='elevenlabs';
+ $('prepare-model').hidden=!meta.browser;
+ const models=modelsOf(provider),current=$('default-model').value;
+ const keep=models.some(model=>model.id===current)?current:(models.some(model=>model.id===savedModel)?savedModel:models[0]?.id);
+ entriesFor($('default-model'),models.map(model=>[model.id,model.label]),keep);
+ if(meta.browser)renderVoiceDevice();
+ renderDefaultVoices(savedVoice);
+}
+
 function entriesFor(select,entries,value){select.replaceChildren();const values=new Set(entries.map(entry=>entry[0]));if(value&& !values.has(value))entries=[[value,value],...entries];for(const [id,label,disabled] of entries){const option=document.createElement('option');option.value=id;option.textContent=label;if(disabled)option.disabled=true;select.append(option)}const usable=entries.filter(entry=>!entry[2]);select.value=usable.some(entry=>entry[0]===value)?value:(usable[0]?.[0]??'')}
 function elevenVoiceItems(){return voiceCatalog?.providers?.elevenlabs?.voices||[]}
 function conciseVoiceLabel(label){return String(label||"").split(" · ")[0].trim()}
@@ -1088,7 +1136,7 @@ function validVoice(entries,value){return entries.some(([id])=>id!==SHOW_ALL_VOI
 function renderDefaultVoices(value){
  const model=$('default-model').value,language=$('default-tts-language').value||'es',voices=voiceEntriesFor(model,language,defaultVoicesExpanded);
  setModelInfo($('default-model-info'),model);entriesFor($('default-voice'),voices,validVoice(voices,value));
- const cloud=providerFor(model)==='elevenlabs';updateSpeedRange();$('elevenlabs-credential').hidden=!cloud;$('tts-device').closest('label').hidden=cloud;$('prepare-model').hidden=cloud;
+ const cloud=providerFor(model)==='elevenlabs';updateSpeedRange();
  $('model-status').textContent=cloud?(elevenCredentials.configured?'Voces filtradas por '+language.toUpperCase()+'. Usa «Mostrar todas las voces…» para quitar el filtro.':'Guarda una clave de ElevenLabs para cargar las voces de la cuenta.'):'Kokoro se prepara automáticamente al conectar o probar una voz.';
 }
 function stopPreview(){return roomStore.batch(()=>stopPreviewJob())}
@@ -1104,7 +1152,9 @@ function renderLanguageRows(){
    const draft=voiceDraft[item.id]||{model:'inherit',voice:'inherit',speed:null},actualModel=(draft.model==='inherit'?defaultModel:draft.model)||'kokoro',[speedMin,speedMax]=speedLimits(actualModel);
    const choices=voiceEntriesFor(actualModel,item.id,expandedVoiceLanguages.has(item.id)),voice=draft.voice==='inherit'||choices.some(([id])=>id===draft.voice)?(draft.voice||'inherit'):'inherit';
    return {language:item.id,label:item.label,model:draft.model||'inherit',actualModel,modelDescription:modelInfo(actualModel).description,
-    modelOptions:[['inherit','Usar por defecto'],...voiceCatalog.models.map(entry=>[entry.id,entry.label])].map(([value,label])=>({value,label})),
+    modelOptions:[{value:'inherit',label:'Usar por defecto'},
+     ...voiceProviders().map(provider=>({label:voiceProviderLabel(provider),
+      options:modelsOf(provider).map(entry=>({value:entry.id,label:entry.label}))}))],
     voice,voiceOptions:[["inherit","Usar voz predeterminada"],...choices].map(([value,label])=>({value,label})),
     speed:draft.speed==null?null:effectiveSpeed(actualModel,draft.speed),speedMin,speedMax,inheritedSpeed:effectiveSpeed(actualModel,globalSpeed)};
   }));return;
@@ -1129,8 +1179,9 @@ function populateVoiceSettings(p){
  defaultVoicesExpanded=false;expandedVoiceLanguages.clear();voiceDraft=JSON.parse(JSON.stringify(p.language_overrides||{}));
  for(const [lang,prefix] of [['es','spanish'],['en','english']]){const voice=p[prefix+'_voice'],standard=lang==='es'?'ef_dora':'af_heart';voiceDraft[lang]??={model:p[prefix+'_model']||'inherit',voice:voice===standard?'inherit':voice||'inherit'}}
  entriesFor($('default-model'),voiceCatalog.models.map(item=>[item.id,item.label]),p.default_model);
+ if($('tts-provider'))$('tts-provider').value=providerFor(p.default_model);
  for(const id of ['default-tts-language','stt-language']){const select=$(id),preference=p[id.replaceAll('-','_')];select.replaceChildren();const entries=id==='stt-language'?[{id:'auto',label:'Detectar automáticamente'},...voiceCatalog.languages]:voiceCatalog.languages;for(const item of entries){const option=document.createElement('option');option.value=item.id;option.textContent=item.label;select.append(option)}select.value=preference||select.value}
- renderDefaultVoices(p.default_voice);renderLanguageRows();$('language-support').textContent='Las voces de ElevenLabs se filtran por su idioma principal. «Mostrar todas las voces…» quita el filtro para ese selector.';
+ renderVoiceProvider(p.default_model,p.default_voice);renderLanguageRows();$('language-support').textContent='Las voces de ElevenLabs se filtran por su idioma principal. «Mostrar todas las voces…» quita el filtro para ese selector.';
 }
 $('reset-languages').onclick=()=>{stopPreview();voiceDraft={};renderLanguageRows();$('preview-status').textContent='Todos los idiomas usan los valores por defecto. Pulsa Guardar cambios para aplicarlo.'};
 $('prepare-model').onclick=async()=>{if(state.activeSpeech||state.previewJob){$('model-status').textContent='Espera a que termine la voz.';return}const button=$('prepare-model');button.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.prepare({device:$('tts-device').value},text=>$('model-status').textContent=text)}catch(e){$('model-status').textContent=e.message}finally{button.disabled=false}};
@@ -1200,6 +1251,8 @@ $('settings-open').onclick=async()=>{try{
 }catch(e){$('settings-error').textContent=e.message;setRoomError(e.message)}};
 $('tts-speed').oninput=()=>{$('speed-value').textContent=Number($('tts-speed').value).toFixed(2)+'×';if(voiceCatalog){storeLanguage();renderLanguageRows()}};
 $('default-model').onchange=()=>{storeLanguage();defaultVoicesExpanded=false;expandedVoiceLanguages.clear();renderDefaultVoices();renderLanguageRows()};
+$('tts-provider').onchange=()=>{storeLanguage();defaultVoicesExpanded=false;expandedVoiceLanguages.clear();renderVoiceProvider();renderLanguageRows()};
+$('tts-device').onchange=()=>renderVoiceDevice($('tts-device').value);
 $('default-voice').onchange=()=>{if($('default-voice').value===SHOW_ALL_VOICES){defaultVoicesExpanded=true;renderDefaultVoices();renderLanguageRows();return}storeLanguage();renderLanguageRows()};
 $('default-tts-language').onchange=()=>{defaultVoicesExpanded=false;renderDefaultVoices();renderLanguageRows()};
 function settingsSection(name){for(const section of ['general','voice','transcription','advanced']){$('pane-'+section).hidden=section!==name;$('settings-'+section).setAttribute('aria-pressed',String(section===name))}}

@@ -71,7 +71,7 @@ export interface LanguageModelView {
   model: string;
   actualModel: string;
   modelDescription?: string;
-  modelOptions: SelectOption[];
+  modelOptions: ({value: string; label: string; options?: undefined} | {value?: undefined; label: string; options: {value: string; label: string}[]})[];
   voice: string;
   voiceOptions: SelectOption[];
   speed: number | null;

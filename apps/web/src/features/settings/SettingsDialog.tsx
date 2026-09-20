@@ -12,14 +12,15 @@ function GeneralSettings() {
 function VoiceSettings() {
   return (
     <section id="pane-voice" aria-labelledby="settings-voice">
-      <h3>Voces</h3><p className="muted">Elige una voz por defecto y personalízala por idioma.</p>
-      <ModelPicker label="Modelo por defecto" id="default-model" infoId="default-model-info"><option value="kokoro">Kokoro · 82M</option></ModelPicker>
-      <label>Procesamiento en el navegador<NativeSelect id="tts-device" defaultValue="auto"><option value="auto">GPU automática · CPU si no está disponible</option><option value="webgpu">GPU</option><option value="wasm">CPU</option></NativeSelect></label>
+      <h3>Voces</h3><p className="muted">Elige quién pone la voz, con qué modelo, y personalízala por idioma.</p>
+      <label>Proveedor de voz<NativeSelect id="tts-provider" /></label><p className="muted" id="tts-provider-note" />
+      <div id="tts-browser-options"><label>Procesamiento de la voz<NativeSelect id="tts-device" defaultValue="auto" /></label><p className="muted" id="tts-device-note" /></div>
+      <ModelPicker label="Modelo" id="default-model" infoId="default-model-info" />
       <div id="elevenlabs-credential" hidden>
         <label>Clave de API de ElevenLabs<input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Clave de ElevenLabs" /></label>
         <p className="muted" id="elevenlabs-key-state" role="status" />
         <div className="stt-key-actions"><Button id="elevenlabs-key-save" size="compact">Guardar clave</Button><Button id="elevenlabs-key-clear" size="compact">Quitar clave</Button></div>
-        <p className="muted">La clave se guarda en la sala. Las voces incluyen las personalizadas disponibles en tu cuenta.</p>
+        <p className="muted">La clave es del proveedor, no de un modelo: vale para todos los modelos de ElevenLabs. Se guarda en la sala, y las voces incluyen las personalizadas de tu cuenta.</p>
       </div>
       <label>Voz por defecto<NativeSelect id="default-voice"><option value="ef_dora">Dora</option><option value="em_alex">Alex</option><option value="em_santa">Santa</option><option value="af_heart">Heart</option><option value="af_bella">Bella</option><option value="bf_emma">Emma</option><option value="bm_george">George</option></NativeSelect></label>
       <label>Velocidad global <output id="speed-value">1.00×</output><input id="tts-speed" type="range" min="0.5" max="2" step="0.05" defaultValue="1" /></label><p id="speed-note" className="muted" />

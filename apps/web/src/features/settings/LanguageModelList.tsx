@@ -20,7 +20,9 @@ export function LanguageModelList() {
             description={row.modelDescription}
             onChange={(event) => window.sidevoiceActions?.updateLanguageModel(row.language, event.target.value)}
           >
-            {row.modelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            {row.modelOptions.map((option) => option.options
+              ? <optgroup key={option.label} label={option.label}>{option.options.map((model) => <option key={model.value} value={model.value}>{model.label}</option>)}</optgroup>
+              : <option key={option.value} value={option.value}>{option.label}</option>)}
           </ModelPicker>
           <label className="language-control language-voice">
             <span className="ui-compact-label">Voz</span>

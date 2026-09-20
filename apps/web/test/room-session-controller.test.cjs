@@ -101,6 +101,28 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),true);
 });
 
+test('Voices are chosen the way transcription is: the provider first, then what it offers',()=>{
+ const s=setup({strictDOM:true});
+ s.run(`voiceCatalog={models:[{id:'kokoro',label:'Kokoro · 82M',provider:'kokoro'},
+   {id:'eleven_flash_v2_5',label:'Eleven Flash v2.5',provider:'elevenlabs'},
+   {id:'eleven_v3',label:'Eleven v3',provider:'elevenlabs'}],
+  languages:[{id:'es',label:'Español',voices:[['ef_dora','Dora']]}],providers:{elevenlabs:{voices:[{id:'v1',label:'Nube',languages:['es']}]}}};
+  sttCapabilities={webgpu:false,wasm:true};voiceDraft={};
+  $('default-tts-language').value='es';$('default-model').value='kokoro';renderVoiceProvider('kokoro','ef_dora')`);
+ assert.equal(JSON.stringify(s.run("$('tts-provider').children.map(o=>o.value)")),JSON.stringify(['kokoro','elevenlabs']));
+ assert.equal(JSON.stringify(s.run("$('default-model').children.map(o=>o.value)")),JSON.stringify(['kokoro']),
+  'the model list belongs to the chosen provider');
+ assert.equal(s.run("$('tts-browser-options').hidden"),false,'the browser provider shows where it runs');
+ assert.equal(s.run("$('elevenlabs-credential').hidden"),true,'and no key of a provider that is not in use');
+ assert.match(s.run("$('tts-device-note').textContent"),/CPU/,'a browser without WebGPU says so, like transcription does');
+ // Switching provider takes its models, its key, and drops what only the browser has.
+ s.run("$('tts-provider').value='elevenlabs';renderVoiceProvider()");
+ assert.equal(JSON.stringify(s.run("$('default-model').children.map(o=>o.value)")),JSON.stringify(['eleven_flash_v2_5','eleven_v3']));
+ assert.equal(s.run("$('elevenlabs-credential').hidden"),false,'the key belongs to the provider, not to each model');
+ assert.equal(s.run("$('tts-browser-options').hidden"),true);
+ assert.equal(s.run("$('prepare-model').hidden"),true,'nothing to preload when the voice is not this browser\'s');
+});
+
 test('Processing comes first and decides which local models are offered',()=>{
  const s=setup({strictDOM:true});
  s.run("voicePreferences={stt_provider:'browser',stt_device:'auto',stt_model:'onnx-community/whisper-small'};sttCatalog={providers:[{id:'browser',label:'Browser',models:[{id:'onnx-community/whisper-tiny',label:'Tiny',description:'light',devices:['webgpu','wasm']},{id:'onnx-community/whisper-small',label:'Small',description:'quality',devices:['webgpu']}]},{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[{id:'gpt-4o-transcribe',label:'GPT'}]}]};sttCapabilities={webgpu:true,wasm:true,models:['onnx-community/whisper-tiny','onnx-community/whisper-small']};$('stt-provider').value='browser';renderTranscription()");
