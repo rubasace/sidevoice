@@ -49,7 +49,9 @@ class LanguageSettings(BaseModel):
     # Microphone defaults for a device that sends none of its own (see MicSettings).
     turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
     user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
-    smart_turn_min_silence: float = Field(default=0.6, ge=0.1, le=3)
+    # The floor before smart-turn is even asked. Six tenths cut people mid-sentence when they paused to
+    # breathe, even with an intonation that clearly went on (2026-09-20, from a car).
+    smart_turn_min_silence: float = Field(default=0.9, ge=0.1, le=3)
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)
@@ -123,7 +125,9 @@ class MicSettings(BaseModel):
     turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
     user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
     # Smart-turn is only asked after this much silence: too early and a breath ends the turn.
-    smart_turn_min_silence: float = Field(default=0.6, ge=0.1, le=3)
+    # The floor before smart-turn is even asked. Six tenths cut people mid-sentence when they paused to
+    # breathe, even with an intonation that clearly went on (2026-09-20, from a car).
+    smart_turn_min_silence: float = Field(default=0.9, ge=0.1, le=3)
     smart_turn_max_silence: float = Field(default=3.0, ge=0.5, le=15)
     vad_confidence: float = Field(default=0.6, ge=0.1, le=1)
     vad_min_volume: float = Field(default=0.35, ge=0, le=1)

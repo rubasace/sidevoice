@@ -150,7 +150,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertFalse(strategy.wait_for_transcript)
         self.assertEqual(strategy._turn_analyzer.params.stop_secs, 3.0)
         from sidevoice.app import vad_analyzer
-        self.assertEqual(vad_analyzer(mic, {}).params.stop_secs, 0.6)
+        self.assertEqual(vad_analyzer(mic, {}).params.stop_secs, 0.9)
         self.assertEqual(vad_analyzer(mic, {}).params.start_secs, 0.4)
         self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.05})[0], {}).params.start_secs, 0.4,
                          'a device cannot tune the detector: that is the room\'s, fixed in one place for everyone')

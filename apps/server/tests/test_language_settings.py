@@ -23,7 +23,7 @@ class PreferencesTest(unittest.TestCase):
     def test_default_turn_silence_is_two_and_a_half_seconds(self):
         settings = language_settings.LanguageSettings()
         self.assertEqual(settings.user_speech_timeout, 2.5)
-        self.assertEqual((settings.turn_end_mode, settings.smart_turn_min_silence, settings.smart_turn_max_silence), ('smart_turn', 0.6, 3.0))
+        self.assertEqual((settings.turn_end_mode, settings.smart_turn_min_silence, settings.smart_turn_max_silence), ('smart_turn', 0.9, 3.0))
 
 class VoiceResolutionTest(unittest.TestCase):
     def test_default_and_language_override(self):
