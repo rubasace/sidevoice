@@ -28,7 +28,7 @@ function chunkTextRange(text,chunk,from=0){
 class RoomVoice {
  constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null;
   // What the output did lately, for the stats dialog: a stuck buzz on a phone is otherwise invisible from here.
-  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=1.5;
+  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.awayLimitMs=30000;this.tailSeconds=1.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
   this.presence=null;this.presenceSeconds=7.2;this.presencePulseSeconds=3.6;this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
@@ -299,11 +299,16 @@ class RoomVoice {
    // (see the settle handler), so nothing can advance. Counting it as a stall declared perfectly good replies
    // failed when the phone's screen locked mid-utterance (2026-09-20, read from the room's audio reports).
    if(typeof document!=='undefined'&&document.hidden){
-    if(!job.clock.away){job.clock.away=true;this.note('clock-away',this.context.state)}
+    if(!job.clock.away){job.clock.away=now;this.note('clock-away',this.context.state)}
+    // A page that never comes back must not leave the room waiting for a receipt that will never arrive:
+    // the room holds everything else behind this utterance (2026-09-20, two replies stuck in a queue).
+    else if(now-job.clock.away>=this.awayLimitMs){
+     this.fail(Error('La página estuvo en segundo plano mientras sonaba; la locución se repite al volver.'));return;
+    }
     job.clock.wallAt=now;job.clock.timeAt=this.context.currentTime;
     job.clock.timer=setTimeout(check,this.stallCheckMs);return;
    }
-   job.clock.away=false;
+   job.clock.away=0;
    if(elapsed>=this.stallAfterMs){
     if(advanced<.05){
      job.clock.stalls++;this.stalls++;

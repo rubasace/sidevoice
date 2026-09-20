@@ -196,13 +196,27 @@ test('A phone whose screen locks mid-utterance is not a stuck device',async()=>{
  const rejected=assert.rejects(speech,/se detuvo en este dispositivo/);
  await settle(30);
  assert.equal(s.voice.health().stalls,0,'a page that went away is not a device that froze');
- assert.equal(s.voice.job?.clock?.away,true);
+ assert.ok(s.voice.job?.clock?.away>0);
  assert.equal(s.voice.health().events.some(e=>e.kind==='clock-away'),true,'and the room can read that it happened');
  // Back on screen and running: the watchdog counts again.
  s.context.document.hidden=false;context.state='running';
  await settle(40);
  await rejected;
  assert.ok(s.voice.health().stalls>=3);
+});
+
+test('A page that never comes back stops the room waiting for it',async()=>{
+ // The room holds every later reply behind the one being played: a receipt that never arrives is a queue
+ // that never moves (2026-09-20). The utterance is given up, and the room replays it on return.
+ const s=setup();const {context}=mediaOutput(s);await s.voice.unlock();
+ s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;s.voice.awayLimitMs=20;
+ s.context.document={hidden:true,addEventListener(){}};
+ context.state='suspended';
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});
+ const rejected=assert.rejects(speech,/segundo plano/);
+ await settle(60);
+ await rejected;
+ assert.equal(s.voice.job,null,'the engine is free for what comes next');
 });
 
 test('A clock that advances raises no alarm, and cancelling while the context is stopped pauses the element',async()=>{
