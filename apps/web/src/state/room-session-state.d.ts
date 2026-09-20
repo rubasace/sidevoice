@@ -14,7 +14,8 @@ export interface SessionFacts {
  voicePreferences: Record<string, unknown> | null; enginePreferences: Record<string, unknown> | null;
  sttRuntime: Record<string, unknown> | null; engineReady: boolean; outputHealth: 'ok' | 'recovering' | 'failed'; echoFacts: unknown;
  joinStep: string | null; joinFailure: string; joinProgress: number | null; joinDetail: string; joinSubject: string;
- screenLock: {state: string; note: string}; deviceNote: string;
+ screenLock: {state: string; note: string}; deviceNote: string; holding: boolean; userQuietAt: number;
+ audioDevices: AudioDevices; liveNote: string;
  harness: Record<string, boolean>; turns: Record<string, {session: string; thread: string; status?: string; settled?: boolean; harnessEnded?: boolean; readyAt?: number}>;
  now: number; karaokeState: (KaraokeRange & {segment: string}) | null; bootError: string | null; languageModels: LanguageModelView[];
 }
