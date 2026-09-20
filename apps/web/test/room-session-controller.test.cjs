@@ -93,15 +93,19 @@ test('ElevenLabs credentials render against the actual HTML controls',async()=>{
  const s=setup({strictDOM:true});
  s.context.fetch=async()=>({ok:true,json:async()=>({credentials:{configured:true,source:'stored',hint:'…test'}})});
  await s.run('loadElevenLabs()');
- assert.match(s.run("$('elevenlabs-key-state').textContent"),/Clave guardada …test/,'every provider shows the same four digits');
- // The same sentence, from the same place, for the transcription key.
- assert.equal(s.run("credentialLine({configured:true,source:'environment',hint:'…9f2a'},'nada')"),
-  'Clave guardada …9f2a · viene del entorno de la sala');
- assert.equal(s.run("credentialLine({configured:false},'Sin clave')"),'Sin clave');
+ // The key shows itself where the key goes, masked, with the four digits the room returns.
+ assert.match(s.run("$('elevenlabs-key').placeholder"),/•+ …test/,'every provider shows the same four digits, in the field');
+ assert.equal(s.run("$('elevenlabs-key-state').textContent"),'','and the line below says nothing when there is nothing to say');
+ s.run("showCredential('stt',{configured:true,source:'environment',hint:'…9f2a'},'nada')");
+ assert.match(s.run("$('stt-key').placeholder"),/•+ …9f2a/);
+ assert.match(s.run("$('stt-key-state').textContent"),/entorno de la sala/,'a key it cannot remove is explained');
+ assert.equal(s.run("$('stt-key-clear').disabled"),true);
+ s.run("showCredential('stt',{configured:false},'Sin clave')");
+ assert.equal(s.run("$('stt-key').placeholder"),'Sin clave');
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),false);
  s.context.fetch=async()=>({ok:true,json:async()=>({credentials:{configured:false,source:null,hint:null}})});
  await s.run('loadElevenLabs()');
- assert.match(s.run("$('elevenlabs-key-state').textContent"),/Sin clave/);
+ assert.match(s.run("$('elevenlabs-key').placeholder"),/Sin clave/,'and an empty field says so where the key would go');
  assert.equal(s.run("$('elevenlabs-key-clear').disabled"),true);
 });
 
@@ -158,7 +162,7 @@ test('OpenAI remains selectable and shows its credential controls',()=>{
  assert.equal(s.run("$('stt-credential').hidden"),false);
  assert.equal(s.run("$('stt-browser-options').hidden"),true);
  assert.deepEqual(s.run("$('stt-model').children.map(x=>x.value)"),['gpt-4o-transcribe']);
- assert.match(s.run("$('stt-key-state').textContent"),/Clave guardada/);
+ assert.match(s.run("$('stt-key').placeholder"),/•+/,'a stored key shows itself masked in its own field');
 });
 test('OpenAI model loading never masquerades as a one-option catalogue',()=>{
  const s=setup({strictDOM:true});

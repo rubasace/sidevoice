@@ -1291,8 +1291,7 @@ function renderTranscription(){
   $("stt-model-note").textContent=enabled.length?"":"Ningún modelo local puede correr con este procesamiento en este navegador.";
  }else{
   const models=entry?.models||[],state=sttCredentials.openai,remote=sttRemote.openai;
-  $('stt-key-state').textContent=credentialLine(state,'Sin clave: OpenAI no podrá transcribir hasta que guardes una.');
-  $('stt-key-clear').disabled=!state?.configured||state.source==='environment';
+  showCredential('stt',state,'Sin clave: OpenAI no podrá transcribir');
   modelSelect.disabled=remote.loading;
   const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(saved||entry?.default_model||models[0]?.id);
   entriesFor(modelSelect,remote.loading?[['','Cargando modelos de OpenAI…']]:models.map(model=>[model.id,model.label]),remote.loading?'':preferred);
@@ -1323,14 +1322,16 @@ $('stt-provider').onchange=()=>{$('stt-model').replaceChildren();renderTranscrip
 $('stt-device').onchange=renderTranscription;$('stt-model').onchange=renderTranscription;
 $('stt-key-save').onclick=async()=>{const key=$('stt-key').value.trim();if(!key)return;$('stt-key-save').disabled=true;$('settings-error').textContent='';$('stt-key-state').textContent='Comprobando la clave con OpenAI…';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key});sttCredentials=result.credentials||{};$('stt-key').value='';sttRemote.openai.loaded=false;await loadTranscriptionModels('openai',true)}catch(e){$('settings-error').textContent=e.message}finally{$('stt-key-save').disabled=false;renderTranscription()}};
 $('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{};const entry=sttProvider('openai');if(entry)entry.models=[];Object.assign(sttRemote.openai,{loaded:false,loading:false,error:null})}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
-/* What a stored key looks like, said the same way for every provider: the last four digits the room
- * returns as a hint, and where the key came from. Three places wrote this sentence by hand and one of
- * them forgot the hint, so ElevenLabs looked less trustworthy than OpenAI for no reason (#64). */
-function credentialLine(state,missing){
- if(!state?.configured)return missing;
- return 'Clave guardada '+(state.hint||'')+(state.source==='environment'?' · viene del entorno de la sala':'');
+/* A stored key shows itself where the key goes: masked, in its own field, with the four digits the room
+ * returns. The line underneath is for news — checking, refused, taken from the room's environment — and
+ * says nothing when there is nothing to say, instead of repeating what the field already shows (#64). */
+function showCredential(field,state,missing){
+ const input=$(field+'-key'),note=$(field+'-key-state'),clear=$(field+'-key-clear');
+ if(input){input.value='';input.placeholder=state?.configured?'•••••••• '+(state.hint||''):missing}
+ if(note)note.textContent=state?.configured&&state.source==='environment'?'Esta clave viene del entorno de la sala; no se puede quitar desde aquí.':'';
+ if(clear)clear.disabled=!state?.configured||state.source==='environment';
 }
-async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;$('elevenlabs-key-state').textContent=credentialLine(state,'Sin clave: no se pueden cargar ni usar voces de ElevenLabs.');$('elevenlabs-key-clear').disabled=!state.configured||state.source==='environment'}
+async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;showCredential('elevenlabs',state,'Sin clave: no hay voces de ElevenLabs')}
 $('elevenlabs-key-save').onclick=async()=>{const key=$('elevenlabs-key').value.trim();if(!key)return;$('elevenlabs-key-save').disabled=true;$('settings-error').textContent='';$('elevenlabs-key-state').textContent='Comprobando la clave con ElevenLabs…';try{const result=await post('/api/presentation/synthesis/credential',{key});$('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials=result.credentials||{};renderDefaultVoices($('default-voice').value);renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{$('elevenlabs-key-save').disabled=false;await loadElevenLabs()}};
 $('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
 $('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para aplicarlo; la llamada en curso no se interrumpe.'};

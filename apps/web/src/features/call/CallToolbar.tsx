@@ -16,7 +16,6 @@ export function CallToolbar() {
         <div className="call-actions">
           <ScreenLock />
           <EchoCover />
-          <EngineBadge />
           <MicControl>
             <span id="mic-level-meter" className="sr-only" role="meter" aria-label="Nivel de micrófono" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0} />
             <Button id="audio-devices" variant="ghost" className="audio-selector-toggle" aria-label="Elegir micrófono y altavoces" title="Dispositivos de audio" aria-expanded="false" aria-controls="audio-device-panel"><span className="mic-wave" aria-hidden="true"><i /><i /><i /></span><svg className="audio-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.3" aria-hidden="true"><path d="m7 14 5-5 5 5" /></svg></Button>
@@ -26,6 +25,7 @@ export function CallToolbar() {
           <CallButton />
         </div>
       </div>
+      <EngineBadge />
     </footer>
   );
 }

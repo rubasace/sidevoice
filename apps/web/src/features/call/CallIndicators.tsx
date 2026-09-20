@@ -8,9 +8,20 @@ import { cn } from "../../lib/cn";
  * writes them: the runtime records the fact, React paints it (#53). The microphone level is the one
  * exception, and it is not here — it changes per animation frame and the meter owns its own pixels. */
 
+/* What is doing the work — the transcription engine, the voice, how the turn ends — is context, not a
+ * control: it sits in the corner at the height of the call bar, and on a narrow screen it collapses to
+ * three dots that open upward instead of pushing the buttons around (#64). */
 export function EngineBadge() {
   const engine = useRoomStore((state) => state.engine);
-  return <span id="engine-badge" className="engine-badge" role="status" title={engine.title || undefined} data-output={engine.output} hidden={!engine.text}>{engine.text}</span>;
+  return (
+    <details id="engine-summary" className="engine-summary" hidden={!engine.text}>
+      <summary id="engine-badge" className="engine-badge" data-output={engine.output} title={engine.title || undefined} aria-label={"Motores en uso: " + engine.text}>
+        <span className="engine-badge-text">{engine.text}</span>
+        <span className="engine-badge-dots" aria-hidden="true">⋯</span>
+      </summary>
+      <div className="engine-summary-panel" role="status">{engine.title || engine.text}</div>
+    </details>
+  );
 }
 
 export function ScreenLock() {

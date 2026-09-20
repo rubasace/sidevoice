@@ -17,7 +17,7 @@ function VoiceSettings() {
       <div id="tts-browser-options"><label>Procesamiento de la voz<NativeSelect id="tts-device" defaultValue="auto" /></label><p className="muted" id="tts-device-note" /></div>
       <ModelPicker label="Modelo" id="default-model" infoId="default-model-info" />
       <div id="elevenlabs-credential" hidden>
-        <label>Clave de API de ElevenLabs<input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Clave de ElevenLabs" /></label>
+        <label>Clave de API de ElevenLabs<input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Sin clave guardada" /></label>
         <p className="muted" id="elevenlabs-key-state" role="status" />
         <div className="stt-key-actions"><Button id="elevenlabs-key-save" size="compact">Guardar clave</Button><Button id="elevenlabs-key-clear" size="compact">Quitar clave</Button></div>
         <p className="muted">La clave es del proveedor, no de un modelo: vale para todos los modelos de ElevenLabs. Se guarda en la sala, y las voces incluyen las personalizadas de tu cuenta.</p>
@@ -39,7 +39,7 @@ function TranscriptionSettings() {
       <label>Motor de transcripción<NativeSelect id="stt-provider" /></label><p className="muted" id="stt-provider-note" />
       <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note" /></div>
       <ModelPicker label="Modelo" id="stt-model" infoId="stt-model-info" /><p className="muted" id="stt-model-note" />
-      <div id="stt-credential" hidden><label>Clave de API de OpenAI<input id="stt-key" type="password" placeholder="sk-…" autoComplete="off" spellCheck={false} /></label><p className="muted" id="stt-key-state" role="status" /><div className="stt-key-actions"><Button id="stt-key-save" size="compact">Guardar clave</Button><Button id="stt-key-clear" size="compact">Quitar clave</Button></div></div>
+      <div id="stt-credential" hidden><label>Clave de API de OpenAI<input id="stt-key" type="password" placeholder="Sin clave guardada" autoComplete="off" spellCheck={false} /></label><p className="muted" id="stt-key-state" role="status" /><div className="stt-key-actions"><Button id="stt-key-save" size="compact">Guardar clave</Button><Button id="stt-key-clear" size="compact">Quitar clave</Button></div></div>
       <label>Idioma al transcribir<NativeSelect id="stt-language"><option value="auto">Detectar automáticamente</option><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
       <p className="muted" id="stt-apply-note">Los cambios entre modelos locales se aplican durante la llamada. Cambiar entre navegador y OpenAI requiere volver a entrar. El modelo elegido es de este dispositivo: un móvil puede usar tiny mientras un ordenador usa turbo.</p>
     </section>
