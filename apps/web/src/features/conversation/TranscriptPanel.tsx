@@ -10,13 +10,14 @@ function BootError() {
 export function TranscriptPanel() {
   const conversation = useRoomStore((state) => state.conversation);
   const title = useRoomStore((state) => state.title);
+  const live = useRoomStore((state) => state.live);
   return (
     <section className="transcript">
       <div className="transcript-head"><strong id="transcript-title">{title}</strong><span className="muted">Transcripción · ambos lados</span></div>
       <MessageList conversation={conversation} />
       <form id="text-composer" className="text-composer"><textarea id="text-message" rows={2} maxLength={12000} aria-label="Mensaje escrito" placeholder="Escribe un mensaje…" disabled /><Button id="text-send" type="submit" variant="primary" disabled aria-label="Enviar mensaje">Enviar</Button></form>
       <BootError />
-      <div id="live" role="status">Puedes entrar aunque no haya ninguna conversación.</div>
+      <div id="live" role="status">{live}</div>
     </section>
   );
 }

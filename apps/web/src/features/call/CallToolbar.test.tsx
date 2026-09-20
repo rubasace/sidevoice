@@ -13,6 +13,25 @@ function toolbar() {
   return store;
 }
 
+test("the microphones and speakers on offer come from the store, and choosing one is an action", () => {
+  const store = toolbar();
+  const selectAudioDevice = vi.fn().mockResolvedValue(undefined);
+  window.sidevoiceActions = { selectAudioDevice } as unknown as typeof window.sidevoiceActions;
+  const input = () => screen.getByLabelText("Micrófono") as HTMLSelectElement;
+  expect([...input().options].map((option) => option.textContent)).toEqual(["Predeterminado del sistema"]); // before anything is enumerated
+  act(() => {
+    store.patch({ audioDevices: { available: true, outputAvailable: false, busy: false, inputId: "mic-1", outputId: "default",
+      inputs: [{ id: "default", label: "Predeterminado del sistema" }, { id: "mic-1", label: "Micro del coche" }],
+      outputs: [{ id: "default", label: "Predeterminado del sistema" }] } });
+  });
+  expect([...input().options].map((option) => option.textContent)).toEqual(["Predeterminado del sistema", "Micro del coche"]);
+  expect(input().value).toBe("mic-1");
+  expect(screen.getByLabelText("Altavoces")).toBeDisabled(); // this browser cannot choose the output
+  input().value = "default";
+  input().dispatchEvent(new Event("change", { bubbles: true }));
+  expect(selectAudioDevice).toHaveBeenCalledWith("input", "default");
+});
+
 test("the call bar says what the session facts say, and asks the runtime to act", async () => {
   const store = toolbar();
   const toggleMic = vi.fn();

@@ -83,6 +83,7 @@ export interface LanguageModelView {
 export interface SidevoiceActions {
   cancelInput(): Promise<void>;
   toggleMic(): void;
+  selectAudioDevice(kind: "input" | "output", id: string): Promise<void>;
   toggleCall(): Promise<void>;
   selectParticipant(threadId: string): void;
   closeParticipant(threadId: string): Promise<void>;

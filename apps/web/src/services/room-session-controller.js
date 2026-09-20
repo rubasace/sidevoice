@@ -1,4 +1,4 @@
-import {createRoomSessionStore,working,joinView,conversationView,participantsView,echoCoverage as deriveEchoCoverage,offlineNote,audioNote,engineBadgeText,speechSegment,recordReceipt,recordReply,PRESENCE_LEVEL,GAP_BUFFER_SECONDS,REPLAY_NOTES} from '../state/room-session-state.js';
+import {createRoomSessionStore,working,joinView,conversationView,participantsView,echoCoverage as deriveEchoCoverage,offlineNote,audioNote,engineBadgeText,speechSegment,recordReceipt,recordReply,PRESENCE_LEVEL,GAP_BUFFER_SECONDS,BED_AFTER_USER_MS,REPLAY_NOTES} from '../state/room-session-state.js';
 const roomStore=window.sidevoiceUI?.store||createRoomSessionStore();
 const state=roomStore.facts;
 // Browser room orchestration. Loaded once after React mounts the stable UI shell.
@@ -6,7 +6,7 @@ const $=id=>document.getElementById(id);
 function setRoomError(message){const value=message||null;if(window.sidevoiceUI)window.sidevoiceUI.setBootError(value);else $("error").textContent=value||""}
 function showPreparation(d){
  const box=$('voice-loading');
- if(d.phase==='inline'){$('live').textContent=d.text;return}
+ if(d.phase==='inline'){state.liveNote=d.text;return}
  if(d.phase==='hidden'||d.phase==='ready'){if(box.open)box.close();return}
  const transcription=d.kind==='transcription';
  box.dataset.kind=d.kind||'voice';
@@ -27,7 +27,7 @@ window.addEventListener('voice-preparation',({detail:d})=>{showPreparation(d);no
 
 
 function joinStatus(step,{detail='',progress=null,subject=''}={}){roomStore.patch({joinStep:step,joinFailure:'',joinDetail:detail?String(detail).slice(0,80):'',joinProgress:progress==null?null:Number(progress),joinSubject:subject})}
-function clearJoinStatus(){roomStore.patch({joinStep:null,joinFailure:'',joinDetail:'',joinProgress:null,joinSubject:''})}
+function clearJoinStatus(){roomStore.patch({joinStep:null,joinFailure:'',joinDetail:'',joinProgress:null,joinSubject:'',liveNote:''})}
 function failJoin(text){roomStore.patch({joinStep:null,joinFailure:text||'',joinDetail:'',joinProgress:null,joinSubject:''})}
 // The engine's own progress refines the model step the join is already on; anywhere else it belongs to the modal alone.
 function noteJoinPreparation(d){
@@ -130,22 +130,46 @@ function releaseScreenWakeLock(){
  if(lock)lock.release().catch(()=>{});
  showScreenLock('','');
 }
-function addAudioOption(select,value,label){const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option)}
+/* The list of microphones and speakers is a fact about this device, and the selects that show it are
+ * React's. The browser only names a device once the microphone has been granted, so the list is refreshed
+ * rather than read once (#53). */
+function deviceOptions(devices,kind,selected){
+  const listed=devices.filter(d=>d.kind===kind&&d.deviceId&&d.deviceId!=='default');
+  const options=[{id:'default',label:'Predeterminado del sistema'},
+    ...listed.map((device,index)=>({id:device.deviceId,label:device.label||((kind==='audioinput'?'Micrófono ':'Altavoz ')+(index+1))}))];
+  if(selected!=='default'&&!listed.some(d=>d.deviceId===selected))
+   options.push({id:selected,label:'Dispositivo seleccionado · desconectado'});
+  return options;
+}
 async function refreshAudioDevices(){
- const input=$('input-device'),output=$('output-device'),note=$('audio-device-note');
- if(!globalThis.navigator?.mediaDevices?.enumerateDevices){input.disabled=output.disabled=true;state.deviceNote='Selecciona los dispositivos desde los ajustes del sistema.';return}
+ const devices=state.audioDevices;
+ if(!globalThis.navigator?.mediaDevices?.enumerateDevices){
+  state.audioDevices={...devices,inputs:[],outputs:[],available:false};
+  state.deviceNote='Selecciona los dispositivos desde los ajustes del sistema.';
+  return;
+ }
  try{
-  const devices=await navigator.mediaDevices.enumerateDevices();
-  for(const [select,kind,id] of [[input,'audioinput',inputDeviceId],[output,'audiooutput',outputDeviceId]]){
-   select.replaceChildren();addAudioOption(select,'default','Predeterminado del sistema');
-   const listed=devices.filter(d=>d.kind===kind&&d.deviceId&&d.deviceId!=='default');
-   for(const [index,device] of listed.entries())addAudioOption(select,device.deviceId,device.label||((kind==='audioinput'?'Micrófono ':'Altavoz ')+(index+1)));
-   if(id!=='default'&&!listed.some(d=>d.deviceId===id))addAudioOption(select,id,'Dispositivo seleccionado · desconectado');
-   select.value=id;
-  }
-  output.disabled=!window.roomVoice?.supportsOutputSelection;
-  note.textContent=output.disabled?'Cambia la salida desde los ajustes del sistema; este navegador no permite elegirla aquí.':'Los nombres aparecen tras conceder permiso al micrófono.';
- }catch(error){note.textContent=error.message||'No se pudieron enumerar los dispositivos.'}
+  const listed=await navigator.mediaDevices.enumerateDevices();
+  const outputs=!!window.roomVoice?.supportsOutputSelection;
+  state.audioDevices={busy:false,available:true,outputAvailable:outputs,
+   inputs:deviceOptions(listed,'audioinput',inputDeviceId),outputs:deviceOptions(listed,'audiooutput',outputDeviceId),
+   inputId:inputDeviceId,outputId:outputDeviceId};
+  state.deviceNote=outputs?'Los nombres aparecen tras conceder permiso al micrófono.'
+   :'Cambia la salida desde los ajustes del sistema; este navegador no permite elegirla aquí.';
+ }catch(error){state.deviceNote=error.message||'No se pudieron enumerar los dispositivos.'}
+}
+/* Choosing one is an action, not an event on a node: React calls this and the runtime does the work. */
+async function selectAudioDevice(kind,id){
+ const devices=state.audioDevices;
+ state.audioDevices={...devices,busy:true,...(kind==='input'?{inputId:id}:{outputId:id})};
+ try{
+  if(kind==='input'){await replaceMicrophone(id);state.deviceNote='Micrófono seleccionado.'}
+  else{await window.roomVoice.unlock();await window.roomVoice.setOutputDevice(id);outputDeviceId=id;state.deviceNote='Salida de audio seleccionada.'}
+  state.audioDevices={...state.audioDevices,busy:false};
+ }catch(error){
+  state.audioDevices={...state.audioDevices,busy:false,...(kind==='input'?{inputId:inputDeviceId}:{outputId:outputDeviceId})};
+  state.deviceNote=error.message;
+ }
 }
 async function replaceMicrophone(id){
  const epoch=++deviceEpoch,socket=state.ws,callEpoch=connectEpoch;
@@ -177,8 +201,7 @@ function setupAudioControls(){
  $('audio-settings-open').onclick=()=>{setDevicesOpen(false);$('settings-open').click()};
  $('call-settings-open').onclick=()=>{$('call-menu').open=false;$('settings-open').click()};
  $('refresh-devices').onclick=refreshAudioDevices;
- $('input-device').onchange=async()=>{const select=$('input-device');select.disabled=true;try{await replaceMicrophone(select.value);state.deviceNote='Micrófono seleccionado.'}catch(error){select.value=inputDeviceId;state.deviceNote=error.message}finally{select.disabled=false}};
- $('output-device').onchange=async()=>{const select=$('output-device');select.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.setOutputDevice(select.value);outputDeviceId=select.value;state.deviceNote='Salida de audio seleccionada.'}catch(error){select.value=outputDeviceId;$('audio-device-note').textContent=error.message}finally{select.disabled=false}};
+
  globalThis.navigator?.mediaDevices?.addEventListener?.('devicechange',refreshAudioDevices);
 }
 let voiceCatalog=null;let voiceDraft={};let editingLanguage=null;let callExecution='browser';let elevenCredentials={};let sttCredentials={};let pendingBotText=[];
@@ -259,7 +282,7 @@ async function refresh(){try{
  if(changed){state.viewedThread=null;state.turns={};if(previousThread!==targetId())state.harness=Object.fromEntries(Object.entries(state.harness).filter(([id])=>id!==previousThread));cancelBrowserSpeech();pendingBotText=[];state.pendingUserText='';state.userLive=state.botLive=false;markHistorySeen()}
  updateComposer();
  const call=d.call?.id===state.sessionId?d.call:null;if(call?.error)setRoomError(call.error);});
-}catch{$('live').textContent='Servidor no disponible'}}
+}catch{state.liveNote='Servidor no disponible'}}
 async function refreshHistory() { try {
     const data = await api('/api/presentation/history');
     let changed = false;
@@ -461,6 +484,8 @@ let receiptDeadline=null,bedPlaying=false,observedStream=null;
 function reconcileSession(view){
  if(view.facts.stream!==observedStream){observedStream=view.facts.stream;showEchoCover();return}
  const deadlines=Object.values(state.turns).filter(t=>!t.settled&&['delivered','unconfirmed'].includes(t.status)&&t.readyAt>state.now).map(t=>t.readyAt);
+ // The bed waits for the person to be really done, so the moment that wait ends is a deadline like any other.
+ if(state.userQuietAt&&state.userQuietAt+BED_AFTER_USER_MS>state.now)deadlines.push(state.userQuietAt+BED_AFTER_USER_MS);
  const deadline=deadlines.length?Math.min(...deadlines):null;
  if(deadline!==receiptDeadline){clearTimeout(presenceTimer);receiptDeadline=deadline;
   if(deadline!==null)presenceTimer=setTimeout(()=>{receiptDeadline=null;state.now=Math.max(Date.now(),deadline)},Math.max(0,deadline-state.now));
@@ -517,7 +542,9 @@ function audioOutputFacts(health){
 }
 function renderConnectionStats(data,roundTrip){
  const call=state.sessionId&&data?.call?.id===state.sessionId?data.call:null,track=micTrack(),settings=track?.getSettings?.()||{};
- const selectedLabel=id=>$(id).selectedOptions?.[0]?.textContent||'Predeterminado del sistema';
+ // The stats read the same list the selects do, not the DOM the selects happen to have rendered.
+ const selectedLabel=kind=>{const devices=state.audioDevices,id=kind==='input'?devices.inputId:devices.outputId;
+  return (kind==='input'?devices.inputs:devices.outputs).find(option=>option.id===id)?.label||'Predeterminado del sistema'};
  const flag=value=>value===true||value==='all'?'Activado':value===false?'Desactivado':'No confirmado';
  const socket=['Conectando','Conectado','Cerrando','Desconectado'][state.ws?.readyState]||'Desconectado';
  const context=window.roomVoice?.context||audioContext,stt=call?.transcription;
@@ -537,9 +564,9 @@ function renderConnectionStats(data,roundTrip){
   ['Selección STT',sttReasons[stt?.reason]||stt?.reason||'—'],
   ['Motor de audio',({running:'Activo',suspended:'Suspendido',closed:'Cerrado'})[context?.state]||'No iniciado'],
   ...audioOutputFacts(window.roomVoice?.health?.()),
-  ['Micrófono',track?.label||selectedLabel('input-device')],
+  ['Micrófono',track?.label||selectedLabel('input')],
   ['Captura',!track?'No iniciada':track.readyState==='ended'?'Finalizada':track.muted?'Sin señal del dispositivo':track.enabled?'Activa':'Silenciada'],
-  ['Altavoces',selectedLabel('output-device')],
+  ['Altavoces',selectedLabel('output')],
   ['Cancelación de eco',flag(settings.echoCancellation)],
   ['Reducción de ruido',flag(settings.noiseSuppression)],
   ['Frecuencia de captura',statsNumber(settings.sampleRate)?settings.sampleRate+' Hz':'—'],
@@ -762,6 +789,8 @@ function recordMessage(raw) {
             markHistorySeen();
         }
         state.userLive = true;
+        state.userQuietAt = 0;
+        state.liveNote = '';
         cancelBrowserSpeech();
         state.userLive = true;
         if (state.botLive) {
@@ -780,6 +809,7 @@ function recordMessage(raw) {
             markHistorySeen();
         }
         state.userLive = false;
+        state.userQuietAt = Date.now();
     }
     if (t === 'voice-conversation' && d.thread_id) {
         if (typeof d.working === 'boolean') {
@@ -872,10 +902,11 @@ function disconnect() {
     pendingBotText = [];
     partial('');
     state.holding = false;
+    state.liveNote = '';
     updateMic();
 }
 // Joining and leaving are the same button, and it belongs to React: this is what it calls (#53).
-async function toggleCall(){if(state.ws||state.connecting){disconnect();return}state.connecting=true;const epoch=++connectEpoch;keepScreenAwake();setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;state.voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(state.voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(state.voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(state.voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:state.voicePreferences.tts_device},text=>$('live').textContent=text)}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}state.stream=acquiredStream;state.stream.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);keepScreenAwake();refreshAudioDevices();roomStore.patch({engineReady:true,enginePreferences:state.voicePreferences,sttRuntime});joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;updateMic();showEchoCover();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=state.joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch)state.connecting=false}}
+async function toggleCall(){if(state.ws||state.connecting){disconnect();return}state.connecting=true;const epoch=++connectEpoch;keepScreenAwake();setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;state.voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(state.voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(state.voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(state.voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:state.voicePreferences.tts_device},text=>{state.liveNote=text})}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}state.stream=acquiredStream;state.stream.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);keepScreenAwake();refreshAudioDevices();roomStore.patch({engineReady:true,enginePreferences:state.voicePreferences,sttRuntime});joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;updateMic();showEchoCover();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=state.joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch)state.connecting=false}}
 // ----- the socket: opened on join, reopened by itself when the room goes away -----
 // A room restart or a network blip must not end the call: the microphone permission, the media stream
 // and the unlocked output all survive it; only the socket needs reopening, with the same hello.
@@ -1269,7 +1300,7 @@ async function prepareLocalWhisper(model,device){
  try{return await window.roomTranscription.prepare({model,device})}
  catch(error){
   if(device==='wasm'||!caps.wasm)throw error;
-  $('live').textContent='La GPU no pudo cargar '+model.split('/').pop()+'; este dispositivo usa la CPU';
+  state.liveNote='La GPU no pudo cargar '+model.split('/').pop()+'; este dispositivo usa la CPU';
   storePreferences({...(state.voicePreferences||{}),stt_device:'wasm',stt_gpu_failed:true});if(state.voicePreferences)state.voicePreferences.stt_device='wasm';
   const runtime=await window.roomTranscription.prepare({model,device:'wasm'});
   return {...runtime,fallback_from:device,fallback_error:String(error?.message||error).slice(0,300)};
@@ -1284,7 +1315,7 @@ async function prepareTranscription(preferences){
  if(!caps.models.includes(model)){
   const fallback=caps.models[0];
   if(!fallback)throw Error('Este navegador no puede transcribir en local; elige OpenAI en Configuración.');
-  $('live').textContent='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();
+  state.liveNote='Este navegador no puede con el modelo guardado; se usa '+fallback.split('/').pop();
   model=fallback;device='auto';
  }
  return {browserStt:true,sttRuntime:await prepareLocalWhisper(model,device)};
@@ -1358,11 +1389,12 @@ async function applyTranscriptionSettings(previous,next){
   return 'local';
  }finally{state.switchingTranscription=false}
 }
-$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();const previous=state.voicePreferences,p={...state.voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds','presence_sound','replay_on_return_seconds',...MIC_KEYS]){p[key]=['tts_speed','audio_grace_seconds','presence_volume','replay_on_return_seconds','user_speech_timeout','smart_turn_min_silence','smart_turn_max_silence'].includes(key)?Number($(key.replaceAll('_','-')).value):$(key.replaceAll('_','-')).value;if(key==='stt_device'&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.stt_device)?previous.stt_device:'auto'}p.stt_provider=$('stt-provider').value||'browser';p.stt_model=$('stt-model').value;let hotSwap=false;try{storePreferences(p);if(state.ws&&state.ws.readyState===WebSocket.OPEN&&state.sessionId)state.ws.send(JSON.stringify({type:'voice-settings',data:{session_id:state.sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);state.voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);$('live').textContent=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
+$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();const previous=state.voicePreferences,p={...state.voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds','presence_sound','replay_on_return_seconds',...MIC_KEYS]){p[key]=['tts_speed','audio_grace_seconds','presence_volume','replay_on_return_seconds','user_speech_timeout','smart_turn_min_silence','smart_turn_max_silence'].includes(key)?Number($(key.replaceAll('_','-')).value):$(key.replaceAll('_','-')).value;if(key==='stt_device'&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.stt_device)?previous.stt_device:'auto'}p.stt_provider=$('stt-provider').value||'browser';p.stt_model=$('stt-model').value;let hotSwap=false;try{storePreferences(p);if(state.ws&&state.ws.readyState===WebSocket.OPEN&&state.sessionId)state.ws.send(JSON.stringify({type:'voice-settings',data:{session_id:state.sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);state.voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);state.liveNote=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
 window.sidevoiceActions={
  cancelInput:cancelCurrentInput,
  toggleMic,
  toggleCall,
+ selectAudioDevice,
  selectParticipant(threadId){
   const participant=state.people.find(item=>item.thread_id===threadId);
   state.viewedThread=threadId;markHistorySeen();
@@ -1440,10 +1472,6 @@ function publishSessionView(view = roomStore.getState()) {
         $('echo-cover-text').textContent = echo.state ? 'Eco: ' + echo.note : '';
     if ($('echo-note'))
         $('echo-note').textContent = echo.note;
-    // Every node here belongs to the React shell: when a render fails the shell is gone, and the
-    // runtime must keep the call alive rather than throw inside an audio callback (#58).
-    if ($('live'))
-        $('live').textContent = view.live;
     updateComposer();
 }
 roomStore.subscribe(reconcileSession);

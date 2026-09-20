@@ -24,6 +24,32 @@ test('The runtime never writes into a node React fills itself',()=>{
  assert.equal(join.textContent,'pintado por React','the join line belongs to JoinStatus alone');
  assert.equal(s.run("joinView(state)?.step"),'room','and the same store still says what the step is');
 });
+test('The microphones and speakers of this device are a fact, and choosing one is an action',async()=>{
+ const s=setup({strictDOM:true});
+ s.context.navigator={mediaDevices:{enumerateDevices:async()=>[
+  {kind:'audioinput',deviceId:'mic-1',label:'Micro del coche'},
+  {kind:'audioinput',deviceId:'mic-2',label:''},
+  {kind:'audiooutput',deviceId:'speaker-1',label:'Altavoz del coche'}]}};
+ s.context.window.roomVoice={supportsOutputSelection:true,unlock:async()=>{},setOutputDevice:async()=>{}};
+ await s.run('refreshAudioDevices()');
+ const devices=s.run('audioDevices');
+ assert.equal(JSON.stringify(devices.inputs.map(d=>d.label)),JSON.stringify(['Predeterminado del sistema','Micro del coche','Micrófono 2']),
+  'a device with no name is still offered, numbered');
+ assert.equal(JSON.stringify(devices.outputs.map(d=>d.id)),JSON.stringify(['default','speaker-1']));
+ assert.equal(devices.outputAvailable,true);
+ assert.match(s.run('deviceNote'),/tras conceder permiso/);
+ assert.equal(s.run("$('input-device').children.length"),0,'React renders the list; the runtime does not touch the node');
+ // Choosing the output goes through the engine and is remembered.
+ await s.run("window.sidevoiceActions.selectAudioDevice('output','speaker-1')");
+ assert.equal(s.run('audioDevices').outputId,'speaker-1');
+ assert.equal(s.run('audioDevices').busy,false);
+ assert.match(s.run('deviceNote'),/Salida de audio seleccionada/);
+ // One that fails says why and goes back to what was working.
+ s.context.window.roomVoice.setOutputDevice=async()=>{throw Error('El navegador rechazó la salida')};
+ await s.run("window.sidevoiceActions.selectAudioDevice('output','speaker-2')");
+ assert.equal(s.run('deviceNote'),'El navegador rechazó la salida');
+ assert.equal(s.run('audioDevices').outputId,'speaker-1','the selection returns to the one that works');
+});
 test('A page whose interface is gone still runs the call',()=>{
  // React unmounts its whole root when a render throws. The runtime writes into nodes React owns, so
  // after that every one of them is null: the call must survive it, because the audio callbacks run here.
@@ -1214,7 +1240,7 @@ test('Saving the settings form stores every device setting, the ambient bed amon
   s.run(`$('${id}').value=${JSON.stringify(value)}`);
  await s.run("$('language-form').onsubmit({preventDefault(){}})");
  assert.ok(!s.run("$('settings-error').textContent"),'the form reached the end without throwing');
- assert.match(s.run("$('live').textContent"),/Preferencias guardadas/);
+ assert.match(s.run("liveNote"),/Preferencias guardadas/,"the notice is a fact; the live region renders it");
  const saved=stored.find(([key])=>key==='sidevoice.settings')?.[1];
  assert.ok(saved,'something was stored at all');
  assert.equal(saved.stt_device,'auto','a hidden select reading back empty keeps the last valid value');

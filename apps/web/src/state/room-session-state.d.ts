@@ -1,4 +1,8 @@
 import type { ChatMessage, ConversationView, JoinStatusView, LanguageModelView, ParticipantView, KaraokeRange } from './room-types';
+export interface AudioDevices {
+ inputs: {id: string; label: string}[]; outputs: {id: string; label: string}[];
+ inputId: string; outputId: string; available: boolean; outputAvailable: boolean; busy: boolean;
+}
 export interface SessionFacts {
  ws: unknown; stream: unknown; sessionId: string | null; roomRevision: number; roomInfo: Record<string, unknown> | null;
  connecting: boolean; reconnecting: boolean; switching: boolean; switchingSession: boolean; switchingTranscription: boolean;
@@ -22,6 +26,7 @@ export interface SessionStatus {
 export interface SessionSnapshot {
  facts: SessionFacts; session: SessionStatus; conversation: ConversationView; participants: ParticipantView[];
  join: JoinStatusView | null; engine: {text: string; title: string; output: string}; echo: {state: string; note: string}; live: string;
+ audioDevices: AudioDevices;
  mic: {enabled: boolean; label: string; title: string; pressed: boolean; disabled: boolean; holding: boolean};
  call: {joined: boolean; busy: boolean; label: string}; title: string;
  screenLock: {state: string; note: string}; deviceNote: string;

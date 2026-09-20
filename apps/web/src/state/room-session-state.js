@@ -2,6 +2,9 @@
 export const PRESENCE_LEVEL = .1;
 export const PRESENCE_DELIVERED_DELAY_MS = 1500;
 export const GAP_BUFFER_SECONDS = 30;
+// A turn closing is not the same as a person having finished: between one turn and the next there is a
+// breath, and the bed used to start in it, over someone who was still talking (2026-09-20).
+export const BED_AFTER_USER_MS = 2000;
 export const JOIN_STEPS = { audio: 'Preparando audio', whisper: 'Cargando Whisper', voice: 'Cargando el modelo de voz', microphone: 'Pidiendo el micrófono', room: 'Entrando en la sala', conversation: 'Volviendo a ', reconnect: 'Reconectando con la sala…', transcription: 'Cambiando de transcripción…', mic: 'Aplicando los ajustes del micrófono…' };
 export const REPLAY_NOTES = { queued: 'Repitiendo lo que no oíste', playing: 'Repitiendo lo que no oíste', done: 'Repetido al volver', cancelled: 'Repetición cancelada', gone: 'No se pudo repetir · la sala ya no tiene ese audio' };
 const OUTPUT_MARKS = { ok: '', recovering: ' · audio ↻', failed: ' · audio ✕' };
@@ -15,7 +18,8 @@ export function initialSessionFacts() {
         userTurn: null, pendingPhase: '', pendingUserText: '', cancelledInput: false, textSending: false, micEnabled: true,
         voicePreferences: null, enginePreferences: null, sttRuntime: null, engineReady: false, outputHealth: 'ok', echoFacts: null,
         joinStep: null, joinFailure: '', joinProgress: null, joinDetail: '', joinSubject: '',
-        screenLock: { state: '', note: '' }, deviceNote: '', holding: false,
+        screenLock: { state: '', note: '' }, deviceNote: '', holding: false, userQuietAt: 0, liveNote: '',
+        audioDevices: { inputs: [], outputs: [], inputId: 'default', outputId: 'default', available: true, outputAvailable: true, busy: false },
         harness: {}, turns: {}, now: 0, karaokeState: null, bootError: null, languageModels: [],
     };
 }
@@ -32,6 +36,10 @@ export function working(s, thread = selectedThread(s)) {
         !['not_sent', 'channel_closed'].includes(t.status) &&
         (t.status === 'read' || (['delivered', 'unconfirmed'].includes(t.status) && s.now >= t.readyAt)));
 }
+/** Whether enough silence has passed since this person last spoke for an ambient sound to be welcome. */
+export function userSettled(s) {
+    return !s.userQuietAt || s.now >= s.userQuietAt + BED_AFTER_USER_MS;
+}
 export function sessionStatus(s) {
     const speaker = s.userLive ? 'user' : s.botLive || s.activeSpeech?.started ? 'room' : 'nobody';
     const busy = working(s);
@@ -39,7 +47,7 @@ export function sessionStatus(s) {
         !s.ws ? 'out' : s.pendingPhase === 'transcribing' ? 'transcribing' : 'listening';
     return { speaker, conversation: busy ? 'working' : speaker === 'room' ? 'speaking' : 'idle', tab,
         selected: selectedThread(s), viewed: viewedThread(s), harness: s.harness[selectedThread(s)] ?? null,
-        working: busy, bed: busy && speaker === 'nobody' && !s.activeSpeech && !s.previewJob &&
+        working: busy, bed: busy && speaker === 'nobody' && userSettled(s) && !s.activeSpeech && !s.previewJob &&
             !s.reconnecting && !s.switching && !s.switchingSession && !s.switchingTranscription && s.voicePreferences?.presence_sound !== 'off' };
 }
 export function joinView(s) {
@@ -133,6 +141,11 @@ export function participantsView(s) {
     });
 }
 export function liveText(s) {
+    // A notice the runtime put there (the voice model loading, a saved preference, a server that did not
+    // answer) speaks for the moment it belongs to; it is cleared when the call moves on, not overwritten
+    // by the next unrelated store change, which is what writing the node used to mean.
+    if (s.liveNote)
+        return s.liveNote;
     const v = sessionStatus(s);
     if (v.tab === 'reconnecting')
         return 'Reconectando con la sala…';
@@ -170,6 +183,7 @@ export function createRoomSessionStore(seed = {}) {
         return { facts, session: sessionStatus(facts), conversation: conversationView(facts), participants: participantsView(facts),
             join: joinView(facts), engine: engineView(facts), echo: echoCoverage({ ...facts.echoFacts, connected: !!facts.ws, track: !!facts.stream }), live: liveText(facts),
             mic: micView(facts), call: callView(facts), title: viewedTitle(facts), screenLock: facts.screenLock, deviceNote: facts.deviceNote,
+            audioDevices: facts.audioDevices,
             bootError: facts.bootError, languageModels: facts.languageModels };
     }
     function publish() { if (depth || !dirty)

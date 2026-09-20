@@ -28,7 +28,7 @@ function chunkTextRange(text,chunk,from=0){
 class RoomVoice {
  constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null;
   // What the output did lately, for the stats dialog: a stuck buzz on a phone is otherwise invisible from here.
-  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=.5;
+  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.tailSeconds=1.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
   this.presence=null;this.presenceSeconds=7.2;this.presencePulseSeconds=3.6;this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
@@ -171,7 +171,8 @@ class RoomVoice {
  }
  /* Seen on iPhone Safari (2026-09-19): a voice cut mid-utterance left the media element stuck on its last
   * instant while the graph went on, and the next utterance's first source unstuck it. So a cut is followed
-  * by what the next utterance would do: half a second of silence into the same sink. (A permanent silent
+  * by what the next utterance would do: a second and a half of silence into the same sink (half a second
+  * still left the odd crackle on a phone, 2026-09-20). (A permanent silent
   * source was tried first and the phone's echo cancellation stopped covering the voice while it ran.) */
  /* The sink is never left without a source: iPhone Safari loops the last instant of an empty one, which is
   * heard as a crackle under a quiet room. Keeping that true is this engine's job and not something every

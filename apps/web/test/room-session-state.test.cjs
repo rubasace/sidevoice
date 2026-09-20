@@ -104,6 +104,16 @@ test('Playback and replay labels are projections of the utterance facts, preserv
  s.activeSpeech=null;s.replayMarks={h:'done'};const message=api.conversationView(s).messages[0];
  assert.equal(message.playback,'complete');assert.equal(message.replayNote,'Repetido al volver');assert.equal(message.text,row.text);
 });
+test('The bed waits for the breath after a turn, not only for the turn to close',async()=>{
+ // A turn closing is not a person having finished: the bed used to start in the pause between two of them.
+ const api=await moduleReady;const quiet=1000;
+ const s=facts(api,{harness:{a:true},userLive:false,userQuietAt:quiet,now:quiet+500});
+ assert.equal(api.sessionStatus(s).bed,false,'half a breath later is too soon');
+ assert.equal(api.sessionStatus({...s,now:quiet+api.BED_AFTER_USER_MS}).bed,true,'once the silence holds, it may sound');
+ assert.equal(api.sessionStatus({...s,userLive:true,now:quiet+9999}).bed,false,'and never over someone speaking');
+ assert.equal(api.sessionStatus({...s,userQuietAt:0,now:0}).bed,true,'a call where nobody has spoken yet is not waiting for anything');
+});
+
 test('One store transition publishes one coherent projection, without calls from a handler to render or sound',async()=>{
  const api=await moduleReady;const store=api.createRoomSessionStore(facts(api));const seen=[];store.subscribe(s=>seen.push(s));
  store.batch(()=>{store.facts.harness={a:true};store.facts.userLive=true});

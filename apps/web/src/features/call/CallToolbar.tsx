@@ -1,8 +1,7 @@
-import { MicrophoneIcon, SettingsIcon, SpeakerIcon } from "../../components/ui/Icons";
+import { MicrophoneIcon, SettingsIcon } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
-import { NativeSelect } from "../../components/ui/NativeSelect";
 import { JoinStatus } from "./JoinStatus";
-import { CallButton, DeviceNotes, EchoCover, EngineBadge, MicControl, MuteButton, ScreenLock } from "./CallIndicators";
+import { AudioDeviceSelects, CallButton, DeviceNotes, EchoCover, EngineBadge, MicControl, MuteButton, ScreenLock } from "./CallIndicators";
 
 export function CallToolbar() {
   return (
@@ -10,8 +9,7 @@ export function CallToolbar() {
       <div className="controls" id="call-controls">
         <JoinStatus />
         <div id="audio-device-panel" className="audio-devices-panel" hidden>
-          <label className="audio-device-choice"><MicrophoneIcon /><span className="sr-only">Micrófono</span><NativeSelect id="input-device" aria-label="Micrófono"><option value="default">Predeterminado del sistema</option></NativeSelect></label>
-          <label className="audio-device-choice"><SpeakerIcon /><span className="sr-only">Altavoces</span><NativeSelect id="output-device" aria-label="Altavoces"><option value="default">Predeterminado del sistema</option></NativeSelect></label>
+          <AudioDeviceSelects />
           <Button id="audio-settings-open" variant="ghost" size="icon" className="device-settings" aria-label="Configuración de audio" title="Configuración de audio"><SettingsIcon size={24} /></Button>
           <div className="device-notes"><DeviceNotes /><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos">↻</Button></div>
         </div>

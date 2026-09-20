@@ -271,7 +271,7 @@ test('Cutting a voice mid-utterance leaves half a second of silence in the sink,
  assert.equal(made.length,2,'a silent tail follows the cut');
  const tail=made[1];
  assert.equal(tail.target,s.voice.output.sink);
- assert.equal(tail.buffer.duration,.5);assert.equal(tail.buffer.frames,24000);
+ assert.equal(tail.buffer.duration,1.5);assert.equal(tail.buffer.frames,72000);
  assert.equal(tail.startedAt,3.05);
  assert.equal(counters.paused,0,'the element is left alone while the context runs');
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
@@ -291,7 +291,7 @@ test('A voice that ends on its own leaves the same silence behind as one that is
  await speech;
  assert.equal(made.length,2,'the end of the voice is followed into the sink');
  assert.equal(made[1].target,s.voice.output.sink);
- assert.equal(made[1].buffer.duration,.5);
+ assert.equal(made[1].buffer.duration,1.5);
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['complete','tail']));
 });
 

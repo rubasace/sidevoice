@@ -36,6 +36,7 @@ test("keeps the active transcribed draft cancellable after listening text disapp
   window.sidevoiceActions = {
     cancelInput,
     toggleMic: vi.fn(),
+    selectAudioDevice: vi.fn().mockResolvedValue(undefined),
     toggleCall: vi.fn().mockResolvedValue(undefined),
     selectParticipant: vi.fn(),
     closeParticipant: vi.fn(),

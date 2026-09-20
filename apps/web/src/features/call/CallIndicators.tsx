@@ -1,6 +1,7 @@
 import { useRoomStore } from "../../state/room-store";
 import { Button } from "../../components/ui/Button";
-import { HangupIcon, MicrophoneIcon } from "../../components/ui/Icons";
+import { HangupIcon, MicrophoneIcon, SpeakerIcon } from "../../components/ui/Icons";
+import { NativeSelect } from "../../components/ui/NativeSelect";
 import { cn } from "../../lib/cn";
 
 /* The lights and notes of the call bar. Each one is a projection of the session store and nothing else
@@ -69,4 +70,26 @@ export function CallButton() {
 export function MicControl({ children }: { children: React.ReactNode }) {
   const mic = useRoomStore((state) => state.mic);
   return <div id="mic-control" className="mic-control" data-muted={String(!mic.enabled)}>{children}</div>;
+}
+
+export function AudioDeviceSelects() {
+  const devices = useRoomStore((state) => state.audioDevices);
+  const choose = (kind: "input" | "output") => (event: React.ChangeEvent<HTMLSelectElement>) =>
+    void window.sidevoiceActions?.selectAudioDevice(kind, event.target.value);
+  return (
+    <>
+      <label className="audio-device-choice"><MicrophoneIcon /><span className="sr-only">Micrófono</span>
+        <NativeSelect id="input-device" aria-label="Micrófono" value={devices.inputId} onChange={choose("input")} disabled={!devices.available || devices.busy}>
+          {devices.inputs.length ? devices.inputs.map((device) => <option key={device.id} value={device.id}>{device.label}</option>)
+            : <option value="default">Predeterminado del sistema</option>}
+        </NativeSelect>
+      </label>
+      <label className="audio-device-choice"><SpeakerIcon /><span className="sr-only">Altavoces</span>
+        <NativeSelect id="output-device" aria-label="Altavoces" value={devices.outputId} onChange={choose("output")} disabled={!devices.available || !devices.outputAvailable || devices.busy}>
+          {devices.outputs.length ? devices.outputs.map((device) => <option key={device.id} value={device.id}>{device.label}</option>)
+            : <option value="default">Predeterminado del sistema</option>}
+        </NativeSelect>
+      </label>
+    </>
+  );
 }
