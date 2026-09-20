@@ -734,7 +734,7 @@ test('Changing only the local Whisper model swaps it on the socket the call alre
  assert.equal(s.run('actions.length'),3);
  // What the room does own is a new pipeline every time, and the local model alone never is.
  assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify(next)+')'),false);
- for(const change of [{stt_provider:'openai'},{stt_language:'auto'},{stt_context:'Sidevoice'},{turn_end_mode:'timer'},{smart_turn_min_silence:1.2},{user_speech_timeout:4}])
+ for(const change of [{stt_provider:'openai'},{stt_language:'auto'},{stt_context:'Sidevoice'},{turn_patience:'calm'}])
   assert.equal(s.run('pipelineSettingsChanged('+JSON.stringify(previous)+','+JSON.stringify({...previous,...change})+')'),true,JSON.stringify(change));
  // Voices, speed and grace travel live over the socket: they must never open a second one.
  for(const change of [{default_model:'eleven_flash_v2_5'},{spanish_voice:'em_alex'},{tts_speed:1.2},{audio_grace_seconds:4}]){
@@ -804,15 +804,15 @@ test('Changing the transcription provider swaps sessions without ending the call
  assert.equal(s.run('switchingSession'),false);
 });
 
-test('A microphone threshold rebuilds the pipeline the same way, loading the local model before the swap',async()=>{
+test('Changing how patient the room is rebuilds the pipeline the same way, loading the local model before the swap',async()=>{
  const {s,sockets,old,status}=switching();
- const pending=apply(s,{...OLD_SETTINGS,smart_turn_min_silence:1.2,user_speech_timeout:4});
+ const pending=apply(s,{...OLD_SETTINGS,turn_patience:'calm'});
  await new Promise(resolve=>setTimeout(resolve,5));
  assert.equal(s.run('JSON.stringify(prepared)'),'["onnx-community/whisper-tiny"]','the runtime is ready before the socket is swapped');
  assert.match(status.at(-1).text,/micrófono/);
  assert.equal(s.run('ws'),old,'the call runs on the old pipeline while the new one is prepared');
  const next=sockets[1];next.readyState=1;next.onopen();
- assert.equal(JSON.parse(next.sent[0]).data.settings.smart_turn_min_silence,1.2);
+ assert.equal(JSON.parse(next.sent[0]).data.settings.turn_patience,'calm');
  next.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'new-session',sample_rate:16000,channels:1}})});
  assert.equal(await pending,'switched');
  assert.equal(s.run('ws'),next);

@@ -137,6 +137,7 @@ class VoiceCall:
         self.finishing = set()
         self.lock = asyncio.Lock()
         self.held = None   # text of a turn the user resumed before it was delivered; the next turn carries it
+        self.merge_window = mic.merge_window_secs   # how long a finished turn waits, in case it was a breath
         self.catchup = None   # the slices of a gap recording still arriving from the browser
         self.catchups = 0     # how many of them this call has already turned into messages
         call.stt = transcriber
@@ -346,6 +347,15 @@ class VoiceCall:
                 call.latency.input(target.get('thread_id'), revision, metrics)
             call.input_stats['turns'] += 1
             current = revision == call.turn_revision
+            # A pause is not always an ending. Before delivering, the turn waits the window this device's
+            # patience buys it: if the person carries on inside it, what they said next belongs to this same
+            # message and the hold below does the joining (asked for in the room, 2026-09-20).
+            if current and text and not failed and call.cancelled_turn != revision and self.merge_window:
+                deadline = time.monotonic() + self.merge_window
+                while (time.monotonic() < deadline and revision == call.turn_revision
+                       and call.cancelled_turn != revision and call.connected):
+                    await asyncio.sleep(0.05)
+                current = revision == call.turn_revision
             # The decision that makes a resumed sentence one message or two, on the record (a live case on
             # 2026-09-19 resumed 75 ms after the cut and was still delivered as two).
             logger.info('Call {}: turn {} transcribed in {} ms · open turn {} · {} · held before {}', call.id[:8], revision,

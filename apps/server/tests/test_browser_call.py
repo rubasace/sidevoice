@@ -54,8 +54,9 @@ class FakeTranscriber:
         return result
 
 
-TIMER_HELLO = {'conversation': 'thread-a', 'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 1.0},
-               'transcription': {'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}}
+PATIENT_HELLO = {'conversation': 'thread-a', 'mic': {'turn_patience': 'calm'},
+                 'transcription': {'model': 'onnx-community/whisper-tiny', 'device': 'wasm'}}
+TIMER_HELLO = PATIENT_HELLO  # kept while older tests still name it
 
 
 class BrowserCallTest(IsolatedAsyncioTestCase):
@@ -115,8 +116,9 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         socket = FakeWebSocket()
         task, client = await self.join(socket)
         session = self.hub.snapshot(client.id)['call']
-        self.assertEqual(session['mic_settings']['turn_end_mode'], 'timer')
-        self.assertEqual(session['mic_settings']['user_speech_timeout'], 1.0)
+        self.assertEqual(session['mic_settings']['turn_end_mode'], 'smart_turn', "how a turn ends is the room's")
+        self.assertEqual(session['mic_settings']['smart_turn_min_silence'], 1.3, 'this device asked for calm')
+        self.assertEqual(session['mic_settings']['merge_window_secs'], 1.5)
         self.assertEqual(session['mic_settings']['vad_confidence'], 0.6)
         self.assertEqual(session['mic_settings']['vad_start_secs'], 0.4, "the onset is the room's, four tenths")
         self.assertEqual((session['transcription']['provider'], session['transcription']['model'],
@@ -139,7 +141,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
 
     async def test_smart_turn_is_the_default_and_builds_the_analyzer(self):
         from sidevoice.app import turn_stop_strategy
-        from sidevoice.language_settings import LanguageSettings, mic_settings
+        from sidevoice.language_settings import LanguageSettings, MicSettings, mic_settings
         from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
         from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
         mic, problem = mic_settings(LanguageSettings(), {})
@@ -155,19 +157,22 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(vad_analyzer(mic_settings(LanguageSettings(), {'vad_start_secs': 0.05})[0], {}).params.start_secs, 0.4,
                          'a device cannot tune the detector: that is the room\'s, fixed in one place for everyone')
         floor, _ = mic_settings(LanguageSettings(), {'smart_turn_min_silence': 1.2})
-        self.assertEqual(vad_analyzer(floor, {}).params.stop_secs, 1.2)
-        timer, _ = mic_settings(LanguageSettings(), {'turn_end_mode': 'timer', 'user_speech_timeout': 4})
+        self.assertEqual(vad_analyzer(floor, {}).params.stop_secs, 0.9, 'the floor is the room\'s too')
+        calm, _ = mic_settings(LanguageSettings(), {'turn_patience': 'calm'})
+        self.assertEqual(vad_analyzer(calm, {}).params.stop_secs, 1.3, 'patience is what a device may ask for')
+        # The timer strategy is still built when the room itself is configured that way.
+        timer = MicSettings(turn_end_mode='timer', user_speech_timeout=4)
         self.assertIsInstance(turn_stop_strategy(timer, {}), SpeechTimeoutUserTurnStopStrategy)
 
     async def test_the_device_brings_every_setting_and_can_update_the_live_ones(self):
         socket = FakeWebSocket()
         task, client = await self.join(socket, {'settings': {'stt_provider': 'browser', 'stt_model': 'onnx-community/whisper-base',
                                                              'spanish_voice': 'em_alex', 'audio_grace_seconds': 4,
-                                                             'turn_end_mode': 'timer', 'user_speech_timeout': 1.5}})
+                                                             'turn_patience': 'fast'}})
         self.assertEqual(client.settings.spanish_voice, 'em_alex')
         self.assertEqual(client.audio_grace_seconds, 4)
         self.assertEqual(client.transcription['model'], 'onnx-community/whisper-base')
-        self.assertEqual(client.mic_settings['user_speech_timeout'], 1.5)
+        self.assertEqual(client.mic_settings['user_speech_timeout'], 2.0, 'fast is a whole shape, not one number')
         # Voices and grace change without a reconnect; invalid updates are refused and reported.
         client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {'spanish_voice': 'ef_dora', 'audio_grace_seconds': 1}}})
         self.assertEqual((client.settings.spanish_voice, client.audio_grace_seconds), ('ef_dora', 1))
@@ -190,25 +195,36 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
                 await synthesis.synthesize('Hola', model='eleven_flash_v2_5', voice='una-voz', speed=1.0)
         await self.leave(socket, task)
 
-    async def test_invalid_device_settings_fall_back_to_the_room_defaults(self):
+    async def test_how_turns_are_detected_is_the_rooms_and_a_device_that_sends_its_own_is_ignored(self):
+        # A device that saved the old controls (an old page, a curious user) kept them after the room had
+        # changed its mind, and the fix never reached the person it was written for (2026-09-20). Now the
+        # room's numbers are the room's, and the only thing a device says about turns is how patient it wants
+        # the room to be with it.
         socket = FakeWebSocket()
-        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 99}})
-        error = await self.received(socket, 'error')
-        self.assertIn('Ajustes de micrófono no válidos', error['data']['message'])
-        self.assertEqual(client.mic_settings['user_speech_timeout'], 2.5)
+        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 99,
+                                                        'smart_turn_min_silence': 0.1, 'vad_confidence': 5,
+                                                        'vad_start_secs': 0.05}})
         self.assertEqual(client.mic_settings['turn_end_mode'], 'smart_turn')
-        await self.leave(socket, task)
-
-    async def test_a_device_cannot_tune_the_detector_and_is_not_told_off_for_trying(self):
-        # The detector's tuning is the room's: a browser that still sends it (an old page, a curious user)
-        # is ignored on those fields and accepted on the rest, rather than losing every setting it sent.
-        socket = FakeWebSocket()
-        task, client = await self.join(socket, {'mic': {'turn_end_mode': 'timer', 'user_speech_timeout': 1.0,
-                                                        'vad_confidence': 5, 'vad_start_secs': 0.05}})
-        self.assertEqual(client.mic_settings['turn_end_mode'], 'timer')
-        self.assertEqual(client.mic_settings['user_speech_timeout'], 1.0)
+        self.assertEqual(client.mic_settings['user_speech_timeout'], 2.5)
+        self.assertEqual(client.mic_settings['smart_turn_min_silence'], 0.9)
         self.assertEqual(client.mic_settings['vad_confidence'], 0.6)
         self.assertEqual(client.mic_settings['vad_start_secs'], 0.4)
+        await self.leave(socket, task)
+
+    async def test_patience_is_the_one_turn_choice_a_device_makes(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'mic': {'turn_patience': 'calm'}})
+        self.assertEqual(client.mic_settings['smart_turn_min_silence'], 1.3)
+        self.assertEqual(client.mic_settings['merge_window_secs'], 1.5)
+        self.assertEqual(client.mic_settings['vad_start_secs'], 0.4, "patience does not touch the detector's onset")
+        await self.leave(socket, task)
+
+    async def test_a_patience_this_room_does_not_know_keeps_the_rooms_own(self):
+        socket = FakeWebSocket()
+        task, client = await self.join(socket, {'mic': {'turn_patience': 'zen'}})
+        error = await self.received(socket, 'error')
+        self.assertIn('Paciencia desconocida', error['data']['message'])
+        self.assertEqual(client.mic_settings['smart_turn_min_silence'], 0.9)
         await self.leave(socket, task)
 
     async def test_a_gpu_fallback_reported_by_the_browser_is_kept_with_its_reason(self):
@@ -373,6 +389,30 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         voice.turn_started(); await voice.turn_stopped()
         self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')][-1], 'Y esto va aparte.')
 
+    async def test_a_finished_turn_waits_a_moment_in_case_the_pause_was_a_breath(self):
+        # Asked for in the room on 2026-09-20: the detector will sometimes end a turn mid-sentence, and two
+        # halves of one thought arriving as two messages is worse than answering a moment later.
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript('Lo que te quería decir'), Transcript('es que esto va junto.')])
+        voice.merge_window = 0.2
+        voice.turn_started()
+        first = asyncio.ensure_future(voice.turn_stopped())
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.hub.journal.history('thread-a'), [], 'nothing is delivered while the window is open')
+        voice.turn_started()                      # the person carried on inside the window
+        second = voice.turn_stopped()
+        await asyncio.gather(first, second)
+        rows = self.hub.journal.history('thread-a')
+        self.assertEqual([r['text'] for r in rows], ['Lo que te quería decir es que esto va junto.'])
+
+    async def test_a_turn_nobody_resumes_is_delivered_once_the_window_closes(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript('Esto va solo.')])
+        voice.merge_window = 0.1
+        voice.turn_started()
+        await voice.turn_stopped()
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Esto va solo.'])
+
     async def test_held_text_survives_a_noise_turn_but_not_an_explicit_cancel(self):
         from sidevoice.transcribers import Transcript
         async def slow():
@@ -429,7 +469,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         old_socket, new_socket = FakeWebSocket(), FakeWebSocket()
         old_task, old = await self.join(old_socket)
         self.assertEqual(old.transcription['provider'], 'browser')
-        self.assertEqual(old.mic_settings['turn_end_mode'], 'timer')
+        self.assertEqual(old.mic_settings['smart_turn_min_silence'], 1.3, 'this device asked for calm')
 
         choice = {'provider': 'openai', 'available': True, 'model': 'gpt-4o-transcribe', 'reason': 'explicit'}
         with patch('sidevoice.app.transcription.resolve', return_value=choice), \
@@ -437,14 +477,15 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
             new_task, new = await self.join(new_socket, {
                 'conversation': 'thread-a',
                 'settings': {'stt_provider': 'openai', 'stt_model': 'gpt-4o-transcribe',
-                             'turn_end_mode': 'smart_turn', 'vad_confidence': 0.8}})
+                             'turn_patience': 'fast'}})
 
         # Two sockets, two pipelines, two clients: the second is built from the new hello alone.
         self.assertNotEqual(old.id, new.id)
         self.assertEqual(len(self.hub.clients), 2)
         self.assertTrue(old.connected and new.connected)
         self.assertEqual(new.transcription['provider'], 'openai')
-        self.assertEqual((new.mic_settings['turn_end_mode'], new.mic_settings['vad_confidence']), ('smart_turn', 0.8))
+        self.assertEqual((new.mic_settings['smart_turn_min_silence'], new.mic_settings['vad_confidence']), (0.6, 0.6),
+                         "the new hello brought its own patience; the detector stayed the room's")
         self.assertEqual(old.transcription['provider'], 'browser', 'the call still running is untouched')
         # The tab's conversation travelled in the hello, so the new session is already on it.
         self.assertEqual(new.target['thread_id'], 'thread-a')

@@ -46,6 +46,9 @@ class LanguageSettings(BaseModel):
     # preference a person perceives and chooses — how much of the last minutes they want repeated in
     # the car — so it belongs to the device, unlike the detector's tuning, which is the room's.
     replay_on_return_seconds: float = Field(default=120, ge=0, le=3600)
+    # How patient the room is with this person's pauses. The only turn-detection choice a device makes:
+    # what it means in seconds is the room's, in one place, so a fix reaches everybody (see PATIENCE).
+    turn_patience: Literal['fast', 'normal', 'calm'] = 'normal'
     # Microphone defaults for a device that sends none of its own (see MicSettings).
     turn_end_mode: Literal['timer', 'smart_turn'] = 'smart_turn'
     user_speech_timeout: float = Field(default=2.5, ge=0.5, le=15)
@@ -59,6 +62,8 @@ class LanguageSettings(BaseModel):
     # on 96 ms blips while the room's own voice left a car speaker (2026-09-19); the audio before the onset is kept.
     # Half a second held the blips off but made interrupting feel heavy from a moving car, so 0.4 (2026-09-20).
     vad_start_secs: float = Field(default=0.4, ge=0.05, le=1)
+    # How long a finished turn waits before delivery, in case the pause was a breath (see MicSettings).
+    merge_window_secs: float = Field(default=0.5, ge=0, le=5)
 
 
     @model_validator(mode='after')
@@ -136,26 +141,43 @@ class MicSettings(BaseModel):
     # Half a second held the blips off but made interrupting feel heavy from a moving car, so 0.4 (2026-09-20).
     vad_start_secs: float = Field(default=0.4, ge=0.05, le=1)
 
-    # What a browser may override. The detector's fine tuning is deliberately not here: nobody can hear the
-    # difference between 0.2 s and 0.5 s of onset, but getting it wrong makes the room interrupt itself, and
-    # the fix has to reach every device at once. What a person perceives and chooses stays with the device.
-    FIELDS: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence', 'smart_turn_max_silence')
-    ROOM_ONLY: ClassVar[tuple[str, ...]] = ('vad_confidence', 'vad_min_volume', 'vad_start_secs')
+    # How long a finished turn waits before it is delivered, in case the person was only drawing breath.
+    merge_window_secs: float = Field(default=1.2, ge=0, le=5)
+
+    # A device chooses how patient the room is with it, and nothing else about turn detection. Seven numbers
+    # nobody can judge by ear (two silences, a timeout, a mode, and the detector's three) were offered before,
+    # and a device that had saved the old ones silently kept them, so a fix never reached the person it was
+    # written for (2026-09-20). One word does the whole set, coherently, in one place for everyone.
+    FIELDS: ClassVar[tuple[str, ...]] = ()
+    ROOM_ONLY: ClassVar[tuple[str, ...]] = ('turn_end_mode', 'user_speech_timeout', 'smart_turn_min_silence',
+                                            'smart_turn_max_silence', 'vad_confidence', 'vad_min_volume',
+                                            'vad_start_secs', 'merge_window_secs')
+
+
+# What each patience means, as the numbers the pipeline needs. 'normal' is the room's default shape.
+PATIENCE = {
+    'fast': {'smart_turn_min_silence': 0.6, 'smart_turn_max_silence': 2.5, 'user_speech_timeout': 2.0,
+             'merge_window_secs': 0},
+    'normal': {'smart_turn_min_silence': 0.9, 'smart_turn_max_silence': 3.0, 'user_speech_timeout': 2.5,
+               'merge_window_secs': 0.5},
+    'calm': {'smart_turn_min_silence': 1.3, 'smart_turn_max_silence': 4.0, 'user_speech_timeout': 3.5,
+             'merge_window_secs': 1.5},
+}
 
 
 def mic_settings(settings, overrides=None):
-    """The room's defaults, overridden by what the device sent when it can be trusted.
+    """How this call detects turns: the room's numbers, shaped by the one thing the device chooses.
 
-    Returns (settings, problem): an invalid override falls back to the room's
-    defaults and says why, so a browser never silently gets a pipeline it did
-    not ask for.
+    Returns (settings, problem). The detector's tuning is never read from what a browser sent — not from
+    its overrides and not from its stored settings, which is how a device kept the old numbers after the
+    room had changed them (2026-09-20). The device's patience is a word; the room turns it into seconds.
     """
-    base = MicSettings(**{key: getattr(settings, key) for key in MicSettings.FIELDS + MicSettings.ROOM_ONLY})
-    if not isinstance(overrides, dict) or not overrides:
-        return base, None
-    merged = {**base.model_dump(), **{key: value for key, value in overrides.items() if key in MicSettings.FIELDS}}
-    try:
-        return MicSettings.model_validate(merged), None
-    except ValidationError as error:
-        return base, 'Ajustes de micrófono no válidos; se usan los de la sala: ' + '; '.join(
-            str(item.get('loc', ('?',))[0]) + ' ' + item.get('msg', '') for item in error.errors())
+    room = load_settings()
+    base = {key: getattr(room, key) for key in MicSettings.ROOM_ONLY}
+    patience = getattr(settings, 'turn_patience', None)
+    if isinstance(overrides, dict) and isinstance(overrides.get('turn_patience'), str):
+        patience = overrides['turn_patience']
+    if patience not in PATIENCE:
+        problem = None if patience is None else 'Paciencia desconocida; se usa la de la sala: ' + str(patience)[:40]
+        return MicSettings(**base), problem
+    return MicSettings(**{**base, **PATIENCE[patience]}), None
