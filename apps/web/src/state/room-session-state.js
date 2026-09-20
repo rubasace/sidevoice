@@ -129,12 +129,12 @@ export function enginePanel(s) {
 export function capabilityPanel(s) {
     const rows = [], runtime = s.sttRuntime, p = s.enginePreferences || s.voicePreferences;
     if (runtime?.device)
-        rows.push({ id: 'device', label: runtime.device === 'webgpu' ? 'WebGPU' : 'CPU',
+        rows.push({ id: 'device', label: runtime.device === 'webgpu' ? 'GPU' : 'CPU',
             value: runtime.device === 'webgpu' ? 'La transcripción usa la GPU' : 'La transcripción usa la CPU',
             state: runtime.fallback_from ? 'warn' : 'ok',
             note: runtime.fallback_from ? 'Se pidió GPU y no pudo con el modelo.' : '' });
     else if (p?.stt_provider === 'openai')
-        rows.push({ id: 'device', label: 'En la nube', value: 'La transcripción no usa este dispositivo', state: 'ok', note: '' });
+        rows.push({ id: 'device', label: 'Nube', value: 'La transcripción no corre en este dispositivo', state: 'ok', note: '' });
     const echo = echoCoverage({ ...s.echoFacts, connected: !!s.ws, track: !!s.stream });
     if (echo.state)
         rows.push({ id: 'echo', label: 'Eco',
@@ -144,7 +144,7 @@ export function capabilityPanel(s) {
         rows.push({ id: 'screen', label: 'Pantalla',
             value: s.screenLock.state === 'on' ? 'Se mantiene encendida' : 'No se pudo mantener',
             state: s.screenLock.state === 'on' ? 'ok' : 'warn', note: s.screenLock.note });
-    rows.push({ id: 'output', label: 'Salida',
+    rows.push({ id: 'output', label: 'Audio',
         value: s.outputHealth === 'failed' ? 'El audio falló' : s.outputHealth === 'recovering' ? 'Recuperándose' : 'Audio en orden',
         state: s.outputHealth === 'failed' ? 'fail' : s.outputHealth === 'recovering' ? 'warn' : 'ok',
         note: OUTPUT_TITLES[s.outputHealth] });
