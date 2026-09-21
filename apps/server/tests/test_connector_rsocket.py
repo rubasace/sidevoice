@@ -19,7 +19,7 @@ from starlette.websockets import WebSocketDisconnect
 from rsocket.error_codes import ErrorCode
 from rsocket.extensions.helpers import authenticate_simple, composite, route as route_metadata
 from rsocket.extensions.mimetypes import WellKnownMimeTypes
-from rsocket.frame import ErrorFrame, RequestFireAndForgetFrame, parse_or_ignore
+from rsocket.frame import ErrorFrame, KeepAliveFrame, RequestFireAndForgetFrame, parse_or_ignore
 from rsocket.frame_builders import to_keepalive_frame, to_request_response_frame, to_setup_frame
 from rsocket.payload import Payload
 
@@ -205,6 +205,20 @@ class RSocketRouteTests(unittest.TestCase):
                 for _ in range(3):
                     first.read()
             self.assertIn(self.connector_id, self.control.peers, 'the newer one is still the connector')
+
+    def test_a_connector_that_goes_silent_is_let_go_after_the_misses_the_old_link_allows(self):
+        # RSocket keepalive is the client's to schedule, so a room that hears nothing has to ask.
+        self.control.heartbeat_seconds = .05
+        with self.room() as (client, connectors):
+            connector = self.connect(client, connectors)
+            connector.request('connector.hello', {})
+            asked = 0
+            with self.assertRaises(WebSocketDisconnect):
+                for _ in range(20):
+                    frame = connector.read()
+                    if isinstance(frame, KeepAliveFrame) and frame.flags_respond:
+                        asked += 1
+            self.assertGreaterEqual(asked, 1, 'the room asked before it gave up')
 
     def test_the_room_answers_a_keepalive_it_is_asked_to_answer(self):
         with self.room() as (client, connectors):

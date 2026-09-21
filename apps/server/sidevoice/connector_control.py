@@ -226,6 +226,9 @@ class ConnectorControl:
                 self.journal.defer(row['id'], immediate=True)
                 redelivered(row['thread'], binding.get('harness'))
                 continue
+            if self.inflight.get(binding['id'], (None,))[0] != row['id']:
+                answer.cancel()   # the connection went while the frame was on its way out; it has already been put back
+                continue
             self.inflight[binding['id']] = (row['id'], now,
                                             asyncio.create_task(self.settle(connector_id, binding, row['id'], answer)))
 
