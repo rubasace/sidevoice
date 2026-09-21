@@ -106,24 +106,49 @@ for amd64 and arm64. Room data lives in `/data`. See
 
 ## Connect a conversation
 
-The agent's harness gets one MCP server (`sidevoice mcp`) and the
-`voice-room` prompt it carries, from `npx -y @sidevoice/uplink@<version> install`;
-the machine it runs on is paired once with the room the first time a
-conversation joins, with a code you read from the room UI ("Emparejar
-conector") and hand to the agent. `docs/INSTALL.md` is written so that you can
-hand it to the agent itself and say "install this".
+On the machine where your agent runs (Node.js 22+), one command:
 
-Once installed, ask the agent to connect the conversation to the voice room. It
-calls `voice_connect`; the conversation appears in the room; what you say
-arrives in that conversation as a user message marked as voice; the agent
-answers in writing and speaks through `voice_say`.
+```sh
+npx -y @sidevoice/uplink@0.4.3 install
+```
+
+It registers the Sidevoice MCP server with Claude Code and prints what is left
+for Codex. Then, in a **new** conversation, ask the agent to join:
+
+> conéctate a la sala https://voice.example
+
+The first time, the agent asks you for the one-time code the room shows under
+**Emparejar conector**. Give it, and the conversation appears in the room. From
+then on any conversation on that machine joins with the same sentence, or with
+the prompt `/mcp__sidevoice__voice-room` on Claude Code; nothing else to type.
+
+What you say arrives in that conversation as a user message marked as voice;
+the agent answers in writing and speaks through `voice_say`. The room shows one
+tick when the machine accepted the message and two when the conversation read
+it, from what the harness itself records — nothing is installed in the harness
+for it.
+
+Other things you may want, each a single command:
+
+```sh
+npx -y @sidevoice/uplink@0.4.3 install           # again after an upgrade: re-points the harness, removes the old copy
+npx -y @sidevoice/uplink@0.4.3 pair https://voice.example ABCD1234   # pair by hand instead of from a conversation
+npx -y @sidevoice/uplink@0.4.3 uninstall         # unregister, stop the connector, remove copies and credential
+```
+
+Pairing is one room per machine; naming another room replaces it, and the agent
+says so before doing it. A room reached in clear (`http://`) is accepted only on
+loopback or a Kubernetes service name (`sidevoice.ai.svc.cluster.local`);
+anywhere else it must be `https://`. After `uninstall`, the room still lists the
+machine as paired until you revoke it from the room's page.
 
 On Claude Code, one setting decides whether your voice reaches a conversation at
 all: a session that bypasses permission prompts has incoming messages **held for
 your approval** rather than delivered, and nothing tells the sender, so voice
 looks sent and never arrives. `voice_connect` detects it and says so; the fix is
 `crossSessionInbound` and the trade-off it carries is spelled out in
-`docs/INSTALL.md`.
+[docs/INSTALL.md](docs/INSTALL.md), which is written so that you can hand it to
+the agent itself and say "install this".
 
 The room service uses port 8767 by default. Several browsers may be in the room
 at the same time, on the same conversation and the same history; muting, stopping
@@ -169,7 +194,6 @@ support, real multi-device use or every browser.
 - `packages/connector/`: published client — MCP façade, uplink and harness adapters.
 - `packages/protocol/`: shared TypeScript contracts and JSON schemas.
 
-- `skills/voice-presentation/`: the agent-facing skill, harness-independent.
 - `docs/INSTALL.md`: install guide written for the agent.
 - `experiments/claude_channel/`: earlier Channels draft, superseded by the
   session socket; kept as the fallback reference.

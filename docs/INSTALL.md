@@ -190,6 +190,12 @@ What is and is not in a span — and why no transcript, reply or credential can 
 
 ## Uninstall
 
-Remove the MCP server entry from your harness, the copy under `~/.local/share/sidevoice/`, and
-`~/.sidevoice/`. The room keeps this machine's credential until it is revoked
-from the room UI.
+```sh
+npx -y @sidevoice/uplink@<version> uninstall
+```
+
+Unregisters the MCP server from Claude Code, stops the connector, removes the installed
+copies under `~/.local/share/sidevoice/`, a `voice-room` skill copy an older version left,
+and `~/.sidevoice/` (credential, socket, outbox, log). Codex's `config.toml` is printed,
+not edited. The room keeps this machine's pairing until it is revoked from the room UI;
+the command says so.
