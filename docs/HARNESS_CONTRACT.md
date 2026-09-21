@@ -9,63 +9,52 @@ invalid declaration is `unknown`. Unknown is deliberately not false.
 | --- | --- | --- | --- | --- |
 | `deliver` | Accept one room event for the harness's conversation | supported: session messaging socket | supported: `codex queue` (or configured HTTP receiver) | supported: configured HTTP receiver |
 | `inspectInbound` | Preflight whether injected input will be admitted | supported: launch flags and `crossSessionInbound` settings | unsupported | unsupported |
-| `working` | Mechanically provide whether this conversation is busy now | supported: polled `~/.claude/sessions/*.json` status | supported: `UserPromptSubmit` / `Stop` lifecycle hooks | unsupported |
-| `endOfTurn` | Normalize a harness `Stop` hook into an end-of-turn report | supported | supported | unsupported |
-| `sessionIdentity` | Identify the conversation without model-supplied text | supported: façade environment | supported: MCP tool metadata (or hook payload) | supported: explicit environment |
+| `working` | Mechanically provide whether this conversation is busy now | supported: observed — `~/.claude/sessions/*.json` status | supported: observed — `task_started` / `task_complete` in the thread's rollout | unsupported |
+| `endOfTurn` | Report the end of a turn, correlated with the message that started it | supported: observed — status goes idle | supported: observed — `task_complete` / `turn_aborted` | unsupported |
+| `sessionIdentity` | Identify the conversation without model-supplied text | supported: façade environment | supported: MCP tool metadata | supported: explicit environment |
 
-A hook invocation says which harness it belongs to because the installed hook
-command says so (`sidevoice hook --harness <name>`, or `SIDEVOICE_HOOK_HARNESS`);
-`identifyHookHarness` then asks that module alone. Nothing is inferred from the
-process environment: a Codex session started from a Claude Code terminal inherits
-`CLAUDE_CODE_SESSION_ID`, and both harnesses' hook payloads carry a `session_id`,
-so an undeclared hook would silently attribute the turn to the first module that
-recognized something. With no declaration the modules are still asked in order,
-which only holds on a machine running a single harness.
+`working` and `endOfTurn` are answered by one method, `observe(thread, handlers)`: the
+module watches what its harness writes about that conversation and calls back with every
+working transition and every user message the conversation admits. The connector matches
+admitted messages against what it delivered (by `message_id`) for the read receipt and
+the turn correlation. Nothing is installed in the harness, and a harness that writes
+nothing observable declares both unsupported.
 
 `binding.register` carries this declaration. Bindings remain in-memory room
 state, as before. The participant API exposes the normalized declaration and
 the browser distinguishes `unsupported` from `unknown` when explaining why no
 harness-native working signal is available.
 
-## Codex's event-backed working state
+## What each harness writes, and when
 
-Checked on Codex CLI 0.153.2 on 2026-09-19:
+Checked on Claude Code 2.1.278 and Codex CLI 0.153.2 on 2026-09-21, with a live session of each:
 
-- `~/.codex` contains rollout/history stores, queue databases and per-thread
-  writer locks, but no Claude-style session registry with current busy/idle
-  state. A writer lock identifies the process that owns a thread; it does not
-  say whether that process is currently running a turn.
-- the generated experimental app-server schema includes `turn/started`,
-  `turn/completed` and `thread/status/changed`. Those are notifications on the
-  owning app-server connection. A normal TUI or stdio app-server exposes no
-  endpoint to an unrelated local connector, and a second app-server cannot
-  resume a thread while its writer is active (see issue #29's steer design).
-- Codex's hook schema includes `UserPromptSubmit` and `Stop`. In a real Codex
-  0.153.2 session, both a directly entered prompt and a message delivered by
-  `codex queue --thread` to that live thread emitted those two hooks. Each pair
-  carried the same `session_id` (the thread) and `turn_id`; the queued turn kept
-  the thread identity and received a distinct turn identity.
+- Claude Code keeps `~/.claude/sessions/<pid>.json` per session with a `status` it
+  updates (`busy`, `idle`), and appends the session's transcript as
+  `~/.claude/projects/<project>/<session id>.jsonl`. A message posted to the session's
+  inbox is recorded as `queue-operation` enqueue/dequeue and then as a `user` entry
+  (`"Another Claude session sent a message:\n"` + the envelope) the moment the session
+  admits it; the entry's `promptId` names the turn. Measured: the `user` entry appeared
+  9 ms after the socket write for an idle session, and the connector reported it read
+  300 ms later at its 400 ms poll.
+- Codex appends `sessions/YYYY/MM/DD/rollout-<stamp>-<thread id>.jsonl`: `event_msg`
+  `task_started` / `task_complete` / `turn_aborted` with the `turn_id`, and
+  `response_item` `message` with `role: user` for every message a turn takes, including
+  one that arrived through `codex queue`. Measured: the queued message ran as its own turn
+  once the previous one ended, and the read receipt followed `turn/started` by 190 ms.
+  On attach, the rollout is read once silently so a turn already running is reported as
+  running; old messages are not re-read.
 
-The public capability is therefore `supported`, while an internal source marker
-keeps the connector from trying to poll Codex. The hook reports start/end events
-over the connector's local socket. The connector correlates them by turn,
-deduplicates them, and sends the aggregate state through the existing
-`input.working` path. Lifecycle frames also name `turn_phase`; an older turn's
-end can therefore close its own telemetry while carrying `working: true` if a
-newer turn remains active. Only the last active end carries `working: false`.
-Completed turn IDs are retained for the binding's lifetime, so arbitrarily late
-duplicates cannot resurrect work. Aggregate state is re-announced without
-lifecycle metadata after a room WebSocket reconnect, and the room retains that
-Boolean in memory so a browser selecting or reconnecting mid-turn sees it.
-
-This support has prerequisites rather than invented recovery: both hooks must be
-configured, and the conversation must have an active Sidevoice binding. It does
-not reconstruct a turn that started before either existed, and connector-process
-restart loses in-memory turn state. Hook delivery is fail-open, so an unavailable
-connector never blocks Codex.
+The connector correlates by turn: the read receipt carries the turn id it was taken in,
+the working start carries the same id with the message's `session_id` and `revision`,
+and the end of that turn carries them again. Aggregate state is re-announced on a clock
+and after a room reconnect, and the room retains that Boolean in memory so a browser
+selecting or reconnecting mid-turn sees it. A connector restart loses what it was
+expecting; the room's redelivery on a missing acknowledgement covers the message, not a
+receipt for one already taken.
 
 Assistant speech carries no `final` field. A published utterance is presentation
 data, not evidence that the harness ended its turn; one turn may publish zero,
-one, or several utterances. Codex's correlated `Stop` closes browser turn
+one, or several utterances. The correlated end of turn, observed, closes browser turn
 telemetry. Transcription and offline-audio protocols retain their unrelated
 `final` fields, where the word means the end of input or an audio upload.

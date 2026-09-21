@@ -125,73 +125,40 @@ The connector declares protocol version 1 when it connects; the room accepts a
 stated range and `voice_status` says when a bump is needed. Connector and room
 do not have to be the same version.
 
-## Read receipts and speaking first
+## Read receipts, working state and speaking first
 
 The room shows one tick when the harness accepted a voice message and two when the
-conversation actually read it. The second tick, and a line of context that asks the
-model to acknowledge by voice before any other tool, come from a harness hook on the
-prompt-admitted event. The hook is a plain command (no model involved, about 40 ms):
-it only acts on Sidevoice voice envelopes, reports to the connector over its local
-socket, so no room credential lives in any hook configuration, and always exits 0.
+conversation actually took it, and a working light while the turn runs. None of that is
+configured anywhere: the connector watches what the harness itself writes about the
+conversation, and reports it.
 
-**Claude Code, per conversation (preferred).** Install the `voice-room` skill once (`/voice` itself is Claude Code's own command):
+- **Claude Code** publishes each session's status in `~/.claude/sessions/*.json` (busy or
+  idle) and appends every admitted user message to the session's transcript under
+  `~/.claude/projects/`. A message from the room is appended the moment the session takes it
+  — measured 300 ms after the write on 2026-09-21 — which is the second tick; the transcript's
+  prompt id correlates the turn for telemetry.
+- **Codex** appends the thread's rollout under `$CODEX_HOME/sessions/`: `task_started` and
+  `task_complete` are the turn, and a queued message appears as the user message of the turn
+  that runs it — measured 190 ms after Codex started that turn, on Codex CLI 0.153.2 with
+  `codex queue`. The rollout is found by the thread id in its file name; Codex's databases are
+  not opened.
+
+Both are private files of those products, read only, and treated as the version-specific
+interfaces they are: a change in either shows up as missing ticks, never as a wrong one.
+
+The line that asks the model to acknowledge by voice before any other tool travels inside
+the delivered message itself, after the user's words, marked `[Sidevoice]`; the MCP
+instructions tell the model it is not the user's. Nothing is injected by any other path.
+
+The `voice-room` skill for Claude Code is only a shortcut for the joining steps:
 
 ```bash
 npx -y @sidevoice/uplink@<version> skill install     # copies ~/.claude/skills/voice-room/
 ```
 
-In a conversation, `/voice-room` (or asking to enable voice) joins the room and registers
-the hook for that session only; other sessions are untouched. New sessions see the
-skill; a session already open needs a restart. `skill remove` deletes the copy, and
-neither command touches a `voice-room` skill that is not Sidevoice's.
-
-**Claude Code, every session on the machine.** Alternatively, in `~/.claude/settings.json`
-(or a project's `.claude/settings.json`):
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook --harness claude" } ] }
-    ],
-    "Stop": [
-      { "hooks": [ { "type": "command", "command": "npx -y @sidevoice/uplink@<version> hook --harness claude" } ] }
-    ]
-  }
-}
-```
-
-**Codex** (`~/.codex/config.toml`; verified with Codex CLI 0.153.2 for both a
-direct turn and `codex queue --thread` into the same live thread; Codex has no
-per-session hooks):
-
-```toml
-[[hooks.UserPromptSubmit]]
-hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook --harness codex" } ]
-
-[[hooks.Stop]]
-hooks = [ { type = "command", command = "npx -y @sidevoice/uplink@<version> hook --harness codex" } ]
-```
-
-The command names the harness it was installed for (`--harness claude` / `--harness codex`,
-or `SIDEVOICE_HOOK_HARNESS`). It is not a formality: a Codex session started from a Claude
-Code terminal inherits `CLAUDE_CODE_SESSION_ID`, and both harnesses' payloads carry a
-`session_id`, so an undeclared hook can attribute a turn to the wrong harness and report no
-working state at all.
-
-Set `SIDEVOICE_HOOK_NUDGE=0` in the hook's environment to keep the read receipt but
-drop the nudge. `UserPromptSubmit` mechanically reports the thread working and
-`Stop` reports it idle; the queued voice envelope also supplies the browser turn
-correlation used by telemetry. Both hooks produce no model-authored working
-signal. Restart Codex after editing the configuration, then join the conversation
-to create the active binding; work that predates the hooks or binding cannot be
-reconstructed.
-
-The package does not rewrite `config.toml`: unlike the Claude skill installer,
-Codex's hook is machine-wide and the file may contain user-managed TOML that the
-uplink does not own. Add the two entries explicitly. A machine-wide hook changes
-how Codex runs every session on the machine, so inspect the command and scope
-before adding it.
+`/voice-room` joins the room for that conversation. New sessions see the skill; a session
+already open needs a restart. `skill remove` deletes the copy, and neither command touches a
+`voice-room` skill that is not Sidevoice's.
 
 ## The room: observability (optional)
 

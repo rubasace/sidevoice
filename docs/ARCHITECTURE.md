@@ -25,11 +25,13 @@ accepts it. The room delivers one event at a time per binding, over the
 connector, and only advances on an exact acknowledgement; failures back off and
 retry, and a delivery in flight when either side dies is retried, so the
 harness may see a message twice and dedups by its `message_id`. Speech comes
-back over the same connection and is published like any other utterance. A
-harness hook (`sidevoice hook`, on the prompt-admitted event) reports through the
-connector that the conversation read a message, which the room shows as the
-second tick and measures; the same hook hands the model a line asking it to
-acknowledge by voice before other tools.
+back over the same connection and is published like any other utterance. The
+connector watches what the harness itself writes about the conversation (Claude
+Code's session status and transcript, Codex's rollout) and reports through the
+room when the conversation took a message — the second tick, measured — and
+while its turn runs; the line asking the model to acknowledge by voice before
+other tools travels inside the delivered message. Nothing is installed in the
+harness for any of it.
 
 The last mile is the harness's own session inbox: Claude Code's per-session
 messaging socket (inherited by the façade), or `codex queue` on Codex. Both are
