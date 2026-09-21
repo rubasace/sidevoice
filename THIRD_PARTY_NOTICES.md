@@ -6,7 +6,8 @@ browser assets.
 
 Major components include Pipecat, Transformers.js, ONNX Runtime, Kokoro-82M and
 its ONNX conversion, eSpeak NG, the OpenTelemetry SDKs for Python and the browser
-(Apache-2.0), and the MCP TypeScript SDK in the Claude draft.
+(Apache-2.0), rsocket-py (MIT) on the room's connector link, and the MCP
+TypeScript SDK in the Claude draft.
 Earlier experiments reference MLX Audio, Pocket TTS and FluidAudio.
 
 In particular, eSpeak NG has GPL license obligations when redistributing its
@@ -20,6 +21,7 @@ not replace those terms.
 - https://huggingface.co/hexgrad/Kokoro-82M
 - https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX
 - https://github.com/espeak-ng/espeak-ng
+- https://github.com/rsocket/rsocket-py
 - https://github.com/open-telemetry/opentelemetry-python
 - https://github.com/open-telemetry/opentelemetry-js
 - https://github.com/modelcontextprotocol/typescript-sdk

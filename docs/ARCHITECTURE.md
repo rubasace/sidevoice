@@ -13,12 +13,24 @@ The web app is componentized by product concern (room, conversation, call, setti
 ## Transport and identity
 
 The room is the control plane. Each agent machine runs one connector with an
-outbound WebSocket to `/api/connectors/ws`, authenticated with a credential it
-obtained once by redeeming a pairing code shown in the room UI. The stdio MCP
-server that a harness starts (`packages/connector/mcp.mjs`) is a thin façade over that
+outbound link to the room, authenticated with a credential it obtained once by
+redeeming a pairing code shown in the room UI. The stdio MCP server that a
+harness starts (`packages/connector/mcp.mjs`) is a thin façade over that
 connector: it registers one binding per conversation, identified by what the
 harness itself put in the façade's environment or tool-call metadata — never by
 anything the model says.
+
+That link comes in two shapes and the control plane knows neither: it speaks to
+a *peer* it can tell things and ask things of. `/api/connectors/rsocket` is
+RSocket 1.0 over a WebSocket — rsocket-py on the room side, a dependency-free
+client on the connector side — where an answer belongs to the stream that asked
+for it and the credential travels once, in SETUP. `/api/connectors/ws` is the
+hand-rolled protocol the room has always spoken: one JSON object per message,
+and an answer is another message correlated by hand. Both carry the same frames
+and the same JSON. Which one a machine uses is decided once, when it pairs: the
+room advertises what it serves, the machine writes its choice into its
+credential, and `voice_status` says which it is. The old link stays for a
+release so machines upgrade at their own pace.
 
 Input the user speaks is a row in the room's journal until a harness adapter
 accepts it. The room delivers one event at a time per binding, over the
@@ -181,7 +193,9 @@ unnecessary and it is kept only as the fallback reference.
   remain unproven.
 - The last-mile interfaces are private to each harness and may change across
   versions; the connector pins the ranges it was verified against.
-- Connector credentials are per machine. The browser side of the room still
+- Connector credentials are per machine, and travel once per connection: in the
+  RSocket link's SETUP frame, or in the old link's `connector.hello`. The browser
+  side of the room still
   binds to loopback; its link is a plain WebSocket, so remote exposure needs only
   a TLS reverse proxy, which is separate work.
 - WebGPU initialization fallback exists; full device-loss recovery needs work.
