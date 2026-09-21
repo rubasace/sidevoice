@@ -1,4 +1,5 @@
-/** Minimal RFC 6455 text-frame WebSocket server for tests: handshake, masked client frames, unmasked server frames. */
+/** Minimal RFC 6455 WebSocket server for tests: handshake, masked client frames, unmasked server
+ *  frames. Text for the room's old protocol, binary for RSocket. */
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 
@@ -8,7 +9,7 @@ export function createWsServer(onConnection) {
     const key = req.headers['sec-websocket-key'];
     const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
     socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
-    const conn = { socket, send(text) { const payload = Buffer.from(text); const len = payload.length; let header; if (len < 126) header = Buffer.from([0x81, len]); else if (len < 65536) { header = Buffer.alloc(4); header[0] = 0x81; header[1] = 126; header.writeUInt16BE(len, 2); } else { header = Buffer.alloc(10); header[0] = 0x81; header[1] = 127; header.writeBigUInt64BE(BigInt(len), 2); } socket.write(Buffer.concat([header, payload])); }, close() { socket.write(Buffer.from([0x88, 0])); socket.end(); }, onMessage: null };
+    const conn = { socket, send(message) { const binary = Buffer.isBuffer(message); const payload = binary ? message : Buffer.from(message); const opcode = binary ? 0x82 : 0x81; const len = payload.length; let header; if (len < 126) header = Buffer.from([opcode, len]); else if (len < 65536) { header = Buffer.alloc(4); header[0] = opcode; header[1] = 126; header.writeUInt16BE(len, 2); } else { header = Buffer.alloc(10); header[0] = opcode; header[1] = 127; header.writeBigUInt64BE(BigInt(len), 2); } socket.write(Buffer.concat([header, payload])); }, close() { socket.write(Buffer.from([0x88, 0])); socket.end(); }, onMessage: null, onBinary: null };
     let buffer = Buffer.alloc(0);
     socket.on('data', chunk => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -24,6 +25,7 @@ export function createWsServer(onConnection) {
         if (opcode === 0x8) { socket.end(); return; }
         if (opcode === 0x9) { socket.write(Buffer.concat([Buffer.from([0x8a, payload.length]), payload])); continue; }
         if (opcode === 0x1 && conn.onMessage) conn.onMessage(payload.toString());
+        if (opcode === 0x2 && conn.onBinary) conn.onBinary(Buffer.from(payload));
       }
     });
     socket.on('error', () => {});

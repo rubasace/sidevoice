@@ -202,6 +202,15 @@ export function routeOf(metadata) {
   return entry.content.toString('utf8', 1, 1 + entry.content[0]);
 }
 
+/** The simple credential a SETUP carries, or null. */
+export function authenticationOf(metadata) {
+  if (!metadata?.length) return null;
+  const entry = parseCompositeMetadata(metadata).find(item => item.mime === MIME.authentication);
+  if (!entry || entry.content.length < 4 || entry.content[0] !== (0x80 | AUTHENTICATION_SIMPLE)) return null;
+  const length = entry.content.readUInt16BE(1);
+  return { username: entry.content.toString('utf8', 3, 3 + length), password: entry.content.toString('utf8', 3 + length) };
+}
+
 /* ---------- the connection ---------- */
 
 export class RSocketError extends Error {

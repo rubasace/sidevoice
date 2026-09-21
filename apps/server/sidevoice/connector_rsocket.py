@@ -118,11 +118,13 @@ class RSocketPeer(ConnectorPeer):
 
     async def request(self, frame):
         _, payload = payload_of(frame)
-        return asyncio.ensure_future(self.answer(self.session.server.request_response(payload)))
+        return asyncio.ensure_future(self.answer(frame, self.session.server.request_response(payload)))
 
     @staticmethod
-    async def answer(pending):
-        return body_of(await pending)
+    async def answer(frame, pending):
+        """The room already knows which event it asked about — the stream is the correlation — so the
+        connector says only how it went, and the answer is put back together here."""
+        return {'event_id': frame.get('event_id'), **body_of(await pending)}
 
     async def disconnect(self):
         await self.session.transport.shutdown(1000)

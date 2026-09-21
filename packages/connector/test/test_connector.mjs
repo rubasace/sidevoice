@@ -14,6 +14,8 @@ import { interpretRollout, rolloutPath } from '../harness-codex.mjs';
 import { remove as removeSkill, status as skillStatus } from '../skill.mjs';
 import './test_harness_contract.mjs';
 import './test_harness_claude.mjs';
+import './test_rsocket.mjs';
+import { createRSocketServer } from './rsocket-server.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const connectorPath = path.join(here, '..', 'connector.mjs');
@@ -35,9 +37,9 @@ async function startRoom() {
   return room;
 }
 
-function startConnector(room, dataDir, extraEnv = {}) {
+function startConnector(room, dataDir, extraEnv = {}, credential = {}) {
   const socketPath = path.join(dataDir, 'connector.sock');
-  writeFileSync(path.join(dataDir, 'credentials.json'), JSON.stringify({ url: room.url, connector_id: 'c-1', token: 't-1' }));
+  writeFileSync(path.join(dataDir, 'credentials.json'), JSON.stringify({ url: room.url, connector_id: 'c-1', token: 't-1', ...credential }));
   const child = spawn(process.execPath, [connectorPath], { env: { ...process.env, SIDEVOICE_DATA_DIR: dataDir, SIDEVOICE_CONNECTOR_IDLE_MS: '400', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = ''; child.stderr.on('data', d => { stderr += d; });
   return { child, socketPath, stderr: () => stderr };
@@ -592,4 +594,47 @@ test('The harness says whether it is working: Claude Code publishes it per sessi
     assert.equal(sessionWorking('quiet-one'), null);
     assert.equal(sessionWorking('nobody'), null);
   } finally { if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previous; }
+});
+
+test('connector: over the RSocket link the conversation is the same one, and the status says which link it is', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sv-'));
+  const received = [];
+  const harness = http.createServer(async (req, res) => { let body = ''; for await (const c of req) body += c; received.push(JSON.parse(body)); res.writeHead(200); res.end('{}'); });
+  await new Promise(r => harness.listen(0, '127.0.0.1', r));
+  let credential = null;
+  const room = createRSocketServer({
+    onSetup: ({ auth, data }) => { credential = { ...auth, ...data }; },
+    onRequest: (route, data) => {
+      if (route === 'connector.hello') return { protocol: 1, heartbeat_seconds: 15 };
+      if (route === 'binding.register') return { client_ref: data.client_ref, binding_id: 'b-rs', thread: data.thread };
+      if (route === 'speech.publish') return { event_id: data.event_id, status: 'queued', text_saved: true, utterance_id: data.utterance_id };
+      return {};
+    },
+  });
+  const url = await room.listen();
+  const { child, socketPath } = startConnector({ url }, dataDir, {}, { link: 'rsocket' });
+  try {
+    await until(() => existsSync(socketPath));
+    const facade = ipcClient(socketPath); await facade.ready;
+    const joined = await facade.call('register', { client_ref: 'thread-rs', harness: 'test', thread: 'thread-rs', title: 'RS',
+      delivery: { kind: 'http', url: `http://127.0.0.1:${harness.address().port}/presentation/message`, thread: 'thread-rs' } });
+    assert.equal(joined.binding_id, 'b-rs');
+    // The credential travelled in SETUP, not in a frame of its own, and the room read it there.
+    assert.deepEqual(credential, { username: 'c-1', password: 't-1', protocol: 1, host: credential.host, version: credential.version });
+
+    // The room asks for a delivery and gets the harness's own answer back on that stream.
+    const acknowledged = await room.request('input.deliver', { event_id: 'e1', binding_id: 'b-rs', thread: 'thread-rs', text: 'hola', channel: 'voice', session_id: 's', revision: 1, message_id: 'm1' }).answer;
+    assert.equal(acknowledged.status, 'accepted');
+    assert.equal(received.length, 1);
+    assert.match(received[0].text, /hola/);
+
+    const published = await facade.call('publish', { client_ref: 'thread-rs', session_id: 's', revision: 1, text: 'buenas' });
+    assert.equal(published.status, 'queued');
+    assert.equal((await facade.call('status', {})).link, 'rsocket');
+
+    // And the room can still close a conversation's voice, which the façade learns on its next call.
+    room.send('binding.close', { binding_id: 'b-rs', thread: 'thread-rs', reason: 'closed_from_room' });
+    await until(async () => (await facade.call('status', {})).closed_by_room.includes('thread-rs'));
+    facade.end();
+  } finally { if (child.exitCode === null) child.kill(); await room.close(); await new Promise(r => harness.close(r)); }
 });
