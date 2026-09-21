@@ -39,6 +39,16 @@ def require_same_origin(request):
     raise HTTPException(403, 'Usa la sala desde su propia dirección.')
 
 
+def require_room_page(request):
+    """Endpoints that exist for the person in the room: a browser on the room's own page, and nothing else.
+    Same-origin alone lets a call with no Origin through (a command line, a script), which is right for
+    the room's data endpoints and wrong for handing out a pairing code: reaching the address is not
+    being in the room. The code is shown to the person; the person carries it to their machine."""
+    if not request.headers.get('origin'):
+        raise HTTPException(403, 'El código de emparejamiento se pide desde la sala.')
+    require_same_origin(request)
+
+
 class NoInference(FrameProcessor):
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)

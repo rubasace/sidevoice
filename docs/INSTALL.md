@@ -8,12 +8,15 @@ other tool. Anything marked **(from the user)** must be asked for, never guessed
 ## What gets installed
 
 1. The Sidevoice connector package (Node 22+), which provides the `sidevoice`
-   command with three subcommands: `mcp` (the stdio MCP server your harness
-   starts), `pair` (one-time pairing with the room) and `connector` (the
-   per-host process the MCP server starts by itself; you never run it).
-2. One pairing of this machine with the user's Sidevoice room.
-3. The `voice-presentation` skill, which tells the agent how to behave once
-   connected.
+   command: `install` (below), `mcp` (the stdio MCP server your harness
+   starts), `pair` (one-time pairing with a room, by hand), `skill` and
+   `connector` (the per-host process the MCP server starts by itself; you
+   never run it).
+2. The `voice-room` skill, which joins a conversation to the room and gives it
+   read receipts.
+3. One pairing of this machine with the user's room — **not** done by the
+   installer. The room shows a one-time code to the person in it, and the
+   conversation asks for it the first time it joins.
 
 Until the package is published to npm, `npx -y @sidevoice/uplink@<version>`
 below is equivalent to `node <checkout>/packages/connector/cli.mjs` from a clone of this
@@ -21,20 +24,24 @@ repository. Pin an exact version; bump it by hand.
 
 ## The short way
 
-One command does everything that is mechanical — pairing this machine with the room, registering the
-MCP server with the harness, installing the skill — and prints what is left for a person to decide:
+One command does everything that is mechanical — registering the MCP server with the harness,
+installing the skill — and prints what is left for a person to decide:
 
 ```sh
-npx -y @sidevoice/uplink@<version> install <room-url>
+npx -y @sidevoice/uplink@<version> install
 ```
 
-It asks the room for its own pairing code, so nobody has to read one from the interface. Only a caller
-that can already reach the room can do that, which is the gate that matters: the code is a handshake,
-not a secret. A room that refuses (or one you reach through a proxy that blocks it) says so, and then
-you pass a code from the interface with `--code`.
+It pairs with nothing and takes no room address. Running it twice changes nothing and says so;
+running a **newer version** of it re-points the harness at that version, which is the whole upgrade.
+`--harness claude|codex` picks one when the machine has both.
 
-Running it twice changes nothing and says so. `--repair` pairs again, `--harness claude|codex` picks
-one when the machine has both.
+Pairing happens in the conversation, the first time it joins: ask the agent to connect to the room
+(`/voice-room`, or "conéctate a la sala https://…"). If this machine is not paired with that room,
+`voice_connect` says so and the agent asks you for the one-time code the room shows under
+**Emparejar conector**; it redeems it with `voice_pair` and joins. The code is shown only to the
+person in the room and works once, within ten minutes; the room does not hand it to any client that
+asks, and neither the installer nor the agent tries to get one. One room per machine for now: pairing
+with another room replaces the current pairing, and the agent says so before doing it.
 
 What it deliberately does **not** do, and prints instead:
 
@@ -51,8 +58,9 @@ The rest of this document is the same thing by hand, and what each step is for.
 - Check Node.js 22 or newer is on PATH: `node --version`.
 - **(from the user)** the room URL (for example `https://sidevoice.example`) and
   a pairing code, which the user reads from the room UI ("Emparejar conector").
-  Codes expire after ten minutes and work once.
-- Pair this machine:
+  Codes expire after ten minutes and work once. Never request one from the room:
+  it refuses anything that is not its own page, on purpose.
+- Pair this machine, either from a conversation (`voice_pair`, see above) or by hand:
   `npx -y @sidevoice/uplink@<version> pair <room-url> <code>`
   This writes `~/.sidevoice/credentials.json` (mode 0600) and nothing else.
 

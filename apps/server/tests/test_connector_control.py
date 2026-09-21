@@ -292,3 +292,27 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.closed, 1000)
         for t in (t1, t2): t.cancel()
         await asyncio.gather(t1, t2, return_exceptions=True)
+
+
+class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
+    """The code is shown to the person in the room, never handed to whoever can reach the address."""
+
+    async def test_a_pairing_code_is_only_given_to_the_room_page(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from sidevoice.connector_control import mount_connector_control
+        app = FastAPI()
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        mount_connector_control(app, FakeHub(RoomHistory(Path(temp.name) / 'room.sqlite3')), heartbeat_seconds=5)
+        with TestClient(app) as client:
+            from_a_client = client.post('/api/connectors/pairing-code')
+            self.assertEqual(from_a_client.status_code, 403, 'a command line reaching the address is not someone in the room')
+            from_elsewhere = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://evil.example'})
+            self.assertEqual(from_elsewhere.status_code, 403)
+            from_the_room = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://testserver'})
+            self.assertEqual(from_the_room.status_code, 200)
+            self.assertRegex(from_the_room.json()['code'], r'^[0-9A-F]{8}$')
+            # Redeeming needs no browser: that step is the machine's, with the code the person carried to it.
+            redeemed = client.post('/api/connectors/pair', json={'code': from_the_room.json()['code'], 'host': 'laptop'})
+            self.assertEqual(redeemed.status_code, 200)
+            self.assertIn('token', redeemed.json())

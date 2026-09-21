@@ -107,9 +107,11 @@ for amd64 and arm64. Room data lives in `/data`. See
 ## Connect a conversation
 
 The agent's harness gets one MCP server (`sidevoice mcp`) and the
-`voice-presentation` skill; the machine it runs on is paired once with the room
-using a code from the room UI ("Emparejar conector"). `docs/INSTALL.md` is
-written so that you can hand it to the agent itself and say "install this".
+`voice-room` skill, both from `npx -y @sidevoice/uplink@<version> install`;
+the machine it runs on is paired once with the room the first time a
+conversation joins, with a code you read from the room UI ("Emparejar
+conector") and hand to the agent. `docs/INSTALL.md` is written so that you can
+hand it to the agent itself and say "install this".
 
 Once installed, ask the agent to connect the conversation to the voice room. It
 calls `voice_connect`; the conversation appears in the room; what you say

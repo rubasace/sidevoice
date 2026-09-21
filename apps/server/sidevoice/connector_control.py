@@ -331,7 +331,7 @@ def mount_connector_control(app, hub, **options):
                 await control.stop()
     app.router.lifespan_context = control_lifespan
 
-    from .presentation import require_same_origin as browser_only
+    from .presentation import require_same_origin as browser_only, require_room_page
 
     @app.websocket('/api/connectors/ws')
     async def connector_socket(websocket: WebSocket):
@@ -339,7 +339,8 @@ def mount_connector_control(app, hub, **options):
 
     @app.post('/api/connectors/pairing-code')
     async def pairing_code(request: Request):
-        browser_only(request)
+        # Only the page in the room asks for a code, and it shows it to the person: never a client.
+        require_room_page(request)
         return {'code': hub.journal.create_pairing_code(), 'expires_in': 600}
 
     @app.post('/api/connectors/pair')

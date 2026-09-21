@@ -19,7 +19,10 @@ MCP server, once. Its result reports `status` (`joined`, or `joining` while the
 room is unreachable and the connector keeps retrying) and the `conversation` it
 bound; report those, not more. If the tool does not exist, Sidevoice is not
 installed for this harness: say so and point at `docs/INSTALL.md`; do not start
-or install anything unless the user asks.
+or install anything unless the user asks. If it fails saying this machine is not
+paired with the room, ask the user for the room's address and the one-time code
+the room shows them under **Emparejar conector**, call `voice_pair` with both,
+then `voice_connect` again; never try to obtain a code from the room yourself.
 
 Join only on a request to join or to select this conversation, never as a side
 effect of replying, checking status or receiving a background notification.
