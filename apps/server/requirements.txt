@@ -1,6 +1,11 @@
 pipecat-ai[websocket,silero,whisper]==1.10.0
 uvicorn==0.53.0
 
+# The connector link over `/api/connectors/rsocket`. The `fastapi` extra pulls FastAPI in for the
+# library's HTTP/3 transport and ships no Starlette one; the room writes its own against
+# `AbstractMessagingTransport` (see sidevoice/connector_rsocket.py).
+rsocket==0.4.20
+
 scipy==1.18.1
 
 # Observability. The room starts none of this unless OTEL_EXPORTER_OTLP_ENDPOINT names a collector;

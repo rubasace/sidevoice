@@ -246,13 +246,13 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertNotEqual(rows[0]['id'], rows[1]['id'])
 
     async def test_outbox_delivers_original_target_without_a_connected_call(self):
-        from sidevoice.connector_control import ConnectorControl
+        from sidevoice.connector_control import ConnectorControl, WebSocketPeer
         control = ConnectorControl(self.hub.journal, self.hub)
         sent = []
         class FakeSocket:
             async def send_json(self, frame): sent.append(frame)
         binding = self.hub.journal.register_binding('conn-1', harness='test', thread='a')
-        control.sockets['conn-1'] = FakeSocket(); control.live[binding['id']] = 'conn-1'
+        control.peers['conn-1'] = WebSocketPeer(FakeSocket()); control.live[binding['id']] = 'conn-1'
         await self.hub.select(self.c.id, 'a')
         self.c.user_started(); self.c.enqueue_input('Para A')
         await self.hub.select(self.c.id, 'b')
