@@ -472,6 +472,26 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.hub.journal.pending()[0]['text'], 'Send next')
 
 
+class RoomSurfaceTests(IsolatedAsyncioTestCase):
+    """What the room answers to, and what it refuses to describe."""
+
+    def app(self):
+        from sidevoice.app import create_app
+        return create_app()
+
+    async def test_the_root_leads_to_the_room_and_no_schema_is_published(self):
+        from starlette.testclient import TestClient
+        with TestClient(self.app()) as client:
+            for path in ('/', '/voice'):
+                answer = client.get(path, follow_redirects=False)
+                self.assertIn(answer.status_code, (307, 308, 302))
+                self.assertEqual(answer.headers['location'], '/voice/',
+                                 'arriving at the room address is arriving at the room')
+            for path in ('/docs', '/redoc', '/openapi.json'):
+                self.assertEqual(client.get(path).status_code, 404,
+                                 f'{path} would publish a map of every endpoint to anyone who asks')
+
+
 class ClientErrorBeaconTests(IsolatedAsyncioTestCase):
     async def test_a_page_with_no_call_can_still_tell_the_room_why_it_went_blank(self):
         from fastapi import FastAPI

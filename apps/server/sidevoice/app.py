@@ -587,16 +587,17 @@ def mount_browser_call(app):
         await browser_call(websocket)
 
 
-if __name__ == "__main__":
-    import argparse
-    import uvicorn
+def create_app():
+    """The whole room, assembled once: the image, start.sh and the tests all get this same thing."""
     from fastapi import FastAPI
-    parser = argparse.ArgumentParser(description="Sidevoice room: browser voice in, durable delivery out.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8767)
-    arguments = parser.parse_args()
+    from fastapi.responses import RedirectResponse
     from .telemetry import configure as configure_telemetry, instrument, mount_telemetry
-    app = FastAPI()
+    # No schema, no playground: this room serves one interface and the endpoints that interface calls,
+    # and FastAPI's defaults would publish a map of all of them to anyone who asks (2026-09-21).
+    app = FastAPI(title='Sidevoice', docs_url=None, redoc_url=None, openapi_url=None)
+    # The room is the interface: arriving at its address means arriving at the room.
+    app.get('/', include_in_schema=False)(lambda: RedirectResponse('/voice/'))
+    app.get('/voice', include_in_schema=False)(lambda: RedirectResponse('/voice/'))
     # Telemetry reads the same configuration the call does, so a room started without start.sh
     # still sees .env.voice. With no OTEL_EXPORTER_OTLP_ENDPOINT this starts nothing at all.
     configure_telemetry(environ={**dotenv_values(REPOSITORY_ROOT / '.env.voice'), **os.environ})
@@ -605,4 +606,14 @@ if __name__ == "__main__":
     mount_browser_call(app)
     mount_telemetry(app)
     instrument(app)
-    uvicorn.run(app, host=arguments.host, port=arguments.port)
+    return app
+
+
+if __name__ == "__main__":
+    import argparse
+    import uvicorn
+    parser = argparse.ArgumentParser(description="Sidevoice room: browser voice in, durable delivery out.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8767)
+    arguments = parser.parse_args()
+    uvicorn.run(create_app(), host=arguments.host, port=arguments.port)
