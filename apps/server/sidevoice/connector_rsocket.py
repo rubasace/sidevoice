@@ -127,7 +127,8 @@ class RSocketPeer(ConnectorPeer):
         return {'event_id': frame.get('event_id'), **body_of(await pending)}
 
     async def disconnect(self):
-        await self.session.transport.shutdown(1000)
+        if self.session.transport is not None:   # a session that already ended has nothing to close
+            await self.session.transport.shutdown(1000)
 
 
 class ConnectorHandler(RoutingRequestHandler):
@@ -171,6 +172,14 @@ class ConnectorSession:
                 self.probe_task.cancel()
             await self.forget()
             await self.server.close()
+            self.release()
+
+    def release(self):
+        """A finished connection refers to itself through its server, its handler, its routes and its
+        peer, so nothing about it is freed until a full collection comes round — and on a room that
+        has served many connectors, that is a lot of dead graph waiting for one. Letting go of the
+        ends here turns the loop into a tree that goes as soon as this call returns."""
+        self.server = self.peer = self.transport = self.probe_task = None
 
     async def authenticate(self, payload):
         """SETUP decides everything: who this is, whether the room believes them, and whether the

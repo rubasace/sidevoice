@@ -5,6 +5,7 @@ socket — so what is being checked is the route, the routing and the outcomes, 
 copy of the client. That the real Node connector understands these same bytes is what
 `test_connector_interop.py` proves, and the byte vectors in the connector's own suite pin.
 """
+import gc
 import json
 import tempfile
 import unittest
@@ -291,3 +292,16 @@ class DeliveryOverRSocketTests(unittest.IsolatedAsyncioTestCase):
         await self.control.close_binding(self.journal.binding(binding['id']))
         self.assertEqual(self.asked[0][0], 'binding.close')
         self.assertEqual(self.asked[0][1]['reason'], 'closed_from_room')
+
+
+def tearDownModule():
+    """Give back what this module borrowed, here, where nothing is being timed.
+
+    Serving a room, spawning connectors and opening sockets leaves thousands of objects that only
+    the cyclic collector can reclaim, and a full collection over this suite's heap costs about a
+    tenth of a second. Left for the interpreter to schedule, that cost lands wherever the threshold
+    happens to fall — which is somebody else's test, and the reason this module used to make one of
+    them fail roughly two runs in three. Reclaiming it at this boundary costs the same tenth of a
+    second and spends it on the tests that made the garbage.
+    """
+    gc.collect()

@@ -10,6 +10,7 @@ The same run happens over `rsocket` and over `ws`, and prints two latencies for 
 what #66 asks for before anything is decided about the browser link.
 """
 import asyncio
+import gc
 import json
 import os
 import shutil
@@ -323,3 +324,16 @@ def report(numbers):
     for link, measured in numbers.items():
         print(f'  {link:<8}  {measured["delivery_to_ack"]:>9.1f} ms   {measured["disconnect_to_registered"]:>21.1f} ms')
     print()
+
+
+def tearDownModule():
+    """Give back what this module borrowed, here, where nothing is being timed.
+
+    Serving a room, spawning connectors and opening sockets leaves thousands of objects that only
+    the cyclic collector can reclaim, and a full collection over this suite's heap costs about a
+    tenth of a second. Left for the interpreter to schedule, that cost lands wherever the threshold
+    happens to fall — which is somebody else's test, and the reason this module used to make one of
+    them fail roughly two runs in three. Reclaiming it at this boundary costs the same tenth of a
+    second and spends it on the tests that made the garbage.
+    """
+    gc.collect()
