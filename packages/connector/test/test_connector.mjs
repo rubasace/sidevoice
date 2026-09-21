@@ -114,9 +114,10 @@ test('connector: hello, register, ordered delivery with acks, speech round trip,
 test('connector: leaving works by conversation even after the room re-minted the binding id', async () => {
   const room = await startRoom();
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sv-'));
+  let minted = 'b-first';
   room.handle = (frame, c) => {
     if (frame.type === 'connector.hello') c.send(JSON.stringify({ type: 'connector.welcome', protocol: 1 }));
-    if (frame.type === 'binding.register') c.send(JSON.stringify({ type: 'binding.registered', client_ref: frame.client_ref, binding_id: 'b-first', thread: frame.thread }));
+    if (frame.type === 'binding.register') c.send(JSON.stringify({ type: 'binding.registered', client_ref: frame.client_ref, binding_id: minted, thread: frame.thread }));
   };
   const { child, socketPath } = startConnector(room, dataDir);
   try {
@@ -124,8 +125,9 @@ test('connector: leaving works by conversation even after the room re-minted the
     const facade = ipcClient(socketPath); await facade.ready;
     const joined = await facade.call('register', { client_ref: 'thread-z', harness: 'claude', thread: 'thread-z', title: 'Z', delivery: { kind: 'http', url: 'http://127.0.0.1:1/never', thread: 'thread-z' } });
     assert.equal(joined.binding_id, 'b-first');
-    // The room re-registers the conversation under a new id (as after a reconnect); the façade never hears.
-    room.conn.send(JSON.stringify({ type: 'binding.registered', client_ref: 'thread-z', binding_id: 'b-second', thread: 'thread-z' }));
+    // The room drops the connection and mints a new id when the connector registers again; the façade never hears.
+    minted = 'b-second';
+    room.conn.close();
     await until(async () => (await facade.call('status', {})).bindings[0]?.binding_id === 'b-second');
     // Leaving with the id the façade remembers still leaves, because it names the conversation too.
     const left = await facade.call('unregister', { binding_id: 'b-first', client_ref: 'thread-z' });

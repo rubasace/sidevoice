@@ -7,6 +7,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { DEFAULT_LINK, LINKS } from './link.mjs';
 
 export function dataDir(env = process.env) {
   return env.SIDEVOICE_DATA_DIR || path.join(os.homedir(), '.sidevoice');
@@ -31,8 +32,16 @@ export function pairedRoom(env = process.env) {
   try {
     const saved = JSON.parse(readFileSync(path.join(dataDir(env), 'credentials.json'), 'utf8'));
     if (!saved.url || !saved.connector_id || !saved.token) return null;
-    return { origin: roomOrigin(saved.url), connector_id: saved.connector_id };
+    return { origin: roomOrigin(saved.url), connector_id: saved.connector_id, link: chosenLink(saved.link ? [saved.link] : []) };
   } catch { return null; }
+}
+
+/** Which link to use, out of what the room says it serves. The room lists them best first and this
+ *  machine takes the first it knows; a room that lists none is one from before the choice existed,
+ *  and that means the link it has always served. Decided once, here, and written down. */
+export function chosenLink(offered) {
+  if (!Array.isArray(offered)) return DEFAULT_LINK;
+  return offered.find(link => LINKS.includes(link)) || DEFAULT_LINK;
 }
 
 /** Redeem a code for this host's credential. Returns where it was written. */
@@ -47,12 +56,13 @@ export async function pair(room, code, env = process.env) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error('Pairing failed: ' + (body.detail || response.status));
-  const ws = new URL('/api/connectors/ws', base); ws.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+  const link = chosenLink(body.links);
+  const socket = new URL(`/api/connectors/${link}`, base); socket.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
   const directory = dataDir(env);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, 'credentials.json');
-  writeFileSync(file, JSON.stringify({ url: ws.toString(), connector_id: body.connector_id, token: body.token, protocol: body.protocol }, null, 2), { mode: 0o600 });
-  return { file, connector_id: body.connector_id, origin: base.origin };
+  writeFileSync(file, JSON.stringify({ url: socket.toString(), connector_id: body.connector_id, token: body.token, protocol: body.protocol, link }, null, 2), { mode: 0o600 });
+  return { file, connector_id: body.connector_id, origin: base.origin, link };
 }
 
 if (process.env.SIDEVOICE_PAIR_MAIN === '1') {
@@ -60,6 +70,6 @@ if (process.env.SIDEVOICE_PAIR_MAIN === '1') {
   if (!room || !code) { console.error('usage: sidevoice pair <room-url> <pairing-code>   (the code is shown in the room under "Emparejar conector")'); process.exit(2); }
   try {
     const result = await pair(room, code);
-    console.log(`Paired with ${result.origin} as connector ${result.connector_id}; credential saved to ${result.file}`);
+    console.log(`Paired with ${result.origin} as connector ${result.connector_id} over ${result.link}; credential saved to ${result.file}`);
   } catch (error) { console.error(error.message); process.exit(1); }
 }

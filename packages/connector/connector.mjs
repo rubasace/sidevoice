@@ -1,7 +1,10 @@
 #!/usr/bin/env node
-/** One connector per host: an outbound WebSocket to the room, every binding multiplexed over it,
- *  and the last mile chosen per binding. Node 22+, no dependencies. Façades talk to it over a
- *  local socket; a binding lives exactly as long as the façade connection that registered it. */
+/** One connector per host: an outbound link to the room, every binding multiplexed over it, and
+ *  the last mile chosen per binding. Node 22+, no dependencies. Façades talk to it over a local
+ *  socket; a binding lives exactly as long as the façade connection that registered it.
+ *
+ *  Which link carries it — `rsocket` or the older `ws` — is `link.mjs`'s business and the
+ *  credential's choice; nothing below this line knows the difference. */
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { capabilityState, SUPPORTED, voiceEnvelope } from './harness-contract.mjs';
 import { harnessFor } from './harnesses.mjs';
 import { privateNetwork } from './pair.mjs';
+import { DEFAULT_LINK, LINKS, linkUrl, roomLink } from './link.mjs';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8')).version;
@@ -49,7 +53,11 @@ function credentials() {
   const parsed = new URL(url);
   if (parsed.protocol !== 'wss:' && !privateNetwork(parsed.hostname)) throw new Error('The room URL must be wss:// unless it stays on this machine or inside its cluster');
   const room = new URL(url); room.protocol = room.protocol === 'wss:' ? 'https:' : 'http:';
-  return { url, connector_id, token, room: room.origin };
+  // The link was chosen once, when this machine paired. A credential written before there was a
+  // choice names none, and that means the link the room has always served.
+  const asked = process.env.SIDEVOICE_LINK || saved.link;
+  const link = LINKS.includes(asked) ? asked : DEFAULT_LINK;
+  return { url, connector_id, token, link, room: room.origin };
 }
 
 /** Whether the pid in the lock is a live Sidevoice connector — not merely a live pid. Pids are reused,
@@ -81,14 +89,14 @@ function acquireLock() {
 }
 
 const bindings = new Map();        // binding_id -> { binding_id, client_ref, harness, thread, title, delivery, capabilities, owner, chain }
-const registering = new Map();     // client_ref -> { resolve, reject, timer }
-const publishing = new Map();      // event_id -> { resolve, timer }
 const clients = new Set();         // façade IPC connections
 const closedByRoom = new Map();    // client_ref -> reason: the user closed that conversation's voice from the room
 const readReported = new Set();    // message ids already reported as read, so a transcript read twice is harmless
-let outbox = [];                   // speech frames not yet confirmed by the room
-let ws = null, connected = false, closed = false, reconnectTimer = null, idleTimer = null, reconnectAttempt = 0, lastError = null;
+let outbox = [];                   // speech not yet confirmed by the room
+let link = null, linkKind = null, settledLink = null;   // the link in use, and the one that has actually worked
+let connected = false, closed = false, reconnectTimer = null, idleTimer = null, reconnectAttempt = 0, lastError = null;
 let socketError = null;            // why the last attempt to reach the room failed, for whoever asks status
+let waking = [];                   // whoever is waiting for the room to welcome this connector again
 let creds;
 
 function loadOutbox() { try { outbox = JSON.parse(readFileSync(outboxPath, 'utf8')); if (!Array.isArray(outbox)) outbox = []; } catch { outbox = []; } }
@@ -96,7 +104,14 @@ function saveOutbox() {
   const temporary = outboxPath + '.' + process.pid + '.tmp';
   writeFileSync(temporary, JSON.stringify(outbox), { mode: 0o600 }); renameSync(temporary, outboxPath);
 }
-function send(frame) { if (ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(frame)); return true; } return false; }
+/** Say it and move on. False when there is no room to say it to; the caller decides whether that
+ *  matters, and what is worth saying again once the room comes back. */
+function send(frame) { const { type, ...data } = frame; return link?.connected ? link.send(type, data) : false; }
+/** Ask, and wait for the room's answer to this and nothing else. */
+function request(route, data, options) {
+  if (!link?.connected) return Promise.reject(new Error('The room is unreachable; retrying in the background'));
+  return link.request(route, data, options);
+}
 
 /* Whether a conversation is working, and whether it has read what the room sent, are the harness's own
  * state — and every harness writes that state down somewhere of its own: Claude Code in a session registry
@@ -166,19 +181,45 @@ function watch(binding) {
 }
 function unwatch(binding) { try { binding.stop?.(); } catch {} binding.stop = null; }
 
+/** Which link this attempt uses: the one the credential chose when this machine paired.
+ *
+ *  A room older than the credential does not serve that route, and a WebSocket cannot tell a
+ *  refused route from a room that is not there — both arrive as the same failed handshake. So the
+ *  credential's link is what is asked for, and every few failed attempts the one every room has
+ *  always served is tried once. Whichever answers is the one this connector then keeps. */
+function nextLink() {
+  if (settledLink) return settledLink;
+  if (creds.link === DEFAULT_LINK) return DEFAULT_LINK;
+  return reconnectAttempt > 0 && reconnectAttempt % 4 === 0 ? DEFAULT_LINK : creds.link;
+}
+
 function open() {
-  if (closed || ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
-  const socket = ws = new WebSocket(creds.url);
-  socket.addEventListener('open', () => {
-    send({ type: 'connector.hello', protocol: PROTOCOL, connector_id: creds.connector_id, token: creds.token, host: hostId });
+  if (closed || link) return;
+  linkKind = nextLink();
+  link = roomLink(linkKind, {
+    url: linkUrl(creds.url, linkKind), connector_id: creds.connector_id, token: creds.token,
+    host: hostId, version: VERSION, protocol: PROTOCOL, log,
+    onConnected: welcome => {
+      connected = true; reconnectAttempt = 0; lastError = null; socketError = null;
+      if (settledLink !== linkKind) {
+        if (settledLink === null && linkKind !== creds.link) log(`the room does not serve the ${creds.link} link; this connector uses ${linkKind}`);
+        settledLink = linkKind;
+      }
+      log(`connected to ${creds.room} as ${creds.connector_id} over ${linkKind} (protocol ${welcome.protocol ?? PROTOCOL}); ${bindings.size} binding(s) to re-register, ${outbox.length} queued speech`);
+      // The room keeps no bindings across a restart and no outbox at all: both are said again.
+      for (const binding of bindings.values()) enrol(binding).catch(error => log(`re-registering ${binding.thread} failed: ${error.message}`));
+      for (const speech of [...outbox]) publish(speech).catch(() => {});
+      const waiting = waking; waking = [];
+      for (const wake of waiting) wake();
+    },
+    onRequest: asked,
+    onLost: reason => {
+      link = null; connected = false;
+      if (reason) { socketError = { ...reason, at: new Date().toISOString(), attempt: reconnectAttempt }; log('room unreachable: ' + JSON.stringify(reason)); }
+      reconnect();
+    },
   });
-  socket.addEventListener('message', event => { receive(JSON.parse(String(event.data))).catch(error => send({ type: 'connector.error', error: error.message })); });
-  const lost = why => { if (ws === socket) { ws = null; connected = false; } if (why) { socketError = { ...why, at: new Date().toISOString(), attempt: reconnectAttempt }; log('room unreachable: ' + JSON.stringify(why)); } reconnect(); };
-  // A refused connection surfaces as 'error' with no 'close', and the dead socket stays
-  // CONNECTING forever: forget it, or open() would never make another one. Whatever the runtime
-  // says about it is kept: "not reachable" alone told a person nothing (2026-09-21).
-  socket.addEventListener('close', event => lost(connected ? null : { close_code: event.code, reason: event.reason || null }));
-  socket.addEventListener('error', event => lost({ error: event.error?.message || event.message || 'connection failed' }));
+  link.open();
 }
 function reconnect() {
   if (closed || reconnectTimer) return;
@@ -187,61 +228,64 @@ function reconnect() {
   reconnectTimer = setTimeout(() => { reconnectTimer = null; open(); }, delay);
 }
 
-async function receive(frame) {
-  switch (frame.type) {
-    case 'connector.welcome':
-      connected = true; reconnectAttempt = 0; lastError = null; socketError = null;
-      log(`connected to ${creds.room} as ${creds.connector_id} (protocol ${frame.protocol ?? PROTOCOL}); ${bindings.size} binding(s) to re-register, ${outbox.length} queued speech`);
-      for (const binding of bindings.values()) {
-        // `local-*` is only a connector-side placeholder while the first
-        // registration waits for the room to mint its durable binding id.
-        // Sending it back makes the room correctly reject it as foreign.
-        const frame = { type: 'binding.register', client_ref: binding.client_ref,
-          harness: binding.harness, thread: binding.thread, title: binding.title,
-          inbound: binding.inbound, capabilities: binding.capabilities, focus: false };
-        if (!binding.binding_id.startsWith('local-')) frame.binding_id = binding.binding_id;
-        send(frame);
-      }
-      for (const speech of outbox) send(speech);
-      return;
-    case 'heartbeat': send({ type: 'heartbeat.ack', nonce: frame.nonce }); return;
-    case 'binding.registered': {
-      const binding = [...bindings.values()].find(b => b.client_ref === frame.client_ref);
-      if (binding && binding.binding_id !== frame.binding_id) { bindings.delete(binding.binding_id); binding.binding_id = frame.binding_id; bindings.set(frame.binding_id, binding); }
-      if (binding && typeof binding.working === 'boolean') announceWork(binding, binding.working);
-      if (binding) log(`room registered ${binding.thread} as ${frame.binding_id} ("${binding.title || ''}")`);
-      registering.get(frame.client_ref)?.resolve(frame); return;
-    }
-    case 'binding.rejected': log(`room rejected ${frame.client_ref}: ${frame.error || 'no reason'}`); registering.get(frame.client_ref)?.reject(new Error(frame.error || 'Binding rejected')); return;
-    case 'speech.published': {
-      log(`speech ${frame.utterance_id || frame.event_id} ${frame.status || 'published'}${frame.reason ? ' (' + frame.reason + ')' : ''}`);
-      outbox = outbox.filter(speech => speech.event_id !== frame.event_id); saveOutbox();
-      publishing.get(frame.event_id)?.resolve(frame); return;
-    }
+/** Tell the room about a binding. Said on joining and again after every reconnect, because the
+ *  room mints the durable id and keeps no bindings across a restart. The promise is kept on the
+ *  binding so that a façade waiting to join and the welcome that registers everything are waiting
+ *  on the same registration, never making two. */
+function enrol(binding) {
+  binding.registration = announce(binding);
+  return binding.registration;
+}
+
+/** The room's answer for one binding, however long it takes to be able to ask: a conversation that
+ *  joins while the room is down is registered by the next welcome, and that is this call's answer too. */
+async function joinRoom(binding, timeout = 10_000) {
+  if (connected) return enrol(binding);
+  const welcomed = await new Promise(resolve => {
+    const timer = setTimeout(() => { waking = waking.filter(wake => wake !== wakeup); resolve(false); }, timeout);
+    const wakeup = () => { clearTimeout(timer); resolve(true); };
+    waking.push(wakeup);
+  });
+  if (!welcomed) throw new Error('The room is unreachable; retrying in the background');
+  return binding.registration ?? enrol(binding);
+}
+
+async function announce(binding) {
+  // `local-*` is only a connector-side placeholder while the first registration waits for the
+  // room to mint its durable binding id. Sending it back makes the room correctly reject it as foreign.
+  const frame = { client_ref: binding.client_ref, harness: binding.harness, thread: binding.thread,
+    title: binding.title, inbound: binding.inbound, capabilities: binding.capabilities,
+    engine: binding.engine, focus: false };
+  if (!binding.binding_id.startsWith('local-')) frame.binding_id = binding.binding_id;
+  const reply = await request('binding.register', frame).catch(error => {
+    log(`room rejected ${binding.client_ref}: ${error.message}`);
+    throw error;
+  });
+  if (binding.binding_id !== reply.binding_id) { bindings.delete(binding.binding_id); binding.binding_id = reply.binding_id; bindings.set(reply.binding_id, binding); }
+  if (typeof binding.working === 'boolean') announceWork(binding, binding.working);
+  log(`room registered ${binding.thread} as ${reply.binding_id} ("${binding.title || ''}")`);
+  return reply;
+}
+
+/** Speech leaves the durable outbox only when the room says it has it — or says it never will. */
+async function publish(speech) {
+  const { type, ...frame } = speech;
+  const reply = await request('speech.publish', frame, { timeout: 15_000 });
+  log(`speech ${reply.utterance_id || speech.utterance_id} ${reply.status || 'published'}${reply.reason ? ' (' + reply.reason + ')' : ''}`);
+  outbox = outbox.filter(queued => queued.event_id !== speech.event_id); saveOutbox();
+  return reply;
+}
+
+/** What the room asks of this connector. What it returns is the answer, when the room waits for one. */
+async function asked(route, frame) {
+  switch (route) {
     case 'input.deliver': {
       const binding = bindings.get(frame.binding_id);
-      if (!binding) { send({ type: 'input.ack', event_id: frame.event_id, status: 'unknown_binding' }); return; }
+      if (!binding) return { status: 'unknown_binding' };
       // One delivery at a time per binding keeps the user's turns in order.
-      binding.chain = (binding.chain || Promise.resolve()).then(async () => {
-        // Expected before it is sent: the harness can take the message, and its transcript show it, before the
-        // delivery call has even settled (Claude Code admitted one 9 ms after the write; the socket answered
-        // 1.5 s later, 2026-09-21). A message expected and never taken costs a map entry.
-        if (binding.pending && frame.message_id) {
-          binding.pending.set(frame.message_id, { session_id: frame.session_id, revision: frame.revision, at: Date.now() });
-          while (binding.pending.size > PENDING_MAX) binding.pending.delete(binding.pending.keys().next().value);
-        }
-        try {
-          const harness = harnessFor(binding.harness);
-          const outcome = await harness.deliver(binding.delivery, frame);
-          log(`delivered ${frame.event_id} (${frame.message_id}) to ${binding.thread} via ${binding.delivery.kind}: ${outcome.status} (${outcome.detail})`);
-          send({ type: 'input.ack', event_id: frame.event_id, status: outcome.status, detail: outcome.detail });
-        } catch (error) {
-          binding.pending?.delete(frame.message_id);
-          log(`delivery of ${frame.event_id} to ${binding.thread} failed: ${error.message}`);
-          send({ type: 'input.ack', event_id: frame.event_id, status: 'failed', error: String(error.message || error).slice(0, 400) });
-        }
-      });
-      return;
+      const answer = (binding.chain || Promise.resolve()).then(() => handOver(binding, frame));
+      binding.chain = answer.catch(() => {});
+      return answer;
     }
     case 'binding.close': {
       // The user closed this conversation's voice in the room. Forget the binding; the façade learns it on its next call.
@@ -256,8 +300,30 @@ async function receive(frame) {
   }
 }
 
+/** One message into the conversation, through the adapter its binding was registered with. */
+async function handOver(binding, frame) {
+  // Expected before it is sent: the harness can take the message, and its transcript show it, before the
+  // delivery call has even settled (Claude Code admitted one 9 ms after the write; the socket answered
+  // 1.5 s later, 2026-09-21). A message expected and never taken costs a map entry.
+  if (binding.pending && frame.message_id) {
+    binding.pending.set(frame.message_id, { session_id: frame.session_id, revision: frame.revision, at: Date.now() });
+    while (binding.pending.size > PENDING_MAX) binding.pending.delete(binding.pending.keys().next().value);
+  }
+  try {
+    const harness = harnessFor(binding.harness);
+    const outcome = await harness.deliver(binding.delivery, frame);
+    log(`delivered ${frame.event_id} (${frame.message_id}) to ${binding.thread} via ${binding.delivery.kind}: ${outcome.status} (${outcome.detail})`);
+    return { status: outcome.status, detail: outcome.detail };
+  } catch (error) {
+    binding.pending?.delete(frame.message_id);
+    log(`delivery of ${frame.event_id} to ${binding.thread} failed: ${error.message}`);
+    return { status: 'failed', error: String(error.message || error).slice(0, 400) };
+  }
+}
+
 function snapshot() {
-  return { host: hostId, version: VERSION, room: creds.room, connected, protocol: PROTOCOL, outbox: outbox.length, room_error: lastError, socket_error: socketError, closed_by_room: [...closedByRoom.keys()],
+  return { host: hostId, version: VERSION, room: creds.room, connected, protocol: PROTOCOL, link: linkKind || creds.link,
+    outbox: outbox.length, room_error: lastError, socket_error: socketError, closed_by_room: [...closedByRoom.keys()],
     bindings: [...bindings.values()].map(({ binding_id, client_ref, harness, thread, title, delivery, capabilities }) =>
       ({ binding_id, client_ref, harness, thread, title, delivery: delivery.kind, capabilities })) };
 }
@@ -268,7 +334,7 @@ function scheduleExit() {
 function shutdown() {
   if (!closed) log(`shutting down (${bindings.size} binding(s), ${clients.size} façade(s))`);
   closed = true; clearTimeout(reconnectTimer); clearTimeout(idleTimer);
-  try { ws?.close(); } catch {}
+  try { link?.close(); } catch {}
   server.close();
   try { if (Number(readFileSync(lockPath, 'utf8')) === process.pid) { unlinkSync(socketPath); unlinkSync(lockPath); } } catch {}
   process.exit(0);
@@ -289,26 +355,21 @@ async function command(client, input) {
       }
       const local_id = 'local-' + randomUUID();
       log(`${harness} ${thread} joins ("${title || ''}", delivery ${delivery.kind}, inbound ${inbound ? (inbound.ok ? 'ok' : 'held') : 'n/a'})`);
-      const binding = { binding_id: local_id, client_ref, harness, thread, title, delivery, inbound, capabilities, owner: client };
+      const binding = { binding_id: local_id, client_ref, harness, thread, title, delivery, inbound, capabilities, engine, owner: client };
       bindings.set(local_id, binding); client.bindings.add(binding); clearTimeout(idleTimer); open(); watch(binding);
-      const frame = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { registering.delete(client_ref); reject(new Error(connected ? 'The room did not confirm the binding' : 'The room is unreachable; retrying in the background')); }, 10_000);
-        registering.set(client_ref, { resolve: f => { clearTimeout(timer); registering.delete(client_ref); resolve(f); }, reject: e => { clearTimeout(timer); registering.delete(client_ref); reject(e); } });
-        if (!send({ type: 'binding.register', client_ref, harness, thread, title, inbound, capabilities, engine })) { /* sent on welcome */ }
-      }).catch(error => { if (!connected) return null; bindings.delete(binding.binding_id); client.bindings.delete(binding); unwatch(binding); throw error; });
-      return { binding_id: frame?.binding_id || binding.binding_id, thread, connected, pending: !frame };
+      // A room that is not there yet is not a failure: the binding is registered on the next welcome.
+      const reply = await joinRoom(binding).catch(error => { if (!connected) return null; bindings.delete(binding.binding_id); client.bindings.delete(binding); unwatch(binding); throw error; });
+      return { binding_id: reply?.binding_id || binding.binding_id, thread, connected, pending: !reply };
     }
     case 'publish': {
       const binding = bindings.get(params.binding_id) || [...bindings.values()].find(b => b.client_ref === params.client_ref);
       if (!binding) throw new Error(closedByRoom.has(params.client_ref) ? 'CLOSED_BY_ROOM' : 'Unknown binding');
-      const speech = { type: 'speech.publish', event_id: params.event_id || randomUUID(), binding_id: binding.binding_id,
+      const speech = { event_id: params.event_id || randomUUID(), binding_id: binding.binding_id,
         session_id: params.session_id, revision: params.revision, utterance_id: params.utterance_id || randomUUID(), text: params.text, language: params.language };
       outbox.push(speech); saveOutbox();
-      if (!send(speech)) return { status: 'queued', utterance_id: speech.utterance_id };
-      const reply = await new Promise(resolve => {
-        const timer = setTimeout(() => { publishing.delete(speech.event_id); resolve(null); }, 15_000);
-        publishing.set(speech.event_id, { resolve: f => { clearTimeout(timer); publishing.delete(speech.event_id); resolve(f); } });
-      });
+      // What the room never confirmed stays in the outbox and goes again on the next welcome; the
+      // conversation is told it is queued rather than left waiting on a room that is not there.
+      const reply = await publish(speech).catch(() => null);
       if (!reply) return { status: 'queued', utterance_id: speech.utterance_id };
       const { type, event_id, ...result } = reply;
       return result;
@@ -356,7 +417,7 @@ function serve(socket) {
 
 creds = credentials();
 if (!acquireLock()) process.exit(0);
-log(`connector ${VERSION} starting: pid ${process.pid}, host ${hostId}, room ${creds.room}, socket ${socketPath}, log ${logPath}`);
+log(`connector ${VERSION} starting: pid ${process.pid}, host ${hostId}, room ${creds.room} over ${creds.link}, socket ${socketPath}, log ${logPath}`);
 loadOutbox();
 if (outbox.length) log(`${outbox.length} speech frame(s) waiting in the outbox`);
 try { unlinkSync(socketPath); } catch {}
