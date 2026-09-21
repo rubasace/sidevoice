@@ -31,9 +31,16 @@ installing the skill — and prints what is left for a person to decide:
 npx -y @sidevoice/uplink@<version> install
 ```
 
-It pairs with nothing and takes no room address. Running it twice changes nothing and says so;
-running a **newer version** of it re-points the harness at that version, which is the whole upgrade.
-`--harness claude|codex` picks one when the machine has both.
+It pairs with nothing and takes no room address. It copies the package to
+`~/.local/share/sidevoice/<version>/` (`$XDG_DATA_HOME` respected) and registers **that copy, run with
+`node`** — never `npx` at session start: resolving a package is not something to do inside a harness's
+startup budget, and one session found no `sidevoice` binary at all on a cold cache. Running it twice
+changes nothing and says so; running a **newer version** re-points the harness at the new copy and removes
+the old one, which is the whole upgrade. `--harness claude|codex` picks one when the machine has both.
+
+One connector process serves every conversation on the machine, and it is whichever was running first.
+After an upgrade a connector from the previous version may still be up; `install` says so, with its pid.
+It exits by itself 15 s after the last conversation leaves it, or you stop it and join again.
 
 Pairing happens in the conversation, the first time it joins: ask the agent to connect to the room
 (`/voice-room`, or "conéctate a la sala https://…"). If this machine is not paired with that room,
@@ -66,8 +73,9 @@ The rest of this document is the same thing by hand, and what each step is for.
 
 ## Claude Code
 
-1. Register the MCP server for the user (not the project), pinned:
-   `claude mcp add --scope user sidevoice -- npx -y @sidevoice/uplink@<version> mcp`
+1. Register the MCP server for the user (not the project), pointing at an installed copy of the package
+   (what `install` does; `npx` here would resolve the package at every session start):
+   `claude mcp add --scope user sidevoice -- node ~/.local/share/sidevoice/<version>/cli.mjs mcp`
 2. Install the skill: copy `skills/voice-presentation/SKILL.md` from this
    repository to `~/.claude/skills/voice-presentation/SKILL.md`.
 3. Verify in a **new** Claude Code session: ask it to "connect this conversation
@@ -108,8 +116,8 @@ of this.
 1. Register the MCP server in `~/.codex/config.toml`, pinned:
    ```toml
    [mcp_servers.sidevoice]
-   command = "npx"
-   args = ["-y", "@sidevoice/uplink@<version>", "mcp"]
+   command = "node"
+   args = ["/home/<you>/.local/share/sidevoice/<version>/cli.mjs", "mcp"]
    ```
 2. Install the skill: copy `skills/voice-presentation/SKILL.md` to
    `$CODEX_HOME/skills/voice-presentation/SKILL.md` (default `~/.codex/skills/`).
