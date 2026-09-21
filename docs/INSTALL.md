@@ -19,6 +19,33 @@ Until the package is published to npm, `npx -y @sidevoice/uplink@<version>`
 below is equivalent to `node <checkout>/packages/connector/cli.mjs` from a clone of this
 repository. Pin an exact version; bump it by hand.
 
+## The short way
+
+One command does everything that is mechanical — pairing this machine with the room, registering the
+MCP server with the harness, installing the skill — and prints what is left for a person to decide:
+
+```sh
+npx -y @sidevoice/uplink@<version> install <room-url>
+```
+
+It asks the room for its own pairing code, so nobody has to read one from the interface. Only a caller
+that can already reach the room can do that, which is the gate that matters: the code is a handshake,
+not a secret. A room that refuses (or one you reach through a proxy that blocks it) says so, and then
+you pass a code from the interface with `--code`.
+
+Running it twice changes nothing and says so. `--repair` pairs again, `--harness claude|codex` picks
+one when the machine has both.
+
+What it deliberately does **not** do, and prints instead:
+
+- **Codex's `config.toml`** is machine-wide and may hold anything its owner put there, so the command
+  shows the three blocks to paste rather than rewriting the file.
+- **Claude Code's inbound safeguard.** If this machine runs sessions in `bypassPermissions`, messages
+  from the room are held rather than delivered. The command says so and shows both remedies; choosing
+  one is the user's, because the machine-wide remedy lets any local process post into every session.
+
+The rest of this document is the same thing by hand, and what each step is for.
+
 ## Common steps
 
 - Check Node.js 22 or newer is on PATH: `node --version`.
