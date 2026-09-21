@@ -316,3 +316,7 @@ class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
             redeemed = client.post('/api/connectors/pair', json={'code': from_the_room.json()['code'], 'host': 'laptop'})
             self.assertEqual(redeemed.status_code, 200)
             self.assertIn('token', redeemed.json())
+            # The room's own page can list what is paired, and see that this one is not connected yet.
+            listed = client.get('/api/connectors', headers={'Origin': 'http://testserver'})
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual([(c['host'], c['connected']) for c in listed.json()['connectors']], [('laptop', False)])

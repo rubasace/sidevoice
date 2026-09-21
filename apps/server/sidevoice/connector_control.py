@@ -353,7 +353,7 @@ def mount_connector_control(app, hub, **options):
     @app.get('/api/connectors')
     async def connectors(request: Request):
         browser_only(request)
-        return {'connectors': [{**c, 'connected': c['id'] in control.sockets} for c in hub.journal.connectors()],
+        return {'connectors': [{**c, 'connected': c['id'] in control.sockets} for c in hub.journal.paired_connectors()],
                 'bindings': control.participants()}
 
     return control

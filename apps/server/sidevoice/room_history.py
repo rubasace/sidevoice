@@ -187,7 +187,10 @@ class RoomHistory:
             if binding['connector'] == connector_id:
                 binding['active'] = 0
 
-    def connectors(self):
+    def paired_connectors(self):
+        """Every machine paired with this room, for the room's own page. (Not `connectors`: that name is the
+        dict this method reads, and an instance attribute shadows a method — the endpoint 500ed for as long
+        as both existed, 2026-09-21.)"""
         return [{'id': cid, 'host': e.get('host'), 'created': e.get('created'), 'last_seen': e.get('last_seen'), 'revoked': e.get('revoked', 0)}
                 for cid, e in sorted(self.connectors.items(), key=lambda item: item[1].get('created') or 0)]
 
