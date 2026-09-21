@@ -9,11 +9,10 @@ other tool. Anything marked **(from the user)** must be asked for, never guessed
 
 1. The Sidevoice connector package (Node 22+), which provides the `sidevoice`
    command: `install` (below), `mcp` (the stdio MCP server your harness
-   starts), `pair` (one-time pairing with a room, by hand), `skill` and
-   `connector` (the per-host process the MCP server starts by itself; you
-   never run it).
-2. The `voice-room` skill, which joins a conversation to the room and gives it
-   read receipts.
+   starts), `pair` (one-time pairing with a room, by hand) and `connector`
+   (the per-host process the MCP server starts by itself; you never run it).
+2. Nothing else. The MCP server carries its own instructions and a `voice-room`
+   prompt with the joining steps; no skill or hook is copied anywhere.
 3. One pairing of this machine with the user's room — **not** done by the
    installer. The room shows a one-time code to the person in it, and the
    conversation asks for it the first time it joins.
@@ -24,8 +23,8 @@ repository. Pin an exact version; bump it by hand.
 
 ## The short way
 
-One command does everything that is mechanical — registering the MCP server with the harness,
-installing the skill — and prints what is left for a person to decide:
+One command does everything that is mechanical — registering the MCP server with the harness —
+and prints what is left for a person to decide:
 
 ```sh
 npx -y @sidevoice/uplink@<version> install
@@ -43,7 +42,7 @@ After an upgrade a connector from the previous version may still be up; `install
 It exits by itself 15 s after the last conversation leaves it, or you stop it and join again.
 
 Pairing happens in the conversation, the first time it joins: ask the agent to connect to the room
-(`/voice-room`, or "conéctate a la sala https://…"). If this machine is not paired with that room,
+("conéctate a la sala https://…", or the prompt `/mcp__sidevoice__voice-room` on Claude Code). If this machine is not paired with that room,
 `voice_connect` says so and the agent asks you for the one-time code the room shows under
 **Emparejar conector**; it redeems it with `voice_pair` and joins. The code is shown only to the
 person in the room and works once, within ten minutes; the room does not hand it to any client that
@@ -158,15 +157,13 @@ The line that asks the model to acknowledge by voice before any other tool trave
 the delivered message itself, after the user's words, marked `[Sidevoice]`; the MCP
 instructions tell the model it is not the user's. Nothing is injected by any other path.
 
-The `voice-room` skill for Claude Code is only a shortcut for the joining steps:
-
-```bash
-npx -y @sidevoice/uplink@<version> skill install     # copies ~/.claude/skills/voice-room/
-```
-
-`/voice-room` joins the room for that conversation. New sessions see the skill; a session
-already open needs a restart. `skill remove` deletes the copy, and neither command touches a
-`voice-room` skill that is not Sidevoice's.
+The joining steps are also a **prompt the server offers**, `voice-room`, for harnesses that
+expose MCP prompts as commands: on Claude Code it appears as `/mcp__sidevoice__voice-room`.
+Nothing is copied into any harness for it, and it moves with the server's version. Whether Codex
+exposes MCP prompts as commands has not been checked; asking it to join the room works there
+regardless, from the server's instructions. A `voice-room` skill copied by an earlier version is
+removed by `install` (`sidevoice skill remove` does the same by hand); a skill of that name that
+is not Sidevoice's is never touched.
 
 ## The room: observability (optional)
 
@@ -193,6 +190,6 @@ What is and is not in a span — and why no transcript, reply or credential can 
 
 ## Uninstall
 
-Remove the MCP server entry from your harness, the skill directory, and
+Remove the MCP server entry from your harness, the copy under `~/.local/share/sidevoice/`, and
 `~/.sidevoice/`. The room keeps this machine's credential until it is revoked
 from the room UI.

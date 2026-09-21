@@ -107,7 +107,7 @@ for amd64 and arm64. Room data lives in `/data`. See
 ## Connect a conversation
 
 The agent's harness gets one MCP server (`sidevoice mcp`) and the
-`voice-room` skill, both from `npx -y @sidevoice/uplink@<version> install`;
+`voice-room` prompt it carries, from `npx -y @sidevoice/uplink@<version> install`;
 the machine it runs on is paired once with the room the first time a
 conversation joins, with a code you read from the room UI ("Emparejar
 conector") and hand to the agent. `docs/INSTALL.md` is written so that you can
