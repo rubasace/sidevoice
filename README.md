@@ -1,12 +1,26 @@
-# Sidevoice
+<!-- Hero, badges and nav: shieldcn (https://shieldcn.dev). Each image is a
+     light/dark pair, so the row follows the reader's GitHub theme. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/header/graph.svg?title=Sidevoice&subtitle=Give+your+coding+agent+a+voice.+Keep+the+conversation.&align=left&bg=14171b&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGcgZmlsbD0iY3VycmVudENvbG9yIj48cmVjdCB4PSIxIiB5PSI5LjUiIHdpZHRoPSIyLjQiIGhlaWdodD0iNSIgcng9IjEuMiIvPjxyZWN0IHg9IjUuNCIgeT0iNiIgd2lkdGg9IjIuNCIgaGVpZ2h0PSIxMiIgcng9IjEuMiIvPjxyZWN0IHg9IjkuOCIgeT0iMiIgd2lkdGg9IjIuNCIgaGVpZ2h0PSIyMCIgcng9IjEuMiIvPjxyZWN0IHg9IjE0LjIiIHk9IjYiIHdpZHRoPSIyLjQiIGhlaWdodD0iMTIiIHJ4PSIxLjIiLz48cmVjdCB4PSIxOC42IiB5PSI5LjUiIHdpZHRoPSIyLjQiIGhlaWdodD0iNSIgcng9IjEuMiIvPjwvZz48L3N2Zz4K&logoColor=a8c7fa&mode=dark" />
+  <img alt="Sidevoice — give your coding agent a voice. Keep the conversation." src="https://shieldcn.dev/header/graph.svg?title=Sidevoice&subtitle=Give+your+coding+agent+a+voice.+Keep+the+conversation.&align=left&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGcgZmlsbD0iY3VycmVudENvbG9yIj48cmVjdCB4PSIxIiB5PSI5LjUiIHdpZHRoPSIyLjQiIGhlaWdodD0iNSIgcng9IjEuMiIvPjxyZWN0IHg9IjUuNCIgeT0iNiIgd2lkdGg9IjIuNCIgaGVpZ2h0PSIxMiIgcng9IjEuMiIvPjxyZWN0IHg9IjkuOCIgeT0iMiIgd2lkdGg9IjIuNCIgaGVpZ2h0PSIyMCIgcng9IjEuMiIvPjxyZWN0IHg9IjE0LjIiIHk9IjYiIHdpZHRoPSIyLjQiIGhlaWdodD0iMTIiIHJ4PSIxLjIiLz48cmVjdCB4PSIxOC42IiB5PSI5LjUiIHdpZHRoPSIyLjQiIGhlaWdodD0iNSIgcng9IjEuMiIvPjwvZz48L3N2Zz4K&logoColor=2f6ae1&mode=light" />
+</picture>
 
-**Give your coding agent a voice. Keep the conversation.**
+<p>
+  <a href="https://github.com/rubasace/sidevoice/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/rubasace/sidevoice.svg?variant=secondary&size=sm&mode=dark" /><img alt="latest release" src="https://shieldcn.dev/github/release/rubasace/sidevoice.svg?variant=secondary&size=sm&mode=light" /></picture></a>
+  <a href="https://github.com/rubasace/sidevoice/actions/workflows/ci.yml"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/rubasace/sidevoice.svg?variant=secondary&size=sm&workflow=ci.yml&branch=main&mode=dark" /><img alt="CI status" src="https://shieldcn.dev/github/ci/rubasace/sidevoice.svg?variant=secondary&size=sm&workflow=ci.yml&branch=main&mode=light" /></picture></a>
+  <a href="https://github.com/rubasace/sidevoice/blob/main/LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/rubasace/sidevoice.svg?variant=secondary&size=sm&mode=dark" /><img alt="license MIT" src="https://shieldcn.dev/github/license/rubasace/sidevoice.svg?variant=secondary&size=sm&mode=light" /></picture></a>
+  <a href="https://www.npmjs.com/package/@sidevoice/uplink"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/npm/v/@sidevoice/uplink.svg?variant=secondary&size=sm&mode=dark" /><img alt="npm version of the connector" src="https://shieldcn.dev/npm/v/@sidevoice/uplink.svg?variant=secondary&size=sm&mode=light" /></picture></a>
+  <a href="https://github.com/rubasace/sidevoice/pkgs/container/sidevoice"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/container-ghcr.io.svg?variant=secondary&size=sm&logo=docker&mode=dark" /><img alt="container image on ghcr.io" src="https://shieldcn.dev/badge/container-ghcr.io.svg?variant=secondary&size=sm&logo=docker&mode=light" /></picture></a>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/node-22+.svg?variant=secondary&size=sm&logo=nodedotjs&mode=dark" /><img alt="requires Node.js 22 or newer" src="https://shieldcn.dev/badge/node-22+.svg?variant=secondary&size=sm&logo=nodedotjs&mode=light" /></picture>
+</p>
 
 A voice room for your coding agents. Talk, interrupt, and keep working in the same
 conversation, with local speech synthesis in your browser.
 
 Your working agent keeps its context and tools, writes its normal response, and
 publishes a conversational version to the room. There is no separate voice operator.
+
+[Install](docs/INSTALL.md) · [Architecture](docs/ARCHITECTURE.md) · [The multi-client room](docs/MULTI_CLIENT_ROOM.md) · [Releasing](docs/RELEASING.md)
 
 > Early prototype. Delivery into Claude Code is verified end to end on Linux;
 > delivery into Codex goes through `codex queue` and is being verified against
@@ -162,7 +176,7 @@ support, real multi-device use or every browser.
 
 ## Next steps
 
-- Verify `codex queue` against Codex Desktop threads; publish the connector to npm.
+- Verify `codex queue` against Codex Desktop threads.
 - Validate real refinement sessions, reconnection and noisy microphones.
 - Simplify setup and validate Windows/mobile clients.
 - Package remote deployment behind an HTTPS reverse proxy.
