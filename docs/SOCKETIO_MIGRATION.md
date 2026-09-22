@@ -9,7 +9,7 @@ machine) and the room. The browser link is a separate decision once this has lan
 | --- | --- | --- |
 | Protocol | Socket.IO, both ends from its maintained libraries: `python-socketio` (5.17, ASGI) in the room, `socket.io-client` (4.8) in the connector | Acknowledgements, automatic reconnection with backoff, ping/pong keepalive and namespaces come from the library; both ends are alive and widely used. RSocket was built and measured first (#66, PR #68): a wash on latency, and the JS side had to be written by us. |
 | The old protocol | **Removed**, not kept one release. `/api/connectors/ws` and every hand-rolled frame go; the protocol version in the handshake becomes `2` and the room refuses `1` | A beta with one user: every paired machine re-pairs after upgrading, which is one command. |
-| Dependencies | `socket.io-client` is the connector's one runtime dependency, `socket.io` (server) its one dev dependency for tests; `python-socketio` in `apps/server/requirements.txt`, pinned | The "no dependencies" property is given up on purpose: the point of this issue is to stop maintaining a transport. |
+| Dependencies | `socket.io-client` and `esbuild` are the connector's dev dependencies, `socket.io` (server) a third for the tests; `python-socketio` in `apps/server/requirements.txt`, pinned | We stop maintaining a transport without asking a machine to resolve one: the client is bundled into the artifact at build time, so the package on npm keeps its zero runtime dependencies. |
 | Path and namespace | Path `/api/connectors/socket.io` (not the default `/socket.io`), namespace `/connectors`, WebSocket transport only (`transports: ['websocket']` on the client; polling disabled on the server) | The path is what the oauth2-proxy bypass Ingress exempts, exactly; the browser will get its own path behind the login later. No long-polling through a proxy, no sticky-session question. |
 | Authentication | In the connect handshake's `auth`: `{ connector_id, token, protocol: 2, host, version }`. The room's `connect` handler checks `journal.authenticate_connector` and refuses with `ConnectionRefusedError("...")`; the client sees `connect_error` with that message and does not retry a refused credential | One check, before any event, same credential as today. |
 | Keepalive | Socket.IO's `pingInterval` / `pingTimeout` (server-side settings, values from today's `heartbeat_seconds` and `HEARTBEAT_MISSES`) | Our heartbeat frames go. |
@@ -44,17 +44,25 @@ machine) and the room. The browser link is a separate decision once this has lan
   `a9fdda8` is the reference for how `connector.mjs` asks-and-waits instead of send-and-match.
   `pair.mjs` stores the room's origin; the path is the client's knowledge. The `privateNetwork`
   rule for `http://` rooms stays.
-- `install` (`install.mjs` `materialize`) copies the package **and installs its runtime
-  dependencies into the copy** (`npm install --omit=dev --no-audit --no-fund` in the copy's
-  directory), since `node <copy>/cli.mjs` must resolve `socket.io-client` from there; `npx` no
-  longer has that job. `uninstall` removes the copy as before.
+- **The published package is bundled.** `npm run build` — a `prepack` script too, so no `npm pack`
+  can forget it — runs esbuild over `cli.mjs` and everything it imports (`bundle: true`,
+  `platform: 'node'`, `format: 'esm'`, `target: 'node22'`, `node:*` external) into `dist/`, and
+  `bin.sidevoice` and `files` name `dist/`. `packages/browser-audio/build.mjs` is how this repo
+  drives esbuild. `install.mjs`'s `materialize` therefore stays what it is — copy the files, run
+  them with `node` — with no `npm install` in the copy and no network at install time; `uninstall`
+  removes the copy as before. `mcp.mjs` starts the connector through that same entry
+  (`cli.mjs connector`), which is one file in `dist/` once bundled and the checkout's own `cli.mjs`
+  when it is not.
 - `voice_status` reports `protocol: 2`; a credential from a client older than this version is
   refused by the room with a message that says to pair again, and `voice_connect` relays it.
 
 ## Tests, and the numbers the PR must show
 
 - Node: a real `socket.io` server in the tests (dev dependency) stands in for the room, so the
-  connector suite keeps its shape; `test/ws-server.mjs` goes.
+  connector suite keeps its shape; `test/ws-server.mjs` goes. The suites run on the source with
+  `node --test`; the interop test also runs once against the built `dist/`, so the bundle is proven
+  and not assumed. CI's `Client (Node)` job builds before it packs, and its `node --check` line
+  names the files that exist.
 - Python: the namespace with a `python-socketio` async client in the tests: refused credential,
   refused protocol, each event reaching the same `ConnectorControl` outcomes as today's tests.
 - **Interop**: the Python test from PR #68 (`test_connector_interop.py`: uvicorn on a loopback
@@ -76,7 +84,8 @@ Ingress exemption for `/api/connectors/socket.io` (one line in rubasace/homelab,
    survives a room restart and replays its outbox — over `/api/connectors/socket.io`, with no
    hand-rolled framing left anywhere in `packages/connector` or `apps/server`.
 2. A credential from the previous client is refused with a message that says to pair again.
-3. `install` produces a copy that runs with its dependency resolved; `uninstall` removes it.
+3. `npm pack` ships one bundled `dist/` and no runtime dependency; `install` produces a copy that
+   runs from it with nothing fetched; `uninstall` removes it.
 4. Both suites green 5/5; the interop test prints the two numbers.
 5. `docs/ARCHITECTURE.md`, `docs/INSTALL.md`, `packages/connector/README.md` and
    `THIRD_PARTY_NOTICES.md` describe the link and the dependency as they are.
