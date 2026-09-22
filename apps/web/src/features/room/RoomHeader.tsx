@@ -1,6 +1,7 @@
-import { SettingsIcon } from "../../components/ui/Icons";
+import { SettingsIcon, SidevoiceMark } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
 
+/* The name and the mark, and the one control the whole page shares. Nothing that explains itself. */
 export function RoomHeader() {
-  return <header><div><h1>Sala de conversaciones</h1><div className="subtitle">Tu espacio para hablar y trabajar</div></div><Button id="settings-open" variant="ghost" size="icon" aria-label="Configuración" title="Configuración"><SettingsIcon /></Button></header>;
+  return <header><h1 className="brand"><SidevoiceMark /> Sidevoice</h1><Button id="settings-open" variant="ghost" size="icon" aria-label="Configuración" title="Configuración"><SettingsIcon /></Button></header>;
 }

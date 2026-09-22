@@ -123,18 +123,18 @@ export function enginePanel(s) {
     const p = s.enginePreferences || s.voicePreferences, runtime = s.sttRuntime, rows = [];
     if (p) {
         const local = String(runtime?.model || p.stt_model || '').split('/').pop().replace('whisper-', 'Whisper ');
-        rows.push({ id: 'stt', label: 'Escucha',
+        rows.push({ id: 'stt', label: 'STT',
             value: p.stt_provider === 'openai' ? 'OpenAI · ' + (p.stt_model || '') : local + ' · en este navegador',
             state: runtime?.fallback_from ? 'warn' : 'ok',
             note: runtime?.fallback_from ? 'La GPU no pudo con el modelo; va por CPU.' : '' });
         const model = String(p.default_model || 'kokoro');
-        rows.push({ id: 'tts', label: 'Habla',
+        rows.push({ id: 'tts', label: 'TTS',
             value: VOICE_LABELS[model] || 'ElevenLabs · ' + model.replace(/^eleven_/, '').replace(/_/g, ' '),
             state: 'ok', note: '' });
     }
     const engine = s.people?.find(person => person.thread_id === selectedThread(s))?.engine;
     if (engine?.model)
-        rows.push({ id: 'agent', label: 'Piensa',
+        rows.push({ id: 'agent', label: 'LLM',
             value: [shortModel(engine.model), engine.effort && 'esfuerzo ' + engine.effort].filter(Boolean).join(' · '),
             state: 'ok', note: '' });
     return rows;
@@ -206,7 +206,6 @@ export function participantsView(s) {
         return { threadId: p.thread_id, title: p.title, selected: p.thread_id === selected, available: !!p.available, switching: s.switching,
             unread, reach, stateLabel: unread && reach !== 'listening' ? base + ' · ' + unread + ' nuevas' : base, subtitle, working: busy,
             machine: p.machine?.host || null, machineId: p.machine?.id || null, harness: p.harness || null,
-            model: p.engine?.model ? shortModel(p.engine.model) : null,
             activityNote: workingCapabilityNote(p), detail: p.reach?.detail ? (p.reach.detail + (p.reach.remedy ? '\n\n' + p.reach.remedy : '')) : undefined };
     });
 }

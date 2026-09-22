@@ -119,9 +119,11 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 .engine-dot[data-state="warn"]{background:#e0a640;box-shadow:0 0 6px #e0a64080}
 .engine-dot[data-state="fail"]{background:#ff7272;box-shadow:0 0 6px #ff727280}
 @media(max-width:750px){
- .call-bar #capability-column{grid-column:1;grid-row:2;justify-self:start}
- .call-bar #engine-column{grid-column:3;grid-row:2;justify-self:end}
- .call-bar .status-column{align-self:end}
+ .call-bar{grid-template-columns:minmax(0,1fr) minmax(0,1fr);row-gap:10px}
+ .call-bar .controls{grid-column:1 / -1;grid-row:1;justify-self:center}
+ .call-bar #capability-column{grid-column:1;grid-row:2;justify-self:start;margin:0}
+ .call-bar #engine-column{grid-column:2;grid-row:2;justify-self:end;margin:0}
+ .call-bar .status-column{align-self:end;max-width:100%}
 }
 .screen-lock{display:inline-flex;align-items:center;align-self:center;margin-inline-end:8px}
 .screen-lock[hidden]{display:none}
@@ -158,3 +160,6 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 /* The line under a conversation: the machine it runs on and the harness it runs in, as marks. */
 .person-machine,.person-harness{display:inline-flex;align-items:center;gap:3px;vertical-align:-1px}
 .person-harness{margin-inline-start:4px}
+
+/* The name at the top: the mark and the word, one line. */
+.brand{display:inline-flex;align-items:center;gap:9px;color:#a8c7fa}.brand svg{color:#a8c7fa}

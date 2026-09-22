@@ -135,13 +135,18 @@ class ConnectorControl:
             await previous.disconnect()
 
     def detach(self, connector_id, peer):
-        """That connection is gone. Its bindings stop being live and whatever was in flight goes back
-        into the room's outbox, to be delivered again when the connector returns."""
+        """That connection is gone. Its bindings stop being live, none of them is working any more —
+        a conversation nobody can reach is not thinking, and the room would otherwise keep showing the
+        last thing it was told for ever — and whatever was in flight goes back into the room's outbox,
+        to be delivered again when the connector returns."""
         if not connector_id or self.peers.get(connector_id) is not peer:
             return
         del self.peers[connector_id]
         for binding_id in [b for b, c in self.live.items() if c == connector_id]:
+            record = self.journal.binding(binding_id)
             del self.live[binding_id]
+            if record:
+                self.hub.clear_conversation_working(record['thread'])
             inflight = self.drop_inflight(binding_id)
             if inflight:
                 self.journal.defer(inflight[0], immediate=True)

@@ -50,10 +50,10 @@ class FakePeer(ConnectorPeer):
 
 class FakeHub:
     def __init__(self, journal):
-        self.journal = journal; self.activated = []; self.published = []; self.receipts = []; self.working = []
+        self.journal = journal; self.activated = []; self.published = []; self.receipts = []; self.working = []; self.cleared = []
     async def activate(self, target): self.activated.append(target)
     def conversation_working(self, thread, working, **correlation): self.working.append((thread, working, correlation))
-    def clear_conversation_working(self, thread): pass
+    def clear_conversation_working(self, thread): self.cleared.append(thread)
     async def publish(self, speech): self.published.append(speech); return {'status': 'queued', 'text_saved': True, 'utterance_id': speech.utterance_id}
     def delivery_status(self, row_id, status): self.receipts.append((row_id, status))
 
@@ -336,6 +336,18 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.journal.get(row['id'])['status'], 'pending')
         self.assertEqual(self.control.inflight, {})
         self.assertFalse(self.control.is_live(binding['id']))
+
+    async def test_a_conversation_nobody_can_reach_is_not_working(self):
+        """A connector that goes leaves the room holding the last thing it said about every conversation
+        it carried. Told "working", the room would show it thinking for ever, next to a dot that says it
+        is not there."""
+        binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
+        peer = await self.attach()
+        self.control.live[binding['id']] = self.connector_id
+        await self.control.working(self.connector_id, {'binding_id': binding['id'], 'working': True})
+        self.assertIn(('sess-1', True, {}), self.hub.working)
+        self.control.detach(self.connector_id, peer)
+        self.assertIn('sess-1', self.hub.cleared, 'the work is put out with the connection')
 
     async def test_speech_lands_in_room_only_from_owning_connector(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')

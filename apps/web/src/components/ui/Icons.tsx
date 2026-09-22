@@ -91,3 +91,8 @@ export function HarnessIcon({ harness, size = 12 }: { harness: string; size?: nu
   if (harness === "codex") return <CodexIcon size={size} />;
   return null;
 }
+
+/** Sidevoice's own mark, the five bars of the README header. */
+export function SidevoiceMark({ className, size = 22 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><rect x="1" y="9.5" width="2.4" height="5" rx="1.2" /><rect x="5.4" y="6" width="2.4" height="12" rx="1.2" /><rect x="9.8" y="2" width="2.4" height="20" rx="1.2" /><rect x="14.2" y="6" width="2.4" height="12" rx="1.2" /><rect x="18.6" y="9.5" width="2.4" height="5" rx="1.2" /></svg>;
+}
