@@ -75,8 +75,8 @@ class PairingRequest(BaseModel):
     harnesses: list[str] = Field(default_factory=list, max_length=8)
 
 
-REVOKED_REASON = ('La sala revocó el emparejamiento de esta máquina: vuelve a emparejarla con el código '
-                  'que la sala muestra en "Emparejar conector".')
+REVOKED_REASON = ('The room revoked this machine\'s pairing: pair it again with the code the room shows '
+                  'under "Emparejar conector" (Pair a connector).')
 
 
 class RedemptionLimit:
@@ -447,7 +447,7 @@ def mount_connector_control(app, hub, **options):
         require_room_page(request)
         paired = {row['id']: row for row in hub.journal.paired_connectors()}
         if connector_id not in paired:
-            raise HTTPException(404, 'Esta sala no tiene emparejada ninguna máquina con ese identificador.')
+            raise HTTPException(404, 'This room has no paired machine with that identifier.')
         if paired[connector_id]['revoked']:
             hub.journal.forget_connector(connector_id)
             return {'status': 'removed', 'connector_id': connector_id}

@@ -103,7 +103,7 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
         await until(lambda: not client.connected)
         with self.assertRaises(socketio.exceptions.ConnectionError) as refusal:
             await self.connect()
-        self.assertIn('revocó', self.reason(refusal.exception))
+        self.assertIn('revoked', self.reason(refusal.exception))
         self.assertIn('Emparejar conector', self.reason(refusal.exception), 'and says how to come back')
         self.assertEqual(self.control.peers, {})
 
