@@ -59,6 +59,9 @@ export interface ParticipantView {
   machineId?: string | null;
   /** The harness the conversation runs in ("claude", "codex"), shown as its icon; null when unknown. */
   harness?: string | null;
+  /** The model this conversation thinks with, shortened the way the models panel says it; null while
+   *  no harness has said which one. */
+  model?: string | null;
 }
 
 /** One machine paired with this room, as its row reads. A revoked machine is still a row: it stays

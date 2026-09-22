@@ -37,6 +37,20 @@ export function PlatformIcon({ platform, size = 12 }: { platform: string; size?:
   return <MachinesIcon size={size} />;
 }
 
+/** One per row of the models panel: an ear for what listens, a mouth for what speaks, a head for what
+ *  thinks. Small enough to sit inside a line of text. */
+export function ListensIcon({ className, size = 12 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 9a5 5 0 0 1 10 0c0 3-2.5 4-3.5 5.5S12 18 12 19a2.5 2.5 0 0 1-5 0" /><path d="M10.5 9a1.5 1.5 0 0 1 3 0c0 1.2-1.5 1.8-1.5 3" /></svg>;
+}
+
+export function SpeaksIcon({ className, size = 12 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12c2.5-2.5 5.3-3.8 8-3.8s5.5 1.3 8 3.8c-2.5 2.5-5.3 3.8-8 3.8S6.5 14.5 4 12Z" /><path d="M8 10.5c2.7 1 5.3 1 8 0M8 13.5c2.7-1 5.3-1 8 0" /></svg>;
+}
+
+export function ThinksIcon({ className, size = 12 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3a6 6 0 0 1 3 11v3a2 2 0 0 1-2 2h-3v-3h-2a2 2 0 0 1-2-2v-2H7.5A1.5 1.5 0 0 1 6.3 9.6L9 6a6 6 0 0 1 6-3Z" /><path d="M13 8.5a1.5 1.5 0 0 1 2.5 1.1c0 1-1.2 1.3-1.2 2.4" /></svg>;
+}
+
 export function RefreshIcon({ className, size = 18 }: IconProps) {
   return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></svg>;
 }

@@ -30,8 +30,9 @@ CAPABILITY_STATES = {'supported', 'unsupported'}
 
 
 def engine_of(value):
-    """Which model answers this conversation, as its harness read it from its own launch line. Absent
-    rather than guessed: no model is asked to say what it is."""
+    """Which model answers this conversation, as its harness read it — from its own launch line before
+    it has answered once, and from what the harness records about the conversation after. Absent rather
+    than guessed: no model is asked to say what it is."""
     if not isinstance(value, dict):
         return None
     kept = {key: str(value[key])[:60] for key in ('model', 'effort', 'thinking') if value.get(key)}
@@ -292,6 +293,17 @@ class ConnectorControl:
             if isinstance(session_id, str) and session_id and type(revision) is int and revision >= 0:
                 metadata.update(session_id=session_id, revision=revision)
         self.hub.conversation_working(binding['thread'], message['working'], **metadata)
+
+    async def engine(self, connector_id, message):
+        """The harness says which model that conversation thinks with, observed where the harness records
+        it. It replaces what the launch line said; a report that names no model changes nothing."""
+        binding = self.journal.binding(message.get('binding_id'))
+        if not binding or self.live.get(binding['id']) != connector_id:
+            return
+        engine = engine_of(message.get('engine'))
+        if not engine or not engine.get('model'):
+            return
+        self.journal.set_binding_engine(binding['id'], engine)
 
     # ----- bindings and speech -----
 

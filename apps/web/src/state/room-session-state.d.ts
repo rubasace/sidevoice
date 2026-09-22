@@ -46,4 +46,5 @@ export interface SessionStore {
 }
 export function createRoomSessionStore(seed?: Partial<SessionFacts>): SessionStore;
 export function receiptView(status: string): {symbol: string; label: string};
+export function shortModel(name: string | null | undefined): string;
 export function sinceText(seconds: number | null | undefined, now: number): string;

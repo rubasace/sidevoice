@@ -103,6 +103,18 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
             'thread': 'thread-b', 'harness': 'codex', 'title': 'B', 'engine': 'gpt'})
         self.assertIsNone(self.control.participants()[1]['engine'])
 
+    async def test_the_harness_observing_which_model_answers_replaces_what_the_launch_line_said(self):
+        # A session launched with no --model says what it thinks with the moment its harness records it.
+        registered = await self.join('sess-1', engine={'model': 'claude-opus-5'})
+        await self.control.engine(self.connector_id, {'binding_id': registered['binding_id'],
+                                                      'engine': {'model': 'claude-fable-5-1', 'effort': None, 'thinking': None}})
+        self.assertEqual(self.journal.binding(registered['binding_id'])['engine'], {'model': 'claude-fable-5-1'},
+                         'what was observed replaces the launch line, and null is not a value')
+        # Nothing to name, nothing to store; and a binding this connector does not hold is not its business.
+        await self.control.engine(self.connector_id, {'binding_id': registered['binding_id'], 'engine': {'effort': 'high'}})
+        await self.control.engine(self.connector_id, {'binding_id': 'someone-elses', 'engine': {'model': 'gpt-5.6-terra'}})
+        self.assertEqual(self.journal.binding(registered['binding_id'])['engine'], {'model': 'claude-fable-5-1'})
+
     async def test_revoking_a_machine_stops_it_serving_now_and_tells_it_why(self):
         # Taking a pairing away is not a note for the machine's next connection: the conversations it
         # carried lose their voice at once, the way they do when the room closes a channel.

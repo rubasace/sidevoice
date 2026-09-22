@@ -20,10 +20,20 @@ admitted messages against what it delivered (by `message_id`) for the read recei
 the turn correlation. Nothing is installed in the harness, and a harness that writes
 nothing observable declares both unsupported.
 
+The same watch reports one more thing about the conversation: `handlers.engine({ model,
+effort, thinking })`, the model it thinks with, whenever the module first sees it and
+whenever it changes. It is not a sixth capability — a module that never sees a model
+simply never calls it — and it is the harness's own record, never asked of the model.
+`engine` on the module (`engine(thread)`) stays what it is: the launch line, which is what
+the binding carries until the first observation replaces it. Effort and thinking are still
+only said on that launch line, so an observation that has none reports them as null.
+
 `binding.register` carries this declaration. Bindings remain in-memory room
 state, as before. The participant API exposes the normalized declaration and
 the browser distinguishes `unsupported` from `unknown` when explaining why no
-harness-native working signal is available.
+harness-native working signal is available. `binding.register` carries the engine too, and
+`input.engine` carries it again whenever an observation replaces it; the room keeps the latest
+on the binding and the participant API returns it as `engine: {model, effort, thinking}`.
 
 ## What each harness writes, and when
 
@@ -39,14 +49,19 @@ Checked on Claude Code 2.1.278 and Codex CLI 0.153.2 on 2026-09-21, with a live 
   `queued_command` whose `prompt` is the whole message: the observer reads both shapes, or the
   read receipt is missed for every message delivered mid-turn. Measured: the `user` entry appeared
   9 ms after the socket write for an idle session, and the connector reported it read
-  300 ms later at its 400 ms poll.
+  300 ms later at its 400 ms poll. Every `assistant` entry in that transcript carries the
+  model that wrote it — `{"type":"assistant","message":{"model":"claude-fable-5-1", …}}` —
+  so a session launched with no `--model` says what it thinks with the moment it answers once.
 - Codex appends `sessions/YYYY/MM/DD/rollout-<stamp>-<thread id>.jsonl`: `event_msg`
   `task_started` / `task_complete` / `turn_aborted` with the `turn_id`, and
   `response_item` `message` with `role: user` for every message a turn takes, including
   one that arrived through `codex queue`. Measured: the queued message ran as its own turn
   once the previous one ended, and the read receipt followed `turn/started` by 190 ms.
   On attach, the rollout is read once silently so a turn already running is reported as
-  running; old messages are not re-read.
+  running; old messages are not re-read. Each turn opens with a `turn_context` naming the
+  model — `{"type":"turn_context","payload":{"model":"gpt-5.6-terra", …}}` — and the
+  `session_meta` that opens the file says it when that build writes it there (0.153.2 does
+  not); the model found during the silent read is reported once the replay is over.
 
 The connector correlates by turn: the read receipt carries the turn id it was taken in,
 the working start carries the same id with the message's `session_id` and `revision`,

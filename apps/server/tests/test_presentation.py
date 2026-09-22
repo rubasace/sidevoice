@@ -538,3 +538,36 @@ class CachePolicyTests(IsolatedAsyncioTestCase):
                     bundle = client.get('/voice/assets/index-abc123.js')
                     self.assertEqual(bundle.status_code, 200)
                     self.assertEqual(bundle.headers['cache-control'], 'public, max-age=31536000, immutable')
+
+
+class ParticipantEngineTests(IsolatedAsyncioTestCase):
+    """What a conversation thinks with travels to the page with the conversation, not beside it."""
+
+    async def test_a_participant_says_what_it_thinks_with_and_observation_replaces_the_launch_line(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        import sidevoice.presentation as presentation
+        app = FastAPI()
+        presentation.mount_presentation(app)
+        journal = presentation.hub.journal
+        binding = journal.register_binding('c-1', harness='claude', thread='sess-engine', title='Trabajo',
+                                           engine={'model': 'claude-opus-5'})
+        self.addCleanup(journal.deactivate_binding, 'c-1', binding['id'])
+
+        def row():
+            answer = TestClient(app).get('/api/presentation/participants')
+            self.assertEqual(answer.status_code, 200)
+            return next(p for p in answer.json()['participants'] if p['thread_id'] == 'sess-engine')
+
+        self.assertEqual(row()['engine'], {'model': 'claude-opus-5'},
+                         'the launch line is what the row says until the harness has been observed')
+        journal.set_binding_engine(binding['id'], {'model': 'claude-fable-5-1'})
+        self.assertEqual(row()['engine'], {'model': 'claude-fable-5-1'}, 'what was observed replaces it')
+        # A reconnection re-registers the binding; it does not take the observation away.
+        journal.register_binding('c-1', harness='claude', thread='sess-engine', title='Trabajo', binding_id=binding['id'])
+        self.assertEqual(row()['engine'], {'model': 'claude-fable-5-1'})
+        # A conversation whose harness never said is a row all the same, saying nothing about a model.
+        silent = journal.register_binding('c-1', harness='codex', thread='sess-silent', title='Otra')
+        self.addCleanup(journal.deactivate_binding, 'c-1', silent['id'])
+        answer = TestClient(app).get('/api/presentation/participants').json()['participants']
+        self.assertIsNone(next(p for p in answer if p['thread_id'] == 'sess-silent')['engine'])

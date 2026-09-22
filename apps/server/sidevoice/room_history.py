@@ -281,6 +281,15 @@ class RoomHistory:
         self._bindings[new['id']] = new
         return dict(new)
 
+    def set_binding_engine(self, binding_id, engine):
+        """What this conversation thinks with, as its connector observed it. The launch-line value is
+        what the binding carries until then; a binding this room no longer knows is left alone."""
+        row = self._bindings.get(binding_id)
+        if row is None:
+            return None
+        row['engine'] = dict(engine)
+        return dict(row)
+
     def binding(self, binding_id):
         row = self._bindings.get(binding_id)
         return dict(row) if row else None
