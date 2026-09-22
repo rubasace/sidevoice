@@ -1,7 +1,7 @@
-import { MicrophoneIcon, RefreshIcon, SettingsIcon } from "../../components/ui/Icons";
+import { RefreshIcon } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
 import { JoinStatus } from "./JoinStatus";
-import { AudioDeviceSelects, CallButton, DeviceNotes, MicControl, MuteButton } from "./CallIndicators";
+import { AudioDeviceSelects, CallButton, MicControl, MuteButton } from "./CallIndicators";
 import { CapabilityColumn, EngineColumn } from "../conversation/StatusColumns";
 
 /* The bar's three parts: what this call has switched on at the left edge, the controls island in the
@@ -12,15 +12,16 @@ export function CallToolbar() {
       <CapabilityColumn />
       <div className="controls" id="call-controls">
         <JoinStatus />
+        {/* One line: the two pickers and the button that asks the browser for the list again. Settings
+            are a click away in the menu beside this one, and were only repeated here. */}
         <div id="audio-device-panel" className="audio-devices-panel" hidden>
           <AudioDeviceSelects />
-          <Button id="audio-settings-open" variant="ghost" size="icon" className="device-settings" aria-label="Configuración de audio" title="Configuración de audio"><SettingsIcon size={24} /></Button>
-          <div className="device-notes"><DeviceNotes /><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos"><RefreshIcon size={18} /></Button></div>
+          <Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos"><RefreshIcon size={18} /></Button>
         </div>
         <div className="call-actions">
           <MicControl>
             <span id="mic-level-meter" className="sr-only" role="meter" aria-label="Nivel de micrófono" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0} />
-            <Button id="audio-devices" variant="ghost" className="audio-selector-toggle" aria-label="Elegir micrófono y altavoces" title="Dispositivos de audio" aria-expanded="false" aria-controls="audio-device-panel"><span className="mic-wave" aria-hidden="true"><i /><i /><i /></span><svg className="audio-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.3" aria-hidden="true"><path d="m7 14 5-5 5 5" /></svg></Button>
+            <Button id="audio-devices" variant="ghost" className="audio-selector-toggle" aria-label="Elegir micrófono y altavoces" title="Dispositivos de audio" aria-expanded="false" aria-controls="audio-device-panel"><span className="mic-wave" aria-hidden="true"><i /><i /><i /><i /><i /></span><svg className="audio-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.3" aria-hidden="true"><path d="m7 14 5-5 5 5" /></svg></Button>
             <MuteButton />
           </MicControl>
           <CallButton />

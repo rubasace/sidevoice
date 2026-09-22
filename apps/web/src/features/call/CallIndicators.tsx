@@ -1,6 +1,6 @@
 import { useRoomStore } from "../../state/room-store";
 import { Button } from "../../components/ui/Button";
-import { HangupIcon, MicrophoneIcon, SpeakerIcon } from "../../components/ui/Icons";
+import { CallIcon, HangupIcon, MicrophoneIcon, SpeakerIcon } from "../../components/ui/Icons";
 import { NativeSelect } from "../../components/ui/NativeSelect";
 import { cn } from "../../lib/cn";
 
@@ -28,18 +28,6 @@ export function EchoCover() {
   );
 }
 
-export function DeviceNotes() {
-  const deviceNote = useRoomStore((state) => state.deviceNote);
-  const lock = useRoomStore((state) => state.screenLock);
-  const echo = useRoomStore((state) => state.echo);
-  return (
-    <div>
-      <p id="audio-device-note" role="status">{deviceNote}</p>
-      <p id="screen-note" role="status">{lock.note}</p>
-      <p id="echo-note" role="status">{echo.note}</p>
-    </div>
-  );
-}
 
 export function MuteButton() {
   const mic = useRoomStore((state) => state.mic);
@@ -57,7 +45,7 @@ export function CallButton() {
   return (
     <Button id="connect" variant="primary" className={cn(call.joined && "joined", call.busy && "reconnecting")}
       aria-label={call.label} title={call.label} onClick={() => void window.sidevoiceActions?.toggleCall()}>
-      <HangupIcon />
+      {call.joined ? <HangupIcon /> : <CallIcon />}
     </Button>
   );
 }

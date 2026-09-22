@@ -15,7 +15,9 @@ test("the call bar carries the lights at its left edge and the models at its rig
   expect(document.querySelector(".transcript-head .status-column")).toBeNull();
   const bar = document.querySelector("footer.call-bar")!;
   expect(bar.firstElementChild!.id).toBe("capability-column");
-  expect(bar.lastElementChild!.id).toBe("engine-column");
+  // On a phone the models wait behind the button in this slot; on a laptop the slot is just the list.
+  expect(bar.lastElementChild!.className).toBe("engine-slot");
+  expect(bar.lastElementChild!.querySelector("#engine-column")).not.toBeNull();
   act(() => {
     store.patch({ ws: {}, stream: {}, echoFacts: { aec: false }, screenLock: { state: "on", note: "" },
       roomBinding: { thread_id: "t-1", binding_id: "b-1", title: "Sidevoice" },
@@ -27,6 +29,10 @@ test("the call bar carries the lights at its left edge and the models at its rig
   expect(lights.textContent).toMatch(/Pantalla/);
   expect(lights.textContent).toMatch(/Audio/);
   expect(lights.textContent).not.toMatch(/Nube/);
+  // A light says the name of the thing and its colour says the rest: the sentence beside it repeated
+  // what the dot had already said. It is still there for whoever asks the row what it means.
+  expect(lights.textContent).not.toMatch(/Cancelación activa|Se mantiene encendida|Audio en orden/);
+  expect(lights.querySelector('.status-line[title*="cancelación"]')).not.toBeNull();
   expect(lights.querySelector('.status-line[data-state="fail"] .engine-dot')).not.toBeNull();
   const models = document.getElementById("engine-column")!;
   expect(models.textContent).toMatch(/OpenAI · gpt-transcribe/);

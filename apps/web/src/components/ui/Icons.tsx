@@ -1,17 +1,55 @@
+/* Every mark the room uses, named for what it means here and not for what it is drawn like: a screen is
+ * "the machine", a plug is "the connector". Somewhere else is where they are drawn — lucide-react, the
+ * standard set for React — and this file is the only place that decides which of its drawings each thing
+ * in Sidevoice wears. Swapping the set is a change to this file and to nothing else.
+ *
+ * The exceptions are below: a product's own mark and the logos of other people's products are not
+ * generic icons and are drawn here. */
+import {
+  AudioLines, Captions, ChevronDown, Copy, Cpu, Ear, MessagesSquare, Mic, Monitor, MoreHorizontal,
+  Phone, PhoneOff, Plug, RefreshCw, Settings, SlidersHorizontal, Speech, Volume2, Wrench, X,
+} from "lucide-react";
+import type { ComponentType } from "react";
+
 type IconProps = { className?: string; size?: number };
+type LucideLike = ComponentType<{ className?: string; size?: number; strokeWidth?: number; "aria-hidden"?: boolean }>;
 
-export function ConversationsIcon({ className, size = 16 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 5h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" /><path d="M20 9h1a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1v3l-3-3h-4" /></svg>;
+/** One drawing, wearing the room's stroke and hidden from anything that reads the page aloud. */
+function mark(Drawing: LucideLike, fallbackSize: number) {
+  return function Mark({ className, size = fallbackSize }: IconProps) {
+    return <Drawing className={className} size={size} strokeWidth={1.8} aria-hidden />;
+  };
 }
 
-export function MachinesIcon({ className, size = 16 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2" /><path d="M2 19h20" /></svg>;
-}
+// ----- the room
+export const ConversationsIcon = mark(MessagesSquare, 16);
+export const MachinesIcon = mark(Monitor, 16);
+export const ConnectorIcon = mark(Plug, 12);
+export const ChevronIcon = mark(ChevronDown, 16);
+export const MoreIcon = mark(MoreHorizontal, 18);
+export const CloseIcon = mark(X, 18);
+export const CopyIcon = mark(Copy, 18);
+export const RefreshIcon = mark(RefreshCw, 18);
+export const SettingsIcon = mark(Settings, 22);
 
-export function ChevronIcon({ className, size = 16 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>;
-}
+// ----- the call
+export const MicrophoneIcon = mark(Mic, 24);
+export const SpeakerIcon = mark(Volume2, 20);
+export const CallIcon = mark(Phone, 22);
+export const HangupIcon = mark(PhoneOff, 22);
 
+// ----- what answers, when a row names it
+export const ModelsIcon = mark(Cpu, 16);
+export const ListensIcon = mark(Ear, 12);
+export const SpeaksIcon = mark(AudioLines, 12);
+
+// ----- the settings, one mark per section
+export const GeneralIcon = mark(SlidersHorizontal, 16);
+export const VoicesIcon = mark(Speech, 16);
+export const TranscriptionIcon = mark(Captions, 16);
+export const AdvancedIcon = mark(Wrench, 16);
+
+/* Drawn here, because they are somebody's mark and not a generic icon. */
 export function AppleIcon({ className, size = 12 }: IconProps) {
   return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><path d="M16.4 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.8-3-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.7-.1 0-2.5-1-2.5-3.7ZM14.1 5.9c.6-.8 1.1-1.9.9-3-.9.1-2 .6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1.1.1 2.1-.5 2.8-1.3Z" /></svg>;
 }
@@ -24,58 +62,6 @@ export function WindowsIcon({ className, size = 12 }: IconProps) {
   return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><path d="M3 5.5 11 4.4v7.1H3V5.5Zm0 13 8 1.1v-7H3v5.9ZM12 4.2 21 3v8.5h-9V4.2Zm0 15.6 9 1.2v-8.5h-9v7.3Z" /></svg>;
 }
 
-export function ConnectorIcon({ className, size = 12 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 2v5M15 2v5M6 7h12v3a6 6 0 0 1-12 0V7Z" /><path d="M12 16v6" /></svg>;
-}
-
-/** The logo for what a machine said it runs, from the first word of its platform line; a machine we cannot place gets the plain machine. */
-export function PlatformIcon({ platform, size = 12 }: { platform: string; size?: number }) {
-  const name = platform.toLowerCase();
-  if (name.startsWith("macos") || name.startsWith("darwin") || name.startsWith("ios")) return <AppleIcon size={size} />;
-  if (name.startsWith("windows") || name.startsWith("win32")) return <WindowsIcon size={size} />;
-  if (name.startsWith("linux")) return <LinuxIcon size={size} />;
-  return <MachinesIcon size={size} />;
-}
-
-/** One per row of the models panel: an ear for what listens, a mouth for what speaks, a head for what
- *  thinks. Small enough to sit inside a line of text. */
-export function ListensIcon({ className, size = 12 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 9a5 5 0 0 1 10 0c0 3-2.5 4-3.5 5.5S12 18 12 19a2.5 2.5 0 0 1-5 0" /><path d="M10.5 9a1.5 1.5 0 0 1 3 0c0 1.2-1.5 1.8-1.5 3" /></svg>;
-}
-
-export function SpeaksIcon({ className, size = 12 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12c2.5-2.5 5.3-3.8 8-3.8s5.5 1.3 8 3.8c-2.5 2.5-5.3 3.8-8 3.8S6.5 14.5 4 12Z" /><path d="M8 10.5c2.7 1 5.3 1 8 0M8 13.5c2.7-1 5.3-1 8 0" /></svg>;
-}
-
-export function ThinksIcon({ className, size = 12 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3a6 6 0 0 1 3 11v3a2 2 0 0 1-2 2h-3v-3h-2a2 2 0 0 1-2-2v-2H7.5A1.5 1.5 0 0 1 6.3 9.6L9 6a6 6 0 0 1 6-3Z" /><path d="M13 8.5a1.5 1.5 0 0 1 2.5 1.1c0 1-1.2 1.3-1.2 2.4" /></svg>;
-}
-
-export function RefreshIcon({ className, size = 18 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></svg>;
-}
-
-export function CopyIcon({ className, size = 18 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></svg>;
-}
-
-export function SettingsIcon({ className, size = 22 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" /><circle cx="12" cy="12" r="3" /></svg>;
-}
-
-export function MicrophoneIcon({ className, size = 24 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/><path className="mic-slash" d="M2 2l20 20"/></svg>;
-}
-
-export function SpeakerIcon({ size = 24 }: IconProps) {
-  return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M11 4 5 9H2v6h3l6 5zM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/></svg>;
-}
-
-export function HangupIcon({ size = 30 }: IconProps) {
-  return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 15v-4c4-4 12-4 16 0v4l-5-1v-3a12 12 0 0 0-6 0v3z"/></svg>;
-}
-
-/** The harness a conversation runs in, as a mark: Claude's starburst, Codex's prompt. */
 export function ClaudeIcon({ className, size = 12 }: IconProps) {
   return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><path d="M11 2h2v6.2l3.9-4.8 1.5 1.3-3.9 4.8 5.9-1.9.6 1.9-5.9 1.9 5.9 1.9-.6 1.9-5.9-1.9 3.9 4.8-1.5 1.3-3.9-4.8V22h-2v-6.2l-3.9 4.8-1.5-1.3 3.9-4.8-5.9 1.9-.6-1.9L9.4 12 3.5 10.1l.6-1.9 5.9 1.9-3.9-4.8 1.5-1.3L11 8.2V2Z" /></svg>;
 }
@@ -84,25 +70,24 @@ export function CodexIcon({ className, size = 12 }: IconProps) {
   return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m8 9 3 3-3 3M13 15h3" /></svg>;
 }
 
+export function SidevoiceMark({ className, size = 22 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><rect x="1" y="9.5" width="2.4" height="5" rx="1.2" /><rect x="5.4" y="6" width="2.4" height="12" rx="1.2" /><rect x="9.8" y="2" width="2.4" height="20" rx="1.2" /><rect x="14.2" y="6" width="2.4" height="12" rx="1.2" /><rect x="18.6" y="9.5" width="2.4" height="5" rx="1.2" /></svg>;
+}
+
+/** The logo for what a machine said it runs, from the first word of its platform line; a machine we
+ *  cannot place gets the plain machine. */
+export function PlatformIcon({ platform, size = 12 }: { platform: string; size?: number }) {
+  const name = platform.toLowerCase();
+  if (name.startsWith("macos") || name.startsWith("darwin") || name.startsWith("ios")) return <AppleIcon size={size} />;
+  if (name.startsWith("windows") || name.startsWith("win32")) return <WindowsIcon size={size} />;
+  if (name.startsWith("linux")) return <LinuxIcon size={size} />;
+  return <MachinesIcon size={size} />;
+}
+
 export const HARNESS_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
 
 export function HarnessIcon({ harness, size = 12 }: { harness: string; size?: number }) {
   if (harness === "claude") return <ClaudeIcon size={size} />;
   if (harness === "codex") return <CodexIcon size={size} />;
   return null;
-}
-
-/** Sidevoice's own mark, the five bars of the README header. */
-export function SidevoiceMark({ className, size = 22 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><rect x="1" y="9.5" width="2.4" height="5" rx="1.2" /><rect x="5.4" y="6" width="2.4" height="12" rx="1.2" /><rect x="9.8" y="2" width="2.4" height="20" rx="1.2" /><rect x="14.2" y="6" width="2.4" height="12" rx="1.2" /><rect x="18.6" y="9.5" width="2.4" height="5" rx="1.2" /></svg>;
-}
-
-/** The three that were typed characters until 2026-09-22, and so were the only marks in the room drawn
- *  by the text font: they sat on the baseline, took the font's weight and ignored every icon rule. */
-export function MoreIcon({ className, size = 18 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="19" cy="12" r="1.9" /></svg>;
-}
-
-export function CloseIcon({ className, size = 18 }: IconProps) {
-  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>;
 }

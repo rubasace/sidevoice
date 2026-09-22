@@ -77,7 +77,7 @@ window.sidevoiceSessionId=()=>state.sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false;
 let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0,captureRate=16000;
 let screenWakeLock=null,wakeRequest=null,wakeEpoch=0,wakeRetries=0;
-const waveLevels=Array(3).fill(0);
+const waveLevels=Array(5).fill(0);
 function micTrack(){return state.stream?.getAudioTracks?.()[0]||null}
 function applyMicState(){const track=micTrack();if(track)track.enabled=state.micEnabled}
 function microphoneConstraints(id=inputDeviceId){
@@ -189,7 +189,7 @@ async function replaceMicrophone(id){
 function updateWave(value){
  waveLevels.shift();waveLevels.push(value);
  const bars=$('mic-control').querySelectorAll?.('.mic-wave i')||[];
- for(const [i,bar] of [...bars].entries())bar.style.height=Math.max(3,Math.round(waveLevels[i]*.28))+'px';
+ for(const [i,bar] of [...bars].entries())bar.style.height=Math.max(2,Math.round(waveLevels[i]*.26))+'px';
 }
 function setDevicesOpen(open){
  $('audio-device-panel').hidden=!open;$('audio-devices').setAttribute('aria-expanded',String(open));
@@ -198,7 +198,6 @@ function setDevicesOpen(open){
 }
 function setupAudioControls(){
  $('audio-devices').onclick=()=>setDevicesOpen($('audio-device-panel').hidden);
- $('audio-settings-open').onclick=()=>{setDevicesOpen(false);$('settings-open').click()};
  $('call-settings-open').onclick=()=>{$('call-menu').open=false;$('settings-open').click()};
  $('refresh-devices').onclick=refreshAudioDevices;
 

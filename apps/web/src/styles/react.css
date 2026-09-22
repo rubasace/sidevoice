@@ -46,7 +46,6 @@ body,
 
   #root > main {
     height: auto;
-    grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
   }
 }
@@ -148,7 +147,7 @@ body,
   overflow:hidden;
 }
 .settings-dialog>#language-form { min-height:0;height:100%;overflow:hidden }
-.settings-dialog .settings-layout { height:100%;min-height:0;grid-template-columns:10.5rem minmax(0,1fr);overflow:hidden }
+.settings-dialog .settings-layout { height:100%;min-height:0;grid-template-columns:13.5rem minmax(0,1fr);overflow:hidden }
 .settings-dialog .settings-nav { min-width:0;overflow:auto }
 .settings-dialog .settings-content { min-width:0;min-height:0;max-width:100%;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable }
 .settings-dialog .settings-content>section { min-width:0;max-width:100% }
@@ -165,7 +164,7 @@ body,
   border-radius:.65rem;
   background:#141b23;
 }
-.settings-dialog .model-picker>.ui-native-select { width:100%;height:2.75rem;margin:0;border:0;border-radius:0;background:transparent }
+.settings-dialog .model-picker>.ui-native-select { width:100%;height:2.75rem;margin:0;border:0;border-radius:0;background-color:transparent }
 .settings-dialog .model-picker>.model-info { width:2.65rem;height:100%;border:0;border-inline-start:1px solid #526173;border-radius:0;background:#ffffff08 }
 .settings-dialog .model-picker>.model-info:hover { background:#ffffff12 }
 .settings-dialog .ui-compact-label { display:none }

@@ -777,8 +777,11 @@ test('Meet split control opens devices independently of mute and exposes setting
  assert.equal(s.run('micEnabled'),true);
  s.run("$('audio-devices').click()");
  assert.equal(s.run("$('audio-device-panel').hidden"),true);
- s.run("var settingsOpened=0;$('settings-open').onclick=()=>settingsOpened++;$('audio-settings-open').click();$('call-settings-open').click()");
- assert.equal(s.run('settingsOpened'),2);
+ // Settings are reached from the call menu. The device panel is the two pickers and a refresh, and
+ // nothing else: a second way in, one row below the first, only made choosing a microphone slower.
+ assert.equal(s.run("!!$('audio-settings-open')"),false);
+ s.run("var settingsOpened=0;$('settings-open').onclick=()=>settingsOpened++;$('call-settings-open').click()");
+ assert.equal(s.run('settingsOpened'),1);
 });
 test('Stats omit missing durations and use first reply per turn, only for selected thread',()=>{
  const s=setup({strictDOM:true});

@@ -1,5 +1,5 @@
 import { DialogFrame } from "../../components/ui/DialogFrame";
-import { CloseIcon, CopyIcon, RefreshIcon } from "../../components/ui/Icons";
+import { AdvancedIcon, CloseIcon, CopyIcon, GeneralIcon, MachinesIcon, RefreshIcon, TranscriptionIcon, VoicesIcon } from "../../components/ui/Icons";
 import { MachineList } from "../room/MachineList";
 import { ModelPicker } from "../../components/models/ModelPicker";
 import { InfoPopover } from "../../components/models/ModelInfo";
@@ -74,11 +74,11 @@ export function SettingsDialog() {
       <form id="language-form">
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Secciones de configuración">
-            <Button variant="ghost" id="settings-general" aria-controls="pane-general" aria-pressed="false">General</Button>
-            <Button variant="ghost" id="settings-voice" aria-controls="pane-voice" aria-pressed="true">Voces</Button>
-            <Button variant="ghost" id="settings-transcription" aria-controls="pane-transcription" aria-pressed="false">Transcripción</Button>
-            <Button variant="ghost" id="settings-machines" aria-controls="pane-machines" aria-pressed="false">Máquinas</Button>
-            <Button variant="ghost" id="settings-advanced" aria-controls="pane-advanced" aria-pressed="false">Avanzado</Button>
+            <Button variant="ghost" id="settings-general" aria-controls="pane-general" aria-pressed="false"><GeneralIcon /> General</Button>
+            <Button variant="ghost" id="settings-voice" aria-controls="pane-voice" aria-pressed="true"><VoicesIcon /> Voces</Button>
+            <Button variant="ghost" id="settings-transcription" aria-controls="pane-transcription" aria-pressed="false"><TranscriptionIcon /> Transcripción</Button>
+            <Button variant="ghost" id="settings-machines" aria-controls="pane-machines" aria-pressed="false"><MachinesIcon /> Máquinas</Button>
+            <Button variant="ghost" id="settings-advanced" aria-controls="pane-advanced" aria-pressed="false"><AdvancedIcon /> Avanzado</Button>
           </nav>
           <div className="settings-content"><GeneralSettings /><VoiceSettings /><TranscriptionSettings /><MachineSettings /><AdvancedSettings /></div>
         </div>

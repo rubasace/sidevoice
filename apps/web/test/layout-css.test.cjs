@@ -10,8 +10,13 @@ test("the chat width is contained at every layout boundary",()=>{
  assert.match(css,/\.chat-bubble \{[^}]*min-width:0;[^}]*overflow-wrap:anywhere;word-break:break-word/);
 });
 
-test("the mobile grid permits its only column to shrink below message content",()=>{
- assert.match(css,/@media \(max-width: 750px\)[\s\S]*?#root > main \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+const roomCss=fs.readFileSync(__dirname+"/../src/styles/room.css","utf8").replace(/\s+/g," ");
+
+test("on a phone the conversations keep a rail of their own and the transcript keeps a column that can shrink",()=>{
+ // Where the columns go on a phone is said once, in room.css. react.css used to say it too, from a
+ // selector that named the root and therefore always won, which is how the rail kept disappearing.
+ assert.doesNotMatch(css,/@media \(max-width: 750px\)[\s\S]*?#root > main \{[^}]*grid-template-columns/);
+ assert.match(roomCss,/@media\(max-width:750px\)\{ main\{grid-template-columns:62px minmax\(0,1fr\)/);
 });
 
 

@@ -48,9 +48,12 @@ test("the call bar says what the session facts say, and asks the runtime to act"
   expect(document.getElementById("mic-control")).toHaveAttribute("data-muted", "true");
   expect(screen.getByRole("button", { name: "Salir de la sala" })).toHaveClass("joined");
 
+  // The device panel is two pickers and nothing else: what the room thinks of the screen, the echo and
+  // the audio is said by the lights at the edge of the bar, and was only repeated here in prose.
   act(() => { store.patch({ screenLock: { state: "off", note: "No se pudo mantener la pantalla encendida" }, deviceNote: "Micrófono seleccionado." }); });
-  expect(document.getElementById("screen-note")).toHaveTextContent("No se pudo mantener la pantalla encendida");
-  expect(document.getElementById("audio-device-note")).toHaveTextContent("Micrófono seleccionado.");
+  expect(document.getElementById("screen-note")).toBeNull();
+  expect(document.getElementById("audio-device-note")).toBeNull();
+  expect(document.getElementById("capability-column")).toHaveTextContent("Pantalla");
 
   mute().click();
   screen.getByRole("button", { name: "Salir de la sala" }).click();
