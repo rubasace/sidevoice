@@ -1256,6 +1256,7 @@ async function receiveBrowserSpeech(d,cloud=false){
 function receiveServerSpeech(d){return receiveBrowserSpeech(d,true)}
 
 $('settings-open').onclick=async()=>{try{
+ forgetCredentialCheck('stt');forgetCredentialCheck('elevenlabs');
  const p=await loadPreferences();window.roomI18n?.setLanguage(p.ui_language||'es');state.voicePreferences=p;
  for(const key of ['stt_language','default_tts_language','tts_speed','ui_language','tts_device','audio_grace_seconds','replay_on_return_seconds'])$(key.replaceAll('_','-')).value=p[key];
  for(const key of MIC_KEYS)$(key.replaceAll('_','-')).value=p[key];
@@ -1311,10 +1312,13 @@ function renderTranscription(){
   setInfoContent($("stt-model-info"),selected?.description||"");
   $("stt-model-note").textContent=enabled.length?"":"Ningún modelo local puede correr con este procesamiento en este navegador.";
  }else{
-  const models=entry?.models||[],state=sttCredentials.openai,remote=sttRemote.openai;
-  showCredential('stt',state,'Sin clave: OpenAI no podrá transcribir');
+  const models=entry?.models||[],remote=sttRemote.openai;
+  showCredential('stt');
   modelSelect.disabled=remote.loading;
-  const preferred=models.some(model=>model.id===current)?current:models.some(model=>model.id===saved)?saved:(saved||entry?.default_model||models[0]?.id);
+  // What was chosen stays chosen while the provider still offers it; otherwise its default, otherwise the
+  // first one. A model that is no longer in the list is never left selected and never becomes an option
+  // of its own, so a key change cannot leave the list of the account before it (#72).
+  const preferred=[current,saved,entry?.default_model].find(id=>id&&models.some(model=>model.id===id))||models[0]?.id;
   entriesFor(modelSelect,remote.loading?[['','Cargando modelos de OpenAI…']]:models.map(model=>[model.id,model.label]),remote.loading?'':preferred);
   const selected=models.find(model=>model.id===modelSelect.value);
   const description=remote.loading?"Consultando los modelos disponibles en tu cuenta…":remote.error||selected?.description||(models.length?models.length+" modelos compatibles cargados directamente desde OpenAI.":"OpenAI no devolvió modelos compatibles para esta cuenta.");setInfoContent($("stt-model-info"),description);$("stt-model-note").textContent=remote.loading||remote.error?description:"";
@@ -1341,34 +1345,93 @@ async function loadTranscription(){
 }
 $('stt-provider').onchange=()=>{$('stt-model').replaceChildren();renderTranscription();if($('stt-provider').value==='openai')void loadTranscriptionModels('openai',true)};
 $('stt-device').onchange=renderTranscription;$('stt-model').onchange=renderTranscription;
-/* A key is saved like every other setting, with the form: no button of its own, because one field with
- * two buttons under it invites the question of which one applies what (#64). Removing it is the ✕ in
- * the field, which is the only thing that cannot wait for the form. */
-async function saveCredentials(){
- const openai=String($('stt-key')?.value||'').trim(),eleven=String($('elevenlabs-key')?.value||'').trim();
- if(openai){
-  const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:openai});
-  sttCredentials=result.credentials||{};$('stt-key').value='';sttRemote.openai.loaded=false;
-  await loadTranscriptionModels('openai',true);
- }
- if(eleven){
-  const result=await post('/api/presentation/synthesis/credential',{key:eleven});
-  $('elevenlabs-key').value='';voiceCatalog=await api('/api/presentation/voice-catalog');
-  elevenCredentials=result.credentials||{};await loadElevenLabs().catch(()=>{});
+/* A key checks itself where it is typed: leaving the field, or a pause while typing, sends it to the room
+ * exactly as the form did, and the room stores only a key its provider accepted. So that provider's models
+ * are asked for right away and fill the dropdown in place — whoever has just pasted a key sees it work
+ * without saving, closing the dialog and opening it again (#72). A key the provider refuses changes
+ * nothing: the one installed keeps working, and the line under the field says so. Removing a key is still
+ * the ✕ in the field, which is the only thing that cannot wait (#64). */
+const KEY_CHECK_PAUSE=1500;
+const keyFields={
+ stt:{missing:'Sin clave: OpenAI no podrá transcribir',state:()=>sttCredentials.openai},
+ elevenlabs:{missing:'Sin clave: no hay voces de ElevenLabs',state:()=>elevenCredentials},
+};
+for(const check of Object.values(keyFields))Object.assign(check,{sent:null,timer:null,job:null,running:false,failed:false,note:''});
+function forgetCredentialCheck(field){const check=keyFields[field];if(!check)return;clearTimeout(check.timer);Object.assign(check,{sent:null,timer:null,running:false,failed:false,note:''})}
+function scheduleCredentialCheck(field){const check=keyFields[field];clearTimeout(check.timer);check.timer=setTimeout(()=>checkCredential(field),KEY_CHECK_PAUSE)}
+// The news about a key goes in the same line the stored one uses: one place to look, whatever happened.
+function credentialNote(field){
+ const check=keyFields[field];
+ if(check.note)return check.note;
+ const state=check.state();
+ return state?.configured&&state.source==='environment'?'Esta clave viene del entorno de la sala; no se puede quitar desde aquí.':'';
+}
+function showCredentialNote(field){const note=$(field+'-key-state');if(note)note.textContent=credentialNote(field)}
+// The dropdown a verified key fills: transcription renders itself, synthesis renders from the catalogue.
+function renderCredential(field){
+ if(field==='stt'){renderTranscription();return}
+ showCredential('elevenlabs');renderVoiceProvider();renderLanguageRows();
+}
+async function checkCredential(field){
+ const check=keyFields[field],input=$(field+'-key');
+ if(!check||!input)return;
+ clearTimeout(check.timer);check.timer=null;
+ if(check.running){await check.job;return checkCredential(field)}
+ const key=String(input.value||'').trim();
+ if(!key||key===check.sent)return;
+ check.sent=key;check.running=true;check.failed=false;check.note='Comprobando la clave…';showCredentialNote(field);
+ check.job=verifyCredential(field,key);
+ await check.job;
+}
+async function verifyCredential(field,key){
+ const check=keyFields[field];
+ try{
+  if(field==='stt'){
+   sttCredentials=(await post('/api/presentation/transcription/credential',{provider:'openai',key})).credentials||{};
+   sttRemote.openai.loaded=false;
+   await loadTranscriptionModels('openai',true);
+   check.note='Clave verificada · '+(sttRemote.openai.error||'Modelos actualizados');
+  }else{
+   elevenCredentials=(await post('/api/presentation/synthesis/credential',{key})).credentials||{};
+   voiceCatalog=await api('/api/presentation/voice-catalog');
+   check.note='Clave verificada · Voces actualizadas';
+  }
+  check.running=false;renderCredential(field);
+ }catch(error){
+  // Nothing was stored, so the field keeps what was typed: a key with one wrong character is corrected, not retyped.
+  check.running=false;check.failed=true;
+  check.note='Clave rechazada · '+error.message+' · '+(check.state()?.configured?'La clave anterior sigue en uso':'No hay ninguna clave guardada');
+  showCredentialNote(field);
  }
 }
-$('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{};const entry=sttProvider('openai');if(entry)entry.models=[];Object.assign(sttRemote.openai,{loaded:false,loading:false,error:null})}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
+for(const field of ['stt','elevenlabs']){
+ const input=$(field+'-key');
+ if(!input)continue;
+ input.onblur=()=>checkCredential(field);
+ input.oninput=()=>{if(String(input.value||'').trim()){scheduleCredentialCheck(field);return}forgetCredentialCheck(field);showCredentialNote(field)};
+}
+/* Saving carries no key any more — a verified one is already stored — so the form only waits for a check
+ * still in flight, and refuses to close over a key the provider rejected while it is still in the field. */
+async function saveCredentials(){
+ for(const field of ['stt','elevenlabs']){
+  await checkCredential(field);
+  const check=keyFields[field];
+  if(check.failed&&String($(field+'-key')?.value||'').trim())throw Error(check.note);
+ }
+}
+$('stt-key-clear').onclick=async()=>{$('stt-key-clear').disabled=true;$('settings-error').textContent='';forgetCredentialCheck('stt');try{const result=await post('/api/presentation/transcription/credential',{provider:'openai',key:null});sttCredentials=result.credentials||{};const entry=sttProvider('openai');if(entry)entry.models=[];Object.assign(sttRemote.openai,{loaded:false,loading:false,error:null})}catch(e){$('settings-error').textContent=e.message}finally{renderTranscription()}};
 /* A stored key shows itself where the key goes: masked, in its own field, with the four digits the room
- * returns. The line underneath is for news — checking, refused, taken from the room's environment — and
- * says nothing when there is nothing to say, instead of repeating what the field already shows (#64). */
-function showCredential(field,state,missing){
- const input=$(field+'-key'),note=$(field+'-key-state'),clear=$(field+'-key-clear');
- if(input){input.value='';input.placeholder=state?.configured?'•••••••• '+(state.hint||''):missing}
- if(note)note.textContent=state?.configured&&state.source==='environment'?'Esta clave viene del entorno de la sala; no se puede quitar desde aquí.':'';
+ * returns. The line underneath is for news — checking, verified, refused, taken from the room's
+ * environment — and says nothing when there is nothing to say, instead of repeating what the field
+ * already shows (#64). A key still being checked stays in the field until the room has answered. */
+function showCredential(field){
+ const check=keyFields[field],state=check.state(),input=$(field+'-key'),clear=$(field+'-key-clear');
+ if(input){if(!check.running)input.value='';input.placeholder=state?.configured?'•••••••• '+(state.hint||''):check.missing}
+ showCredentialNote(field);
  if(clear)clear.disabled=!state?.configured||state.source==='environment';
 }
-async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};const state=elevenCredentials;showCredential('elevenlabs',state,'Sin clave: no hay voces de ElevenLabs')}
-$('elevenlabs-key-clear').onclick=async()=>{try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderDefaultVoices();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
+async function loadElevenLabs(){const data=await api('/api/presentation/synthesis');elevenCredentials=data.credentials||{};showCredential('elevenlabs')}
+$('elevenlabs-key-clear').onclick=async()=>{forgetCredentialCheck('elevenlabs');try{await post('/api/presentation/synthesis/credential',{key:null});voiceCatalog=await api('/api/presentation/voice-catalog');elevenCredentials={};renderVoiceProvider();renderLanguageRows()}catch(e){$('settings-error').textContent=e.message}finally{await loadElevenLabs()}};
 $('reset-settings').onclick=async()=>{try{localStorage.removeItem(SETTINGS_KEY);localStorage.removeItem('sidevoice.mic')}catch{}voiceDraft={};await $('settings-open').onclick();$('reset-settings-note').textContent='Restablecido a los valores por defecto. Guarda para aplicarlo; la llamada en curso no se interrumpe.'};
 $('settings-close').onclick=()=>{stopPreview();$('language-settings').close()};$('language-settings').addEventListener('close',stopPreview);
 // What this device may set. The detector's tuning is the room's: one place to fix it for everyone.
