@@ -77,7 +77,8 @@ body,
 .participant-copy { display:block;min-width:0;text-align:left }
 .participant-copy>span { display:block }
 .person-capability { margin-top:.25rem;color:var(--sv-muted);font-size:.68rem;line-height:1.3 }
-.participant-more { flex:none;border:0;background:transparent;font-size:1.35rem }
+.participant-more { flex:none;width:2rem;height:2rem;padding:0;border:0;border-radius:.6rem;background:transparent;color:var(--sv-muted) }
+.participant-more:hover,.participant-row[data-selected] .participant-more { background:#ffffff14;color:var(--sv-text) }
 .person[data-reach=holding] .ui-avatar,.person[data-reach=offline] .ui-avatar { opacity:.45 }
 
 .transcript { width:100%;max-width:100%;min-width:0 }
