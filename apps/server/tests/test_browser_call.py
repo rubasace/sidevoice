@@ -522,7 +522,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
     async def test_a_swap_that_would_overflow_the_room_is_refused_and_the_call_it_came_from_survives(self):
         from sidevoice.app import browser_call
         joined = []
-        for _ in range(self.hub.MAX_CLIENTS):
+        for _ in range(self.hub.max_clients):
             socket = FakeWebSocket()
             joined.append((socket, *await self.join(socket)))
         # The room filled up after the check that precedes the hello: the join itself must refuse.
@@ -533,7 +533,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         error = await self.received(refused, 'error')
         self.assertIn('maximum number of browsers', error['data']['message'])
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
-        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertEqual(len(self.hub.clients), self.hub.max_clients)
         self.assertTrue(all(client.connected for _, _, client in joined))
         for socket, task, _ in joined:
             await self.leave(socket, task)
@@ -656,7 +656,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
     async def test_a_browser_over_the_limit_is_refused_without_disturbing_the_room(self):
         from sidevoice.app import browser_call
         joined = []
-        for _ in range(self.hub.MAX_CLIENTS):
+        for _ in range(self.hub.max_clients):
             socket = FakeWebSocket()
             joined.append((socket, *await self.join(socket)))
         refused = FakeWebSocket()
@@ -667,7 +667,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         # but lost the close code still knows which sentence of its own to show (#63).
         self.assertEqual(error['data']['reason'], 'room_is_full')
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
-        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertEqual(len(self.hub.clients), self.hub.max_clients)
         self.assertTrue(all(client.connected for _, _, client in joined))
         for socket, task, _ in joined:
             await self.leave(socket, task)

@@ -4,6 +4,7 @@ Everything here asks the same question in a different place: does what belongs t
 one browser stay in that browser, and does what belongs to the room stay shared?
 """
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
@@ -289,10 +290,10 @@ class MultiClientRoomTests(RoomFixture):
         self.assertEqual(self.hub.journal.pending()[-1]['session'], 'after')
 
     async def test_the_room_refuses_more_browsers_than_it_bounds_without_dropping_any(self):
-        clients = [self.browser('client-%d' % index) for index in range(self.hub.MAX_CLIENTS)]
+        clients = [self.browser('client-%d' % index) for index in range(self.hub.max_clients)]
         with self.assertRaises(RuntimeError):
             self.browser('one-too-many')
-        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertEqual(len(self.hub.clients), self.hub.max_clients)
         self.assertTrue(all(client.connected for client in clients))
 
     async def test_the_room_says_whether_it_would_admit_a_browser_and_why_not(self):
@@ -300,8 +301,8 @@ class MultiClientRoomTests(RoomFixture):
         # the page that was refused asks for over plain HTTP (#63).
         free = self.hub.admission()
         self.assertEqual((free['admitted'], free['reason'], free['message']), (True, None, None))
-        self.assertEqual((free['clients'], free['max']), (len(self.hub.clients), self.hub.MAX_CLIENTS))
-        while len(self.hub.clients) < self.hub.MAX_CLIENTS:
+        self.assertEqual((free['clients'], free['max']), (len(self.hub.clients), self.hub.max_clients))
+        while len(self.hub.clients) < self.hub.max_clients:
             self.browser('client-%d' % len(self.hub.clients))
         full = self.hub.admission()
         self.assertEqual((full['admitted'], full['reason']), (False, 'room_is_full'))
@@ -309,6 +310,26 @@ class MultiClientRoomTests(RoomFixture):
         with self.assertRaises(RuntimeError) as refused:
             self.browser('one-too-many')
         self.assertEqual(str(refused.exception), full['message'], 'and the socket refuses with that same one')
+
+    async def test_how_many_browsers_a_room_carries_is_the_machine_s_to_say(self):
+        from sidevoice.room import MAX_BROWSERS, browser_limit
+        self.assertEqual(browser_limit({}), MAX_BROWSERS)
+        self.assertEqual(browser_limit({'VOICE_MAX_BROWSERS': '3'}), 3)
+        self.assertEqual(browser_limit({'VOICE_MAX_BROWSERS': 'unas cuantas'}), MAX_BROWSERS,
+                         'an unreadable limit is the default, never no limit at all')
+        self.assertEqual(browser_limit({'VOICE_MAX_BROWSERS': '0'}), 1, 'a room nobody may enter is not a setting')
+        # A room built on a machine that said how many it can carry holds that number, and everything
+        # that speaks about the limit — the refusal, the admission answer — speaks about that one.
+        with patch.dict(os.environ, {'VOICE_MAX_BROWSERS': '2'}):
+            small = Room(RoomHistory(self.path('small.sqlite3')))
+        self.assertEqual(small.max_clients, 2)
+        pair = [RoomClient('client-%d' % index, small, worker=AsyncMock()) for index in range(2)]
+        with self.assertRaises(RuntimeError) as refused:
+            RoomClient('one-too-many', small, worker=AsyncMock())
+        self.assertEqual(str(refused.exception), small.FULL_MESSAGE)
+        self.assertEqual(small.admission(), {'admitted': False, 'reason': 'room_is_full',
+                                             'message': small.FULL_MESSAGE, 'clients': 2, 'max': 2})
+        self.assertEqual(list(small.clients), [client.id for client in pair], 'and neither of them was dropped')
 
     # ----- audio the room pays for -----
 

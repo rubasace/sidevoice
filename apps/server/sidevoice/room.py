@@ -12,6 +12,7 @@ listener wants to hear. See `docs/MULTI_CLIENT_ROOM.md`.
 """
 import asyncio
 import json
+import os
 import time
 import uuid
 from collections import deque
@@ -33,6 +34,31 @@ CLIENT_TERMINAL = {'interrupted', 'failed', 'disconnected', 'playback_finished'}
 HEARD = {'playback_finished', 'interrupted'}
 # Denials that mean "nobody on this conversation was listening", as opposed to "someone was and chose otherwise".
 PARKABLE = {'session_changed', 'call_ended', 'focus_changed'}
+# How many browsers one room carries at a time. What this bounds is the machine the room runs on, not
+# the people in it and not the conversations: the room builds one Pipecat pipeline per browser, and
+# each one loads a Silero VAD for the input plus a second detector and a Smart Turn v3 analyser for
+# the turn end — two "Loading Silero VAD model" lines per call in the log — on top of the ~630 MB the
+# worker already holds. One person with a laptop and a phone is two of these, and a device changing a
+# setting that needs another pipeline is two for a moment.
+#
+# Eight was never what went wrong: seats that were never given back were (#63). So the default does
+# not move, and a machine with room to spare raises it with VOICE_MAX_BROWSERS.
+MAX_BROWSERS = 8
+
+
+def browser_limit(environ=None):
+    """How many browsers this room admits, as the machine running it was configured.
+
+    Read where a room is built rather than at import, so a test — and a second room in one process —
+    gets the environment it was given and not the one the module was first loaded in. Anything
+    unreadable is the default: a room that carries fewer browsers than it can is a nuisance, and one
+    that accepts more than its process can hold is the room falling over for everybody in it.
+    """
+    try:
+        limit = int((os.environ if environ is None else environ).get('VOICE_MAX_BROWSERS'))
+    except (AttributeError, TypeError, ValueError):
+        return MAX_BROWSERS
+    return max(1, limit)
 # What the journal row says about an utterance: the furthest any listener got.
 RANK = {'disconnected': 1, 'failed': 2, 'interrupted': 3, 'queued': 4,
         'waiting_for_turn': 5, 'waiting_for_pause': 5, 'synthesizing': 6,
@@ -438,7 +464,6 @@ def _build_info():
 class Room:
     """One conversation, one journal, one epoch — and as many browsers as people looking."""
 
-    MAX_CLIENTS = 8
     # What a browser over the limit is refused with, written once. The socket says it in a frame and
     # in a close code, and the admission endpoint says it again to a page that received neither
     # through its proxy (#63): three ways out, one sentence, and one name for the reason so a page
@@ -451,7 +476,8 @@ class Room:
     # was said, and the recency setting is what really bounds this.
     MAX_REPLAY = 8
 
-    def __init__(self, journal=None, assets=None):
+    def __init__(self, journal=None, assets=None, *, max_clients=None):
+        self.max_clients = browser_limit() if max_clients is None else max(1, int(max_clients))
         self.clients = {}
         self.working = {}          # harness truth by thread; in-memory only, for browsers that select mid-turn
         self.sessions = deque(maxlen=64)   # ids we have known, so an older reply can be told apart
@@ -474,7 +500,7 @@ class Room:
     def join(self, client):
         if client.id in self.clients:
             return client
-        if len(self.clients) >= self.MAX_CLIENTS:
+        if len(self.clients) >= self.max_clients:
             raise RuntimeError(self.FULL_MESSAGE)
         client.room = self
         self.clients[client.id] = client
@@ -484,10 +510,10 @@ class Room:
 
     def admission(self):
         """Whether one more browser would be let in right now, and what it would be told if not."""
-        full = len(self.clients) >= self.MAX_CLIENTS
+        full = len(self.clients) >= self.max_clients
         return {'admitted': not full, 'reason': 'room_is_full' if full else None,
                 'message': self.FULL_MESSAGE if full else None,
-                'clients': len(self.clients), 'max': self.MAX_CLIENTS}
+                'clients': len(self.clients), 'max': self.max_clients}
 
     def leave(self, client):
         client.connected = False

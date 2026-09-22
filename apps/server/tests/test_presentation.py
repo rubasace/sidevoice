@@ -588,7 +588,7 @@ class AdmissionEndpointTests(IsolatedAsyncioTestCase):
         self.assertTrue(answer.json()['admitted'], 'an empty room takes one more')
         # The page reads this exactly when its socket closed saying nothing: the answer has to name
         # the reason, not only describe the room.
-        with patch.object(presentation.hub, 'MAX_CLIENTS', 0):
+        with patch.object(presentation.hub, 'max_clients', 0):
             refused = TestClient(app).get('/api/presentation/admission').json()
         self.assertEqual((refused['admitted'], refused['reason']), (False, 'room_is_full'))
         self.assertEqual(refused['message'], presentation.hub.FULL_MESSAGE)
