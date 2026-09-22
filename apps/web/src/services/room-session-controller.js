@@ -1276,9 +1276,10 @@ $('tts-provider').onchange=()=>{storeLanguage();defaultVoicesExpanded=false;expa
 $('tts-device').onchange=()=>renderVoiceDevice($('tts-device').value);
 $('default-voice').onchange=()=>{if($('default-voice').value===SHOW_ALL_VOICES){defaultVoicesExpanded=true;renderDefaultVoices();renderLanguageRows();return}storeLanguage();renderLanguageRows()};
 $('default-tts-language').onchange=()=>{defaultVoicesExpanded=false;renderDefaultVoices();renderLanguageRows()};
-function settingsSection(name){for(const section of ['general','voice','transcription','advanced']){$('pane-'+section).hidden=section!==name;$('settings-'+section).setAttribute('aria-pressed',String(section===name))}}
+function settingsSection(name){for(const section of ['general','voice','transcription','machines','advanced']){$('pane-'+section).hidden=section!==name;$('settings-'+section).setAttribute('aria-pressed',String(section===name))}}
 $('settings-advanced').onclick=()=>settingsSection('advanced');
 $('settings-general').onclick=()=>settingsSection('general');
+$('settings-machines').onclick=()=>settingsSection('machines');
 $('ui-language').onchange=()=>window.roomI18n?.setLanguage($('ui-language').value);
 $('settings-voice').onclick=()=>settingsSection('voice');
 $('settings-transcription').onclick=()=>settingsSection('transcription');

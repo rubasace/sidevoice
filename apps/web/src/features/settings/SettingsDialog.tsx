@@ -1,4 +1,6 @@
 import { DialogFrame } from "../../components/ui/DialogFrame";
+import { CopyIcon, RefreshIcon } from "../../components/ui/Icons";
+import { MachineList } from "../room/MachineList";
 import { ModelPicker } from "../../components/models/ModelPicker";
 import { InfoPopover } from "../../components/models/ModelInfo";
 import { LanguageModelList } from "./LanguageModelList";
@@ -62,6 +64,10 @@ function AdvancedSettings() {
   );
 }
 
+function MachineSettings() {
+  return <section id="pane-machines" aria-labelledby="settings-machines" hidden><MachineList /></section>;
+}
+
 export function SettingsDialog() {
   return (
     <DialogFrame id="language-settings" className="settings-dialog" labelledBy="settings-title" title="Configuración" closeId="settings-close" footer={<div className="settings-footer"><p id="settings-error" role="alert" /><Button type="submit" form="language-form" variant="primary">Guardar cambios</Button></div>}>
@@ -71,11 +77,20 @@ export function SettingsDialog() {
             <Button variant="ghost" id="settings-general" aria-controls="pane-general" aria-pressed="false">General</Button>
             <Button variant="ghost" id="settings-voice" aria-controls="pane-voice" aria-pressed="true">Voces</Button>
             <Button variant="ghost" id="settings-transcription" aria-controls="pane-transcription" aria-pressed="false">Transcripción</Button>
+            <Button variant="ghost" id="settings-machines" aria-controls="pane-machines" aria-pressed="false">Máquinas</Button>
             <Button variant="ghost" id="settings-advanced" aria-controls="pane-advanced" aria-pressed="false">Avanzado</Button>
           </nav>
-          <div className="settings-content"><GeneralSettings /><VoiceSettings /><TranscriptionSettings /><AdvancedSettings /></div>
+          <div className="settings-content"><GeneralSettings /><VoiceSettings /><TranscriptionSettings /><MachineSettings /><AdvancedSettings /></div>
         </div>
       </form>
+      <DialogFrame id="pair-dialog" className="pair-dialog" labelledBy="pair-title" title="Emparejar máquina" closeId="pair-close">
+        <div className="pair-row">
+          <code id="pair-code" className="pair-code" aria-live="polite" />
+          <Button id="pair-copy" variant="ghost" size="icon" aria-label="Copiar código" title="Copiar código"><CopyIcon /></Button>
+          <Button id="pair-refresh" variant="ghost" size="icon" aria-label="Nuevo código" title="Nuevo código"><RefreshIcon /></Button>
+        </div>
+        <p className="muted pair-meta"><span id="pair-expires" /> · Un solo uso</p>
+      </DialogFrame>
     </DialogFrame>
   );
 }

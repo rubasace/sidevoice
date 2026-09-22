@@ -23,8 +23,8 @@ export function CallToolbar() {
             <Button id="audio-devices" variant="ghost" className="audio-selector-toggle" aria-label="Elegir micrófono y altavoces" title="Dispositivos de audio" aria-expanded="false" aria-controls="audio-device-panel"><span className="mic-wave" aria-hidden="true"><i /><i /><i /></span><svg className="audio-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.3" aria-hidden="true"><path d="m7 14 5-5 5 5" /></svg></Button>
             <MuteButton />
           </MicControl>
-          <details id="call-menu" className="call-menu"><summary aria-label="Más opciones" title="Más opciones"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg></summary><div className="call-menu-panel"><Button id="stats-open" variant="ghost" size="compact">Estadísticas de conexión</Button><Button id="call-settings-open" variant="ghost" size="compact">Configuración</Button></div></details>
           <CallButton />
+          <details id="call-menu" className="call-menu"><summary aria-label="Más opciones" title="Más opciones"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg></summary><div className="call-menu-panel"><Button id="stats-open" variant="ghost" size="compact">Estadísticas de conexión</Button><Button id="call-settings-open" variant="ghost" size="compact">Configuración</Button></div></details>
         </div>
       </div>
       <EngineColumn />
