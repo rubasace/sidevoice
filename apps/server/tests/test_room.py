@@ -174,13 +174,13 @@ class MultiClientRoomTests(RoomFixture):
         self.assertEqual(len({row['id'] for row in rows}), 2)
 
     async def test_the_outbox_delivers_each_participant_exactly_once_in_order(self):
-        from sidevoice.connector_control import ConnectorControl
+        from sidevoice.connector_control import ConnectorControl, WebSocketPeer
         control = ConnectorControl(self.hub.journal, self.hub)
         sent = []
         class FakeSocket:
             async def send_json(self, frame): sent.append(frame)
         binding = self.hub.journal.register_binding('conn-1', harness='test', thread='task')
-        control.sockets['conn-1'] = FakeSocket(); control.live[binding['id']] = 'conn-1'
+        control.peers['conn-1'] = WebSocketPeer(FakeSocket()); control.live[binding['id']] = 'conn-1'
         first, second = self.browser('one'), self.browser('two')
         for client, text in ((first, 'De la primera'), (second, 'De la segunda')):
             client.user_started(); client.speaking = False
