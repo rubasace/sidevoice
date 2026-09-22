@@ -1,4 +1,4 @@
-"""The connector link: Socket.IO at `/api/connectors/socket.io`, namespace `/connectors`.
+"""The connector link: Socket.IO at `/api/connectors/link`, namespace `/connectors`.
 
 One `AsyncServer` mounted on the room's own FastAPI app, translating events into
 `ConnectorControl` calls. Everything this module does not contain is the point of it:
@@ -18,7 +18,9 @@ from socketio.exceptions import ConnectionRefusedError, TimeoutError as Acknowle
 
 from .connector_control import ConnectorPeer, HEARTBEAT_MISSES, PROTOCOL
 
-PATH = '/api/connectors/socket.io'
+# The route names the capability, not the transport: a machine reaches the room's connector link
+# here whatever carries it, so a change of transport moves no Ingress and no credential.
+PATH = '/api/connectors/link'
 NAMESPACE = '/connectors'
 
 

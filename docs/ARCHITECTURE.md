@@ -13,7 +13,7 @@ The web app is componentized by product concern (room, conversation, call, setti
 ## Transport and identity
 
 The room is the control plane. Each agent machine runs one connector with an
-outbound Socket.IO link to `/api/connectors/socket.io`, namespace `/connectors`,
+outbound Socket.IO link to `/api/connectors/link`, namespace `/connectors`,
 authenticated in the connect handshake with a credential it obtained once by
 redeeming a pairing code shown in the room UI — so a credential the room does
 not know never reaches an event, and one it refuses is not retried.

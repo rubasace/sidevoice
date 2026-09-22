@@ -10,7 +10,7 @@ machine) and the room. The browser link is a separate decision once this has lan
 | Protocol | Socket.IO, both ends from its maintained libraries: `python-socketio` (5.17, ASGI) in the room, `socket.io-client` (4.8) in the connector | Acknowledgements, automatic reconnection with backoff, ping/pong keepalive and namespaces come from the library; both ends are alive and widely used. RSocket was built and measured first (#66, PR #68): a wash on latency, and the JS side had to be written by us. |
 | The old protocol | **Removed**, not kept one release. `/api/connectors/ws` and every hand-rolled frame go; the protocol version in the handshake becomes `2` and the room refuses `1` | A beta with one user: every paired machine re-pairs after upgrading, which is one command. |
 | Dependencies | `socket.io-client` and `esbuild` are the connector's dev dependencies, `socket.io` (server) a third for the tests; `python-socketio` in `apps/server/requirements.txt`, pinned | We stop maintaining a transport without asking a machine to resolve one: the client is bundled into the artifact at build time, so the package on npm keeps its zero runtime dependencies. |
-| Path and namespace | Path `/api/connectors/socket.io` (not the default `/socket.io`), namespace `/connectors`, WebSocket transport only (`transports: ['websocket']` on the client; polling disabled on the server) | The path is what the oauth2-proxy bypass Ingress exempts, exactly; the browser will get its own path behind the login later. No long-polling through a proxy, no sticky-session question. |
+| Path and namespace | Path `/api/connectors/link` (not the default `/socket.io`), namespace `/connectors`, WebSocket transport only (`transports: ['websocket']` on the client; polling disabled on the server) | The path is what the oauth2-proxy bypass Ingress exempts, exactly; the browser will get its own path behind the login later. No long-polling through a proxy, no sticky-session question. |
 | Authentication | In the connect handshake's `auth`: `{ connector_id, token, protocol: 2, host, version }`. The room's `connect` handler checks `journal.authenticate_connector` and refuses with `ConnectionRefusedError("...")`; the client sees `connect_error` with that message and does not retry a refused credential | One check, before any event, same credential as today. |
 | Keepalive | Socket.IO's `pingInterval` / `pingTimeout` (server-side settings, values from today's `heartbeat_seconds` and `HEARTBEAT_MISSES`) | Our heartbeat frames go. |
 | Reconnection | The client library's, with backoff; on every `connect` the connector re-registers its bindings (same ids) and replays the outbox | Our reconnect loop goes. |
@@ -76,12 +76,12 @@ machine) and the room. The browser link is a separate decision once this has lan
 ## Out of scope
 
 The browser link. Binary payloads. Connection state recovery as a dependency. The homelab
-Ingress exemption for `/api/connectors/socket.io` (one line in rubasace/homelab, noted in the PR).
+Ingress exemption for `/api/connectors/link` (one line in rubasace/homelab, noted in the PR).
 
 ## Acceptance
 
 1. A connector paired with the room joins, delivers, speaks, reports reads and working state,
-   survives a room restart and replays its outbox — over `/api/connectors/socket.io`, with no
+   survives a room restart and replays its outbox — over `/api/connectors/link`, with no
    hand-rolled framing left anywhere in `packages/connector` or `apps/server`.
 2. A credential from the previous client is refused with a message that says to pair again.
 3. `npm pack` ships one bundled `dist/` and no runtime dependency; `install` produces a copy that

@@ -1,7 +1,7 @@
 """The link itself: a real `python-socketio` client against the room's real namespace.
 
 `test_connector_control` says what each event means with a peer that carries nothing. This one
-says that the events arrive at all — over `/api/connectors/socket.io`, through uvicorn, with the
+says that the events arrive at all — over `/api/connectors/link`, through uvicorn, with the
 handshake that authenticates and the acknowledgements the library gives us. What it must never do
 is re-test the control plane's decisions: it checks that the wire reaches them.
 """
