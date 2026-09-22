@@ -1,5 +1,5 @@
 import { DialogFrame } from "../../components/ui/DialogFrame";
-import { CopyIcon, RefreshIcon } from "../../components/ui/Icons";
+import { CloseIcon, CopyIcon, RefreshIcon } from "../../components/ui/Icons";
 import { MachineList } from "../room/MachineList";
 import { ModelPicker } from "../../components/models/ModelPicker";
 import { InfoPopover } from "../../components/models/ModelInfo";
@@ -19,7 +19,7 @@ function VoiceSettings() {
       <div id="tts-browser-options"><label>Procesamiento de la voz<NativeSelect id="tts-device" defaultValue="auto" /></label><p className="muted" id="tts-device-note" /></div>
       <ModelPicker label="Modelo" id="default-model" infoId="default-model-info" />
       <div id="elevenlabs-credential" hidden>
-        <label>Clave de API de ElevenLabs<span className="key-field"><input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Sin clave guardada" /><Button id="elevenlabs-key-clear" variant="ghost" size="icon" className="key-clear" aria-label="Quitar la clave guardada" title="Quitar la clave guardada">✕</Button></span></label>
+        <label>Clave de API de ElevenLabs<span className="key-field"><input id="elevenlabs-key" type="password" autoComplete="off" spellCheck={false} placeholder="Sin clave guardada" /><Button id="elevenlabs-key-clear" variant="ghost" size="icon" className="key-clear" aria-label="Quitar la clave guardada" title="Quitar la clave guardada"><CloseIcon size={15} /></Button></span></label>
         <p className="muted" id="elevenlabs-key-state" role="status" />
       </div>
       <label>Voz por defecto<NativeSelect id="default-voice"><option value="ef_dora">Dora</option></NativeSelect></label>
@@ -39,7 +39,7 @@ function TranscriptionSettings() {
       <label>Motor de transcripción<NativeSelect id="stt-provider" /></label><p className="muted" id="stt-provider-note" />
       <div id="stt-browser-options"><label>Procesamiento de transcripción<NativeSelect id="stt-device" /></label><p className="muted" id="stt-device-note" /></div>
       <ModelPicker label="Modelo" id="stt-model" infoId="stt-model-info" /><p className="muted" id="stt-model-note" />
-      <div id="stt-credential" hidden><label>Clave de API de OpenAI<span className="key-field"><input id="stt-key" type="password" placeholder="Sin clave guardada" autoComplete="off" spellCheck={false} /><Button id="stt-key-clear" variant="ghost" size="icon" className="key-clear" aria-label="Quitar la clave guardada" title="Quitar la clave guardada">✕</Button></span></label><p className="muted" id="stt-key-state" role="status" /></div>
+      <div id="stt-credential" hidden><label>Clave de API de OpenAI<span className="key-field"><input id="stt-key" type="password" placeholder="Sin clave guardada" autoComplete="off" spellCheck={false} /><Button id="stt-key-clear" variant="ghost" size="icon" className="key-clear" aria-label="Quitar la clave guardada" title="Quitar la clave guardada"><CloseIcon size={15} /></Button></span></label><p className="muted" id="stt-key-state" role="status" /></div>
       <label>Idioma al transcribir<NativeSelect id="stt-language"><option value="auto">Detectar automáticamente</option><option value="es">Español</option><option value="en">English</option></NativeSelect></label>
       <p className="muted" id="stt-apply-note" hidden />
     </section>

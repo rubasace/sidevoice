@@ -96,3 +96,13 @@ export function HarnessIcon({ harness, size = 12 }: { harness: string; size?: nu
 export function SidevoiceMark({ className, size = 22 }: IconProps) {
   return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><rect x="1" y="9.5" width="2.4" height="5" rx="1.2" /><rect x="5.4" y="6" width="2.4" height="12" rx="1.2" /><rect x="9.8" y="2" width="2.4" height="20" rx="1.2" /><rect x="14.2" y="6" width="2.4" height="12" rx="1.2" /><rect x="18.6" y="9.5" width="2.4" height="5" rx="1.2" /></svg>;
 }
+
+/** The three that were typed characters until 2026-09-22, and so were the only marks in the room drawn
+ *  by the text font: they sat on the baseline, took the font's weight and ignored every icon rule. */
+export function MoreIcon({ className, size = 18 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="19" cy="12" r="1.9" /></svg>;
+}
+
+export function CloseIcon({ className, size = 18 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>;
+}

@@ -1,4 +1,4 @@
-import { MicrophoneIcon, SettingsIcon } from "../../components/ui/Icons";
+import { MicrophoneIcon, RefreshIcon, SettingsIcon } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
 import { JoinStatus } from "./JoinStatus";
 import { AudioDeviceSelects, CallButton, DeviceNotes, MicControl, MuteButton } from "./CallIndicators";
@@ -15,7 +15,7 @@ export function CallToolbar() {
         <div id="audio-device-panel" className="audio-devices-panel" hidden>
           <AudioDeviceSelects />
           <Button id="audio-settings-open" variant="ghost" size="icon" className="device-settings" aria-label="Configuración de audio" title="Configuración de audio"><SettingsIcon size={24} /></Button>
-          <div className="device-notes"><DeviceNotes /><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos">↻</Button></div>
+          <div className="device-notes"><DeviceNotes /><Button id="refresh-devices" variant="ghost" size="icon" title="Actualizar dispositivos" aria-label="Actualizar dispositivos"><RefreshIcon size={18} /></Button></div>
         </div>
         <div className="call-actions">
           <MicControl>

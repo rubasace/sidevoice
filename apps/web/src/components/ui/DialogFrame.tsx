@@ -1,5 +1,6 @@
 import { useState, type PropsWithChildren, type ReactNode } from "react";
 import { Button } from "./Button";
+import { CloseIcon } from "./Icons";
 import { OverlayPortalProvider } from "./Tooltip";
 
 interface DialogFrameProps extends PropsWithChildren {
@@ -19,7 +20,7 @@ export function DialogFrame({ id, labelledBy, eyebrow, title, closeId, footer, c
       <OverlayPortalProvider container={dialog}>
         <div className="settings-heading stats-heading">
         <div>{eyebrow && <span className="stats-eyebrow">{eyebrow}</span>}<h2 id={labelledBy}>{title}</h2></div>
-        <Button id={closeId} variant="ghost" size="icon" aria-label={`Cerrar ${title.toLowerCase()}`} title="Cerrar">×</Button>
+        <Button id={closeId} variant="ghost" size="icon" aria-label={`Cerrar ${title.toLowerCase()}`} title="Cerrar"><CloseIcon /></Button>
       </div>
       {children}
       {footer}
