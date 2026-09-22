@@ -993,7 +993,11 @@ async function joinRoom(epoch,context){
  try{session=await openSession(socket,{conversation:rememberedThread(),sessions:rememberedSessions(),settings:state.voicePreferences,transcription:context.sttRuntime,...(traceparent?{telemetry:{traceparent}}:{})})}
  // A swap that failed leaves nothing behind: this socket never became the call's, and a refusal
  // that timed out could still be open and still be talking to a page that is not listening.
- catch(error){if(context.keepCurrent){socket.onclose=socket.onmessage=socket.onerror=null;try{socket.close()}catch{}}throw error}
+ // A join that failed leaves nothing behind, whichever way this socket was opened. A room that is
+ // not told keeps the seat for the length of its keepalive budget while the page tries again, so one
+ // local failure — a microphone that never arrived, an audio engine that would not start — became a
+ // reconnect loop that ate the room's seats one every thirty seconds (2026-09-22).
+ catch(error){socket.onclose=socket.onmessage=socket.onerror=null;try{socket.close()}catch{}if(state.ws===socket)state.ws=null;throw error}
  finally{if(openingSocket===socket)openingSocket=null}
  if(epoch!==connectEpoch){socket.close();return null}
  socket.onerror=null;

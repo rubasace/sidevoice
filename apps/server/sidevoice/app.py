@@ -593,10 +593,14 @@ async def browser_call(websocket):
         return
     hello = await client_hello(websocket)
     if hello is None:
+        # A socket that opened and went away before saying anything leaves no other trace, and the
+        # page blames the room for it (2026-09-22).
+        logger.info('A browser opened a socket and left before its first message')
         return
     settings, problem = settings_from(hello.get('settings'))
     choice = transcription.resolve(settings, config)
     if choice['provider'] == 'openai' and not choice.get('available'):
+        logger.info('A browser was refused: OpenAI has no API key in this room')
         await websocket.send_text(json.dumps({'type': 'error', 'data': {
             'message': 'OpenAI necesita una clave de API antes de conectar.'}}))
         await websocket.close(code=1008)
