@@ -66,8 +66,17 @@ class ConnectorPeer:
 
 
 class PairingRequest(BaseModel):
+    """The code, and what the machine says about itself. Everything but the code is the machine's own
+    description and is kept as given: the room never fills any of it in."""
     code: str = Field(min_length=4, max_length=32)
     host: str = Field(default='', max_length=200)
+    platform: str = Field(default='', max_length=60)
+    version: str = Field(default='', max_length=40)
+    harnesses: list[str] = Field(default_factory=list, max_length=8)
+
+
+REVOKED_REASON = ('La sala revocó el emparejamiento de esta máquina: vuelve a emparejarla con el código '
+                  'que la sala muestra en "Emparejar conector".')
 
 
 class RedemptionLimit:
@@ -319,6 +328,38 @@ class ConnectorControl:
             except Exception:
                 pass
 
+    async def revoke(self, connector_id):
+        """The person took this machine's pairing away from the room's page. It stops serving now, not
+        on its next connection: the conversations it carried lose their voice the way they do when the
+        room closes a channel, and the socket goes with the same reason its next handshake will get.
+
+        Returns the conversations that lost their voice, which is what the page shows the person."""
+        records = [binding for binding in self.journal.bindings() if binding['connector'] == connector_id]
+        self.journal.revoke_connector(connector_id)
+        for record in records:
+            self.live.pop(record['id'], None)
+            self.drop_inflight(record['id'])
+            self.hub.clear_conversation_working(record['thread'])
+        peer = self.peers.pop(connector_id, None)
+        if peer is not None:
+            for record in records:
+                try:
+                    await peer.send('binding.close', {'binding_id': record['id'], 'thread': record['thread'],
+                                                      'reason': 'connector_revoked'})
+                except Exception:
+                    pass
+            # Said before the socket goes, because after it there is nowhere to say it: a connector told
+            # why stops asking and tells its conversations, instead of reading "io server disconnect".
+            try:
+                await peer.send('connector.revoked', {'reason': REVOKED_REASON})
+            except Exception:
+                pass
+            try:
+                await peer.disconnect()
+            except Exception:
+                pass
+        return records
+
     async def unregister(self, connector_id, message):
         binding_id = message.get('binding_id')
         if self.live.get(binding_id) == connector_id:
@@ -385,7 +426,7 @@ def mount_connector_control(app, hub, **options):
         if limit.blocked():
             raise HTTPException(429, 'Too many wrong codes; the room accepts no pairing for a few minutes.',
                                 headers={'Retry-After': str(limit.retry_after())})
-        credential = hub.journal.redeem_pairing_code(payload.code, payload.host)
+        credential = hub.journal.redeem_pairing_code(payload.code, payload.model_dump(exclude={'code'}))
         if credential is None:
             limit.failed()
             raise HTTPException(403, 'Pairing code invalid or expired.')
@@ -396,5 +437,22 @@ def mount_connector_control(app, hub, **options):
         browser_only(request)
         return {'connectors': [{**c, 'connected': c['id'] in control.peers} for c in hub.journal.paired_connectors()],
                 'bindings': control.participants()}
+
+    @app.delete('/api/connectors/{connector_id}')
+    async def revoke_connector(connector_id: str, request: Request):
+        """Taking a machine's pairing away is the person's act, in the room, and nobody else's: the same
+        guard as the code that granted it. Asked once it revokes — the machine stops serving now and stays
+        listed as revoked, because a row that vanished would say nothing to whoever wonders why that
+        machine went quiet. Asked again, it takes the row away."""
+        require_room_page(request)
+        paired = {row['id']: row for row in hub.journal.paired_connectors()}
+        if connector_id not in paired:
+            raise HTTPException(404, 'Esta sala no tiene emparejada ninguna máquina con ese identificador.')
+        if paired[connector_id]['revoked']:
+            hub.journal.forget_connector(connector_id)
+            return {'status': 'removed', 'connector_id': connector_id}
+        records = await control.revoke(connector_id)
+        return {'status': 'revoked', 'connector_id': connector_id,
+                'threads': [record['thread'] for record in records]}
 
     return control

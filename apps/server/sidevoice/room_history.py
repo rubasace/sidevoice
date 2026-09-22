@@ -21,10 +21,29 @@ from pathlib import Path
 RETRY_BACKOFF = (2, 5, 15, 60)
 HISTORY_KEYS = ('seq', 'id', 'thread', 'role', 'text', 'name', 'session', 'revision', 'time', 'status',
                 'audio_reason', 'offline')
+# What a machine says about itself, and how much of it is kept. `harnesses` is a list; the rest is text.
+IDENTITY_KEYS = ('host', 'platform', 'version', 'harnesses')
+IDENTITY_LIMITS = {'host': 200, 'platform': 60, 'version': 40}
 
 
 def _hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def connector_identity(value):
+    """How a machine describes itself, kept to what it actually said. Nothing is inferred and nothing
+    is invented: a field the connector did not send is simply not written, so an older client's row
+    keeps saying what it said last time instead of losing it to an empty string."""
+    said = value if isinstance(value, dict) else {}
+    identity = {}
+    for key, limit in IDENTITY_LIMITS.items():
+        text = said.get(key)
+        if isinstance(text, str) and text.strip():
+            identity[key] = text.strip()[:limit]
+    harnesses = said.get('harnesses')
+    if isinstance(harnesses, (list, tuple)):
+        identity['harnesses'] = [name.strip()[:40] for name in harnesses[:8] if isinstance(name, str) and name.strip()]
+    return identity
 
 
 class RoomHistory:
@@ -38,7 +57,7 @@ class RoomHistory:
         self.seq = 0
         self._bindings = {}             # id -> binding
         self.pairing_codes = {}         # code -> {'expires', 'redeemed'}
-        self.connectors = {}            # id -> {'token_hash', 'host', 'created', 'last_seen', 'revoked'}
+        self.connectors = {}            # id -> {'token_hash', 'created', 'last_seen', 'revoked', **identity}
         self._load_state()
 
     # ----- the durable file -----
@@ -172,7 +191,7 @@ class RoomHistory:
         self.pairing_codes[code] = {'expires': now + ttl, 'redeemed': False}
         return '-'.join(code[i:i + 4] for i in range(0, self.PAIRING_LENGTH, 4))
 
-    def redeem_pairing_code(self, code, host=''):
+    def redeem_pairing_code(self, code, identity=None):
         """One-time exchange: a valid code becomes a connector credential. Returns (id, token) or None."""
         entry = self.pairing_codes.get(self.normalise_pairing_code(code))
         if not entry or entry['redeemed'] or entry['expires'] < int(time.time()):
@@ -180,17 +199,29 @@ class RoomHistory:
         entry['redeemed'] = True
         connector_id, token = str(uuid.uuid4()), secrets.token_urlsafe(32)
         now = int(time.time())
-        self.connectors[connector_id] = {'token_hash': _hash(token), 'host': (host or '')[:200], 'created': now, 'last_seen': now, 'revoked': 0}
+        self.connectors[connector_id] = {'token_hash': _hash(token), 'created': now, 'last_seen': now, 'revoked': 0,
+                                         **connector_identity(identity)}
         self._save_state()
         return connector_id, token
 
-    def authenticate_connector(self, connector_id, token):
+    def connector_credential(self, connector_id, token):
+        """What this credential is worth: 'paired', 'revoked' — this machine's own credential, taken away
+        from the room — or 'unknown'. A wrong token is never told which of the two it is: the id alone
+        says nothing about a machine somebody else paired."""
         if not isinstance(connector_id, str) or not isinstance(token, str) or not token:
-            return False
+            return 'unknown'
         entry = self.connectors.get(connector_id)
-        if not entry or entry.get('revoked') or not secrets.compare_digest(entry['token_hash'], _hash(token)):
+        if not entry or not secrets.compare_digest(entry['token_hash'], _hash(token)):
+            return 'unknown'
+        return 'revoked' if entry.get('revoked') else 'paired'
+
+    def authenticate_connector(self, connector_id, token, identity=None):
+        """A credential that still stands, and — since a machine says who it is on every connection —
+        the latest it told us about itself, kept where the pairing is kept."""
+        if self.connector_credential(connector_id, token) != 'paired':
             return False
-        entry['last_seen'] = int(time.time())
+        entry = self.connectors[connector_id]
+        entry.update(last_seen=int(time.time()), **connector_identity(identity))
         self._save_state()
         return True
 
@@ -203,11 +234,20 @@ class RoomHistory:
             if binding['connector'] == connector_id:
                 binding['active'] = 0
 
+    def forget_connector(self, connector_id):
+        """Take the row away. Only ever asked of a pairing already revoked: a machine that is merely
+        gone from the list would pair itself back in with the credential it still has on disk."""
+        if self.connectors.pop(connector_id, None) is None:
+            return False
+        self._save_state()
+        return True
+
     def paired_connectors(self):
-        """Every machine paired with this room, for the room's own page. (Not `connectors`: that name is the
-        dict this method reads, and an instance attribute shadows a method — the endpoint 500ed for as long
-        as both existed, 2026-09-21.)"""
-        return [{'id': cid, 'host': e.get('host'), 'created': e.get('created'), 'last_seen': e.get('last_seen'), 'revoked': e.get('revoked', 0)}
+        """Every machine paired with this room, for the room's own page — each as it last described
+        itself. (Not `connectors`: that name is the dict this method reads, and an instance attribute
+        shadows a method — the endpoint 500ed for as long as both existed, 2026-09-21.)"""
+        return [{'id': cid, 'created': e.get('created'), 'last_seen': e.get('last_seen'), 'revoked': e.get('revoked', 0),
+                 **{key: e.get(key) for key in IDENTITY_KEYS}}
                 for cid, e in sorted(self.connectors.items(), key=lambda item: item[1].get('created') or 0)]
 
     # ----- bindings: which connector serves which conversation (memory only) -----
