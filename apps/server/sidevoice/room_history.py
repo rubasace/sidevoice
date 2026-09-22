@@ -152,6 +152,7 @@ class RoomHistory:
     # Crockford's base32: 32 symbols, no I, L, O or U, so a code survives being read aloud, dictated to an
     # agent or typed from a phone. Twelve symbols are 60 bits — against a ten-minute window and the
     # redemption limit in connector_control, not a budget anyone can spend — shown as three groups of four.
+    # Three minutes of life: the operator cut it from ten (2026-09-22), since the code is used the moment it is shown.
     PAIRING_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
     PAIRING_LENGTH = 12
 
@@ -162,7 +163,9 @@ class RoomHistory:
         text = ''.join(ch for ch in str(code or '').upper() if ch not in ' -_.')
         return text.translate(str.maketrans('OIL', '011'))
 
-    def create_pairing_code(self, ttl=600):
+    PAIRING_TTL = 180   # a code is read off the screen and used at once; three minutes is generous
+
+    def create_pairing_code(self, ttl=PAIRING_TTL):
         now = int(time.time())
         self.pairing_codes = {code: entry for code, entry in self.pairing_codes.items() if entry['expires'] >= now}
         code = ''.join(secrets.choice(self.PAIRING_ALPHABET) for _ in range(self.PAIRING_LENGTH))

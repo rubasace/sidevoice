@@ -73,7 +73,7 @@ class PairingRequest(BaseModel):
 class RedemptionLimit:
     """How many wrong codes the room will hear before it stops listening for a while.
 
-    A pairing code is 60 bits and lives ten minutes; what makes that a wall rather than a budget is
+    A pairing code is 60 bits and lives three minutes; what makes that a wall rather than a budget is
     that guessing is cut off. The count is for the whole room, not per caller: behind a proxy a source
     address is whatever the last hop says, and this room has one user, for whom a lockout means
     waiting out the window rather than losing anything. A correct code is refused during the lockout
@@ -376,7 +376,7 @@ def mount_connector_control(app, hub, **options):
     async def pairing_code(request: Request):
         # Only the page in the room asks for a code, and it shows it to the person: never a client.
         require_room_page(request)
-        return {'code': hub.journal.create_pairing_code(), 'expires_in': 600}
+        return {'code': hub.journal.create_pairing_code(), 'expires_in': hub.journal.PAIRING_TTL}
 
     limit = RedemptionLimit(**redemption)
 

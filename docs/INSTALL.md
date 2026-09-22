@@ -47,7 +47,7 @@ Pairing happens in the conversation, the first time it joins: ask the agent to c
 ("conéctate a la sala https://…", or the prompt `/mcp__sidevoice__voice-room` on Claude Code). If this machine is not paired with that room,
 `voice_connect` says so and the agent asks you for the one-time code the room shows under
 **Emparejar conector**; it redeems it with `voice_pair` and joins. The code is shown only to the
-person in the room and works once, within ten minutes; the room does not hand it to any client that
+person in the room and works once, within three minutes; the room does not hand it to any client that
 asks, and neither the installer nor the agent tries to get one. One room per machine for now: pairing
 with another room replaces the current pairing, and the agent says so before doing it.
 
@@ -67,7 +67,7 @@ The rest of this document is the same thing by hand, and what each step is for.
 - **(from the user)** the room URL (for example `https://sidevoice.example`) and
   a pairing code, which the user reads from the room UI ("Emparejar conector").
   Codes are twelve characters in three groups (no I, L, O or U, so they survive being read
-  aloud), expire after ten minutes, work once, and the room stops accepting attempts for ten
+  aloud), expire after three minutes, work once, and the room stops accepting attempts for ten
   minutes after ten wrong ones. Never request one from the room:
   it refuses anything that is not its own page, on purpose.
 - Pair this machine, either from a conversation (`voice_pair`, see above) or by hand:
