@@ -75,12 +75,12 @@ def mount_connector_socketio(app, control):
         connector_id, token = credential.get('connector_id'), credential.get('token')
         if not control.journal.authenticate_connector(connector_id, token):
             raise ConnectionRefusedError(
-                'Esta máquina no está emparejada con la sala, o su credencial ya no vale: '
-                'vuelve a emparejarla con el código que la sala muestra en "Emparejar conector".')
+                'This machine is not paired with the room, or its credential is no longer valid: '
+                'pair it again with the code the room shows under "Emparejar conector" (Pair a connector).')
         if credential.get('protocol') != PROTOCOL:
             raise ConnectionRefusedError(
-                f'Este conector habla el protocolo {credential.get("protocol")!r} y la sala habla '
-                f'{PROTOCOL}: actualiza el conector y vuelve a emparejar esta máquina.')
+                f'This connector speaks protocol {credential.get("protocol")!r} and the room speaks '
+                f'{PROTOCOL}: update the connector and pair this machine again.')
         peer = SocketIOPeer(server, sid)
         await server.save_session(sid, {'connector_id': connector_id, 'peer': peer}, namespace=NAMESPACE)
         await control.attach(connector_id, peer)

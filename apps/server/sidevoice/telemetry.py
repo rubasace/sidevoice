@@ -436,7 +436,7 @@ def mount_telemetry(app):
         require_same_origin(request)
         body = await request.body()
         if len(body) > MAX_TELEMETRY_BODY:
-            raise HTTPException(413, 'Lote de telemetría demasiado grande.')
+            raise HTTPException(413, 'Telemetry batch too large.')
         await forward(body, request.headers.get('content-type'))
         # Accepted or dropped, the browser is told the same thing: this is not its problem.
         return Response(status_code=204)

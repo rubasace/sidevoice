@@ -36,7 +36,7 @@ def require_same_origin(request):
     if (public and origin.rstrip('/') == public) or (origin_host and origin_host in {
             request.headers.get('host', '').lower(), request.url.netloc.lower()}):
         return
-    raise HTTPException(403, 'Usa la sala desde su propia dirección.')
+    raise HTTPException(403, 'Use the room from its own address.')
 
 
 def require_room_page(request):
@@ -45,7 +45,7 @@ def require_room_page(request):
     the room's data endpoints and wrong for handing out a pairing code: reaching the address is not
     being in the room. The code is shown to the person; the person carries it to their machine."""
     if not request.headers.get('origin'):
-        raise HTTPException(403, 'El código de emparejamiento se pide desde la sala.')
+        raise HTTPException(403, 'A pairing code is requested from the room\'s own page.')
     require_same_origin(request)
 
 
@@ -180,7 +180,7 @@ def mount_presentation(app):
     @app.post('/api/presentation/synthesis/credential')
     async def synthesis_credential(payload: dict, request: Request):
         if not request.headers.get('origin'):
-            raise HTTPException(403, 'Guarda la clave desde la sala, no desde un cliente externo.')
+            raise HTTPException(403, 'Save the key from the room, not from an external client.')
         require_same_origin(request)
         from . import synthesis
         try:
@@ -225,7 +225,7 @@ def mount_presentation(app):
     @app.post('/api/presentation/transcription/credential')
     async def transcription_credential(payload: dict, request: Request):
         if not request.headers.get('origin'):
-            raise HTTPException(403, 'Guarda la clave desde la sala, no desde un cliente externo.')
+            raise HTTPException(403, 'Save the key from the room, not from an external client.')
         require_same_origin(request)
         from . import transcription
         provider = payload.get('provider')
@@ -308,7 +308,7 @@ def mount_presentation(app):
         current = client.target if client else {}
         entries = hub.control.participants() if hub.control else [{**b, 'connected': False} for b in hub.journal.bindings()]
         reach = hub.control.reachability if hub.control else (lambda b: {'state': 'offline', 'detail': None})
-        return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversación ' + b['thread'][:8]),
+        return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversation ' + b['thread'][:8]),
                  'harness': b.get('harness'), 'available': b['connected'],
                  'capabilities': b.get('capabilities'),
                  'reach': reach(b),
@@ -323,12 +323,12 @@ def mount_presentation(app):
         require_same_origin(request)
         thread_id = payload.get('thread_id', '')
         if not isinstance(thread_id, str) or not THREAD_PATTERN.match(thread_id):
-            raise HTTPException(400, 'Identificador de conversación inválido.')
+            raise HTTPException(400, 'Invalid conversation identifier.')
         record = hub.journal.binding_for_thread(thread_id)
         if not record:
-            raise HTTPException(409, 'Esa conversación no está conectada. Activa la voz desde su tarea.')
+            raise HTTPException(409, 'That conversation is not connected. Enable voice from its task.')
         if not client_for(payload.get('session_id')):
-            raise HTTPException(409, 'Ese navegador no está en la sala.')
+            raise HTTPException(409, 'That browser is not in the room.')
         return await hub.select(payload['session_id'], thread_id, record.get('title'))
 
     @app.post('/api/presentation/cancel-input')
@@ -336,7 +336,7 @@ def mount_presentation(app):
         require_same_origin(request)
         client = client_for(payload.get('session_id'))
         if not client or not client.speaking or payload.get('revision') != client.turn_revision:
-            raise HTTPException(409, 'La intervención ya terminó; no se puede cancelar.')
+            raise HTTPException(409, 'The message has already ended; it cannot be cancelled.')
         client.cancelled_turn = client.turn_revision
         if client.on_browser_event:
             client.on_browser_event({'type':'voice-user-turn', 'data':{
@@ -349,16 +349,16 @@ def mount_presentation(app):
         require_same_origin(request)
         thread_id = payload.get('thread_id', '')
         if not isinstance(thread_id, str) or not THREAD_PATTERN.match(thread_id):
-            raise HTTPException(400, 'Identificador inválido.')
+            raise HTTPException(400, 'Invalid identifier.')
         if not hub.journal.binding_for_thread(thread_id) and not hub.journal.history(thread_id):
-            raise HTTPException(409, 'No se encuentra esa conversación.')
+            raise HTTPException(409, 'That conversation was not found.')
         return await hub.close_channel(thread_id)
 
     @app.post('/api/presentation/leave')
     async def leave(payload: dict, request: Request):
         require_same_origin(request)
         if not client_for(payload.get('session_id')):
-            raise HTTPException(409, 'Ese navegador no está en la sala.')
+            raise HTTPException(409, 'That browser is not in the room.')
         return await hub.deselect(payload['session_id'], payload.get('binding_id'))
 
     @app.post('/api/presentation/text')
@@ -382,26 +382,26 @@ def mount_presentation(app):
         client = client_for(payload.get('session_id'))
         uid, rev = payload.get('utterance_id'), payload.get('revision')
         if not client:
-            raise HTTPException(409, 'Locución obsoleta.')
+            raise HTTPException(409, 'Stale utterance.')
         if payload.get('status') in {'cancelled_unplayed', 'cancelled_playing'}:
             if (not isinstance(rev, int)
                     or not client.browser_cancelled(uid, rev, payload['status'] == 'cancelled_playing')):
-                raise HTTPException(409, 'Locución obsoleta.')
+                raise HTTPException(409, 'Stale utterance.')
             return {'status': payload['status']}
         if not client.is_current(uid, rev):
-            raise HTTPException(409, 'Locución obsoleta.')
+            raise HTTPException(409, 'Stale utterance.')
         status = payload.get('status')
         if status == 'playback_finished':
             await client.playback_finished(uid, rev)
         elif status == 'failed':
-            client.error = 'Falló la voz en el navegador. Revisa la sala; no se repetirá automáticamente.'
+            client.error = 'Voice failed in the browser. Check the room; it will not repeat by itself.'
             client.fail_active()
         elif status == 'playing':
             client.latency.browser(uid, payload.get('timings_ms'))
             client.telemetry.playback(uid, payload.get('timings_ms'))
             client.transition(uid, status)
         else:
-            raise HTTPException(400, 'Estado inválido.')
+            raise HTTPException(400, 'Invalid state.')
         return {'status': status}
 
     @app.post('/api/presentation/speak')

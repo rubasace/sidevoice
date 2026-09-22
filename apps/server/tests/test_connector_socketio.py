@@ -99,7 +99,7 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(socketio.exceptions.ConnectionError) as refusal:
             await self.connect(protocol=PROTOCOL - 1)
         self.assertIn(str(PROTOCOL), self.reason(refusal.exception))
-        self.assertIn('empareja', self.reason(refusal.exception).lower())
+        self.assertIn('pair this machine again', self.reason(refusal.exception).lower())
         self.assertEqual(self.control.peers, {})
 
     async def test_every_event_a_connector_sends_reaches_the_control_plane(self):

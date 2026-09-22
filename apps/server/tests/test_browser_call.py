@@ -178,7 +178,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual((client.settings.spanish_voice, client.audio_grace_seconds), ('ef_dora', 1))
         client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {'tts_speed': 9}}})
         self.assertEqual(client.settings.spanish_voice, 'ef_dora')
-        self.assertIn('no válidos', (await self.received(socket, 'error'))['data']['message'])
+        self.assertIn('Invalid device settings', (await self.received(socket, 'error'))['data']['message'])
         # A voice or an engine is resolved per utterance out of these settings, so the change lands on
         # the next reply over this very socket: no second pipeline, and nothing to reconnect.
         from sidevoice.language_settings import resolve_voice
@@ -223,7 +223,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         socket = FakeWebSocket()
         task, client = await self.join(socket, {'mic': {'turn_patience': 'zen'}})
         error = await self.received(socket, 'error')
-        self.assertIn('Paciencia desconocida', error['data']['message'])
+        self.assertIn('Unknown patience', error['data']['message'])
         self.assertEqual(client.mic_settings['smart_turn_min_silence'], 0.9)
         await self.leave(socket, task)
 
@@ -240,7 +240,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         task, client = await self.join(socket, {'mic': TIMER_HELLO['mic'],
                                                 'transcription': {'model': 'server-whisper', 'device': 'cuda'}})
         error = await self.received(socket, 'error')
-        self.assertIn('no compatible', error['data']['message'])
+        self.assertIn('Unsupported', error['data']['message'])
         self.assertTrue(client.connected)
         # The rejected runtime never overrides what the room resolved.
         self.assertEqual((client.transcription['model'], client.transcription['device']), ('onnx-community/whisper-tiny', 'auto'))
@@ -530,7 +530,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
             self.hello(refused)
             await browser_call(refused)
         error = await self.received(refused, 'error')
-        self.assertIn('máximo de navegadores', error['data']['message'])
+        self.assertIn('maximum number of browsers', error['data']['message'])
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
         self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
         self.assertTrue(all(client.connected for _, _, client in joined))
@@ -609,7 +609,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
                 'session_id': client.id, 'sample_rate': 16000, 'seq': index,
                 'audio_base64': base64.b64encode(b'\x10\x00' * 16000).decode('ascii'), 'final': False}})
         self.assertIsNone(voice.catchup)
-        self.assertIn('demasiado largo', next(m for m in sent if m['type'] == 'error')['data']['message'])
+        self.assertIn('too long', next(m for m in sent if m['type'] == 'error')['data']['message'])
         self.assertEqual(voice.transcriber.offline_audio, [])
 
     async def test_a_browser_clock_that_makes_no_sense_leaves_the_room_s_own(self):
@@ -661,7 +661,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         refused = FakeWebSocket()
         await browser_call(refused)
         error = await self.received(refused, 'error')
-        self.assertIn('máximo de navegadores', error['data']['message'])
+        self.assertIn('maximum number of browsers', error['data']['message'])
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
         self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
         self.assertTrue(all(client.connected for _, _, client in joined))

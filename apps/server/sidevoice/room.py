@@ -162,7 +162,7 @@ class RoomClient:
                 'user_speaking': self.speaking, 'error': self.error, 'sent': self.sent,
                 'last_delivery': self.last_delivery, 'revision': self.revision,
                 'utterances': [u.view(self.id) for u in self.utterances.values() if self.id in u.clients],
-                'tts': {'engine': 'Kokoro · navegador'} if self.tts is None else getattr(self.tts, 'runtime_status', {}),
+                'tts': {'engine': 'Kokoro · browser'} if self.tts is None else getattr(self.tts, 'runtime_status', {}),
                 'mic': ({
                     'frames': getattr(self.mic, 'audio_frames', 0),
                     'bytes': getattr(self.mic, 'audio_bytes', 0),
@@ -194,18 +194,18 @@ class RoomClient:
                    'history_id': history_id, 'revision': revision, 'binding_id': target.get('binding_id'),
                    'title': target.get('title')}
         if not payload['thread_id']:
-            self.error = 'Selecciona una conversación antes de hablar.'
+            self.error = 'Select a conversation before speaking.'
             self.input_receipt(payload, 'not_sent')
             return
         if self.journal:
             self.journal.put(id=history_id, thread=payload['thread_id'], role='user', text=text,
-                             name='Tú', session=self.id, revision=revision, status='pending', payload=payload,
+                             name='You', session=self.id, revision=revision, status='pending', payload=payload,
                              offline=offline, at=at)
         else:
             try:
                 self.input_queue.put_nowait(payload)
             except asyncio.QueueFull:
-                self.error = 'Cola llena: el último mensaje no se envió.'
+                self.error = 'Queue full: the last message was not sent.'
                 self.input_receipt(payload, 'not_sent')
                 return
         self.input_receipt(payload, 'pending')
@@ -470,7 +470,7 @@ class Room:
         if client.id in self.clients:
             return client
         if len(self.clients) >= self.MAX_CLIENTS:
-            raise RuntimeError('La sala ya tiene el máximo de navegadores conectados.')
+            raise RuntimeError('The room already has the maximum number of browsers connected.')
         client.room = self
         self.clients[client.id] = client
         if client.id not in self.sessions:
@@ -553,7 +553,7 @@ class Room:
             if isinstance(outcome, BaseException):
                 # That browser is already marked failed; the room and the rest carry on.
                 client.error = getattr(outcome, 'detail', None) or (
-                    'No se pudo reproducir el audio en este navegador: ' + type(outcome).__name__)
+                    'Could not play the audio in this browser: ' + type(outcome).__name__)
 
     def sync(self, utterance):
         status, reason = utterance.status, utterance.reason
@@ -645,18 +645,18 @@ class Room:
                 raise HTTPException(409, 'utterance_id ya usado con otro contenido.')
             return previous.result(session_id)
         if session_id not in self.sessions:
-            raise HTTPException(409, 'La llamada cambió; esta respuesta pertenece a otra sesión.')
+            raise HTTPException(409, 'The call changed; this reply belongs to another session.')
         asker = self.clients.get(session_id)
         if not asker or not asker.connected or asker.switching:
-            raise HTTPException(409, 'No hay llamada conectada; no se guarda audio para más tarde.')
+            raise HTTPException(409, 'No call is connected; no audio is kept for later.')
         if revision != asker.revision:
-            raise HTTPException(409, 'Respuesta obsoleta: el usuario ya inició otro turno.')
+            raise HTTPException(409, 'Stale reply: the user has already started another turn.')
         thread_id = thread_id or asker.target.get('thread_id')
         listeners = self.audience(thread_id)
         if asker not in listeners:
-            raise HTTPException(409, 'Ese navegador ya no está en esa conversación.')
+            raise HTTPException(409, 'That browser is no longer on that conversation.')
         if asker.speaking and not wait_for_quiet:
-            raise HTTPException(409, 'El usuario está hablando. Espera su mensaje antes de responder.')
+            raise HTTPException(409, 'The user is speaking. Wait for their message before replying.')
         if len(self.utterances) >= self.MAX_UTTERANCES or any(len(c.pending) >= self.MAX_PENDING for c in listeners):
             raise HTTPException(429, 'Cola o historial de locuciones lleno.')
         utterance = Utterance(utterance_id, text, language=language, thread_id=thread_id, revision=revision,
@@ -693,7 +693,7 @@ class Room:
             row_id = payload.session_id + ':voice:' + payload.utterance_id
         record = self.journal.binding_for_thread(payload.thread_id) if self.journal else None
         name = (record or {}).get('title') or (
-            asker.target.get('title') if asker and asker.target.get('thread_id') == payload.thread_id else None) or 'Conversación'
+            asker.target.get('title') if asker and asker.target.get('thread_id') == payload.thread_id else None) or 'Conversation'
         record = self.journal.put(id=row_id, thread=payload.thread_id, role='assistant',
                                   text=payload.text, name=name, session=payload.session_id,
                                   revision=payload.revision, status='text_only', language=payload.language)
@@ -736,15 +736,15 @@ class Room:
         previous = self.journal.get(row_id)
         if previous:
             if previous['text'] != text or previous['thread'] != thread_id:
-                raise HTTPException(409, 'El identificador ya corresponde a otro mensaje.')
+                raise HTTPException(409, 'That identifier already belongs to another message.')
             return {'accepted': True, 'id': row_id, 'revision': previous['revision']}
         client = self.clients.get(session_id)
         if (not client or not client.connected
                 or client.target.get('thread_id') != thread_id
                 or client.target.get('binding_id') != binding_id):
-            raise HTTPException(409, 'La conexión o conversación cambió. El texto no se envió.')
+            raise HTTPException(409, 'The connection or conversation changed. The text was not sent.')
         if not text.strip():
-            raise HTTPException(422, 'Escribe un mensaje.')
+            raise HTTPException(422, 'Write a message.')
         # A typed submission is this browser's own turn: it interrupts this browser's playback only.
         client.revision += 1
         client.halt('interrupted', 'user_interrupted', preserve_waiting=True)
@@ -800,7 +800,7 @@ class Room:
         """One browser chooses which conversation it talks to. No other browser moves."""
         client = self.clients.get(session_id)
         if not client or not client.connected:
-            raise HTTPException(409, 'Ese navegador no está en la sala.')
+            raise HTTPException(409, 'That browser is not in the room.')
         async with self.activation_lock:
             current = client.target
             if current.get('thread_id') == thread_id and (not title or current.get('title') == title):
@@ -811,10 +811,10 @@ class Room:
     async def deselect(self, session_id, binding_id):
         client = self.clients.get(session_id)
         if not client or not client.connected:
-            raise HTTPException(409, 'Ese navegador no está en la sala.')
+            raise HTTPException(409, 'That browser is not in the room.')
         async with self.activation_lock:
             if binding_id != client.target.get('binding_id'):
-                raise HTTPException(409, 'La conversación cambió. Actualiza la sala.')
+                raise HTTPException(409, 'The conversation changed. Refresh the room.')
             return {'status': 'activated', 'binding': await self._retarget(client, {})}
 
     async def _retarget(self, client, target):

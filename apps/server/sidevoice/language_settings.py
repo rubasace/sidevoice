@@ -99,7 +99,7 @@ def settings_from(data):
     try:
         return LanguageSettings.model_validate(data), None
     except ValidationError as error:
-        return LanguageSettings(), 'Ajustes del dispositivo no válidos; se usan los valores por defecto: ' + '; '.join(
+        return LanguageSettings(), 'Invalid device settings; the defaults are used: ' + '; '.join(
             '.'.join(str(part) for part in item.get('loc', ('?',))) + ' ' + item.get('msg', '') for item in error.errors()[:3])
 
 
@@ -184,6 +184,6 @@ def mic_settings(settings, overrides=None):
     if isinstance(overrides, dict) and isinstance(overrides.get('turn_patience'), str):
         patience = overrides['turn_patience']
     if patience not in PATIENCE:
-        problem = None if patience is None else 'Paciencia desconocida; se usa la de la sala: ' + str(patience)[:40]
+        problem = None if patience is None else 'Unknown patience; the room\'s own is used: ' + str(patience)[:40]
         return MicSettings(**base), problem
     return MicSettings(**{**base, **PATIENCE[patience]}), None

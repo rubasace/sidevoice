@@ -86,7 +86,7 @@ class BrowserTranscriber:
             metrics = data.get('metrics') if isinstance(data.get('metrics'), dict) else {}
             future.set_result(Transcript(text=str(data.get('text') or '').strip(), metrics=metrics))
         else:
-            future.set_exception(RuntimeError(str(data.get('error') or 'Falló la transcripción en el navegador.')))
+            future.set_exception(RuntimeError(str(data.get('error') or 'Transcription failed in the browser.')))
         return True
 
     def cancel(self):

@@ -20,9 +20,9 @@ CREDENTIALS = Path(os.getenv('VOICE_TTS_CREDENTIALS_FILE', str(RUNTIME_ROOT / 't
 ELEVENLABS_API = 'https://api.elevenlabs.io'
 
 FALLBACK_MODELS = [
-    {'id': 'eleven_flash_v2_5', 'label': 'Eleven Flash v2.5', 'description': 'Rápido'},
+    {'id': 'eleven_flash_v2_5', 'label': 'Eleven Flash v2.5', 'description': 'Fast'},
     {'id': 'eleven_multilingual_v2', 'label': 'Eleven Multilingual v2', 'description': 'Calidad multilingüe'},
-    {'id': 'eleven_v3', 'label': 'Eleven v3', 'description': 'Más expresivo'},
+    {'id': 'eleven_v3', 'label': 'Eleven v3', 'description': 'More expressive'},
 ]
 
 
@@ -62,7 +62,7 @@ def credential_state(config=None):
 def save_key(value):
     value = (value or '').strip()
     if not value:
-        raise ValueError('La clave está vacía.')
+        raise ValueError('The key is empty.')
     stored = _read()
     stored['elevenlabs'] = value
     CREDENTIALS.parent.mkdir(parents=True, exist_ok=True)
@@ -89,8 +89,8 @@ def _headers(value):
 
 def _failure(response, provider='ElevenLabs'):
     if response.status in {401, 403}:
-        return f'{provider} rechazó la clave.'
-    return f'{provider} respondió {response.status}.'
+        return f'{provider} rejected the key.'
+    return f'{provider} answered {response.status}.'
 
 
 async def verify(value):
@@ -206,7 +206,7 @@ async def catalog(config=None):
     except ValueError as error:
         result['error'] = str(error)
     except Exception as error:
-        result['error'] = 'No se pudo cargar el catálogo de ElevenLabs: ' + type(error).__name__
+        result['error'] = 'Could not load the ElevenLabs catalogue: ' + type(error).__name__
     return result
 
 
@@ -251,8 +251,8 @@ async def synthesize(text, *, model, voice, speed, config=None, with_timestamps=
                 alignment = {field: candidate.get(field) for field in
                              ('characters', 'character_start_times_seconds', 'character_end_times_seconds')}
         except (ValueError, KeyError, TypeError) as error:
-            raise ValueError('ElevenLabs devolvió una respuesta de audio inválida.') from error
+            raise ValueError('ElevenLabs returned an invalid audio response.') from error
     if not audio:
-        raise ValueError('ElevenLabs no devolvió audio.')
+        raise ValueError('ElevenLabs returned no audio.')
     return {'mime_type': 'audio/mpeg', 'audio_base64': base64.b64encode(audio).decode('ascii'),
             'timings_ms': timings, 'alignment': alignment}

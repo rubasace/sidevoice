@@ -11,16 +11,16 @@ CREDENTIALS = Path(os.getenv('VOICE_STT_CREDENTIALS_FILE', str(RUNTIME_ROOT / 's
 
 BROWSER_MODELS = [
     {'id': 'onnx-community/whisper-tiny', 'label': 'Whisper tiny',
-     'description': 'Más rápido y ligero; recomendado para conversación y móvil.',
+     'description': 'Fastest and lightest; recommended for conversation and mobile.',
      'devices': ['webgpu', 'wasm']},
     {'id': 'onnx-community/whisper-base', 'label': 'Whisper base',
-     'description': 'Más preciso, con mayor descarga y latencia.',
+     'description': 'More accurate, with a larger download and more latency.',
      'devices': ['webgpu', 'wasm']},
     {'id': 'onnx-community/whisper-small', 'label': 'Whisper small',
      'description': 'Mejor calidad multilingüe. Aproximadamente 285 MiB en Q4; requiere WebGPU.',
      'devices': ['webgpu']},
     {'id': 'onnx-community/whisper-large-v3-turbo', 'label': 'Whisper large v3 turbo',
-     'description': 'Máxima calidad local disponible. Aproximadamente 538 MiB cuantizado; requiere WebGPU con fp16.',
+     'description': 'Best local quality available. About 538 MiB quantised; needs WebGPU with fp16.',
      'devices': ['webgpu']},
 ]
 OPENAI_API = 'https://api.openai.com'
@@ -28,11 +28,11 @@ DEFAULT_OPENAI_MODEL = 'gpt-4o-transcribe'
 MODEL_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$')
 CATALOG = {
     'providers': [
-        {'id': 'browser', 'label': 'En este navegador', 'needs_key': False,
-         'note': 'La sala recibe el audio para detectar tus turnos; el texto se reconoce en este navegador, sin ninguna API. WebGPU usa la GPU; CPU usa WebAssembly.',
+        {'id': 'browser', 'label': 'In this browser', 'needs_key': False,
+         'note': 'The room receives the audio to detect your turns; the text is recognised in this browser, with no API. WebGPU uses the GPU; CPU uses WebAssembly.',
          'default_model': 'onnx-community/whisper-tiny', 'models': BROWSER_MODELS},
         {'id': 'openai', 'label': 'OpenAI', 'needs_key': True,
-         'note': 'El audio de tus intervenciones se envía a OpenAI para transcribirlo.',
+         'note': 'The audio of your turns is sent to OpenAI for transcription.',
          'default_model': DEFAULT_OPENAI_MODEL, 'models': [], 'models_source': 'remote'},
     ],
 }
@@ -63,7 +63,7 @@ def save_key(provider, key):
         raise ValueError('Ese proveedor no usa clave')
     key = (key or '').strip()
     if not key:
-        raise ValueError('La clave está vacía')
+        raise ValueError('The key is empty')
     stored = _read()
     stored[provider] = key
     CREDENTIALS.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +129,7 @@ def build(settings, choice, *, config=None, send=None, session_id=None):
     language = None if settings.stt_language == 'auto' else settings.stt_language
     if choice['provider'] == 'browser':
         if send is None or not session_id:
-            raise ValueError('La transcripción del navegador necesita su conexión.')
+            raise ValueError('Browser transcription needs its own connection.')
         from .transcribers import BrowserTranscriber
         return BrowserTranscriber(send, session_id, language=language)
     key = stored_key('openai') or environment_key(config)
@@ -147,9 +147,9 @@ async def verify(provider, key):
             async with http.get(OPENAI_API + '/v1/models',
                                 headers={'Authorization': 'Bearer ' + key}) as response:
                 if response.status == 401:
-                    raise ValueError('OpenAI rechazó la clave.')
+                    raise ValueError('OpenAI rejected the key.')
                 if response.status >= 400:
-                    raise ValueError(f'OpenAI respondió {response.status} al comprobar la clave.')
+                    raise ValueError(f'OpenAI answered {response.status} when checking the key.')
     except ValueError:
         raise
     except Exception as error:
@@ -165,9 +165,9 @@ async def _models(http, value):
     async with http.get(OPENAI_API + '/v1/models',
                         headers={'Authorization': 'Bearer ' + value}) as response:
         if response.status in {401, 403}:
-            raise ValueError('OpenAI rechazó la clave.')
+            raise ValueError('OpenAI rejected the key.')
         if response.status >= 400:
-            raise ValueError(f'OpenAI respondió {response.status} al cargar los modelos.')
+            raise ValueError(f'OpenAI answered {response.status} when loading the models.')
         payload = await response.json()
     models = []
     for item in payload.get('data', []) if isinstance(payload, dict) else []:
@@ -189,9 +189,9 @@ async def catalog(provider, config=None):
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=12)) as http:
             result['models'] = await _models(http, value)
         if not result['models']:
-            result['error'] = 'OpenAI no devolvió modelos de transcripción para esta cuenta.'
+            result['error'] = 'OpenAI returned no transcription models for this account.'
     except ValueError as error:
         result['error'] = str(error)
     except Exception as error:
-        result['error'] = 'No se pudo cargar el catálogo de OpenAI: ' + type(error).__name__
+        result['error'] = 'Could not load the OpenAI catalogue: ' + type(error).__name__
     return result

@@ -87,7 +87,7 @@ class RoomHistory:
         previous = self.messages.get(id)
         if previous:
             if (previous['thread'], previous['text'], previous['revision'], previous['language']) != (thread, text, revision, language):
-                raise ValueError('Identificador de mensaje ya usado con otro contenido')
+                raise ValueError('Message identifier already used with different content')
             return {**previous, '_existing': True}
         self.seq += 1
         row = {'seq': self.seq, 'id': id, 'thread': thread, 'role': role, 'text': text, 'name': name, 'session': session,

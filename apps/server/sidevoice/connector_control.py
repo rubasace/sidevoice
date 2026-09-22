@@ -153,7 +153,7 @@ class ConnectorControl:
         """Three states, because 'connected' and 'will receive what you say' are not the same thing."""
         if not binding.get('connected'):
             return {'state': 'offline',
-                    'detail': 'Esa conversación no está conectada a la sala. Pídele que se conecte.'}
+                    'detail': 'That conversation is not connected to the room. Ask it to connect.'}
         inbound = binding.get('inbound')
         if isinstance(inbound, str):
             try:
@@ -383,12 +383,12 @@ def mount_connector_control(app, hub, **options):
     @app.post('/api/connectors/pair')
     async def pair(payload: PairingRequest):
         if limit.blocked():
-            raise HTTPException(429, 'Demasiados códigos incorrectos; la sala no acepta emparejamientos durante unos minutos.',
+            raise HTTPException(429, 'Too many wrong codes; the room accepts no pairing for a few minutes.',
                                 headers={'Retry-After': str(limit.retry_after())})
         credential = hub.journal.redeem_pairing_code(payload.code, payload.host)
         if credential is None:
             limit.failed()
-            raise HTTPException(403, 'Código de emparejamiento inválido o caducado.')
+            raise HTTPException(403, 'Pairing code invalid or expired.')
         return {'connector_id': credential[0], 'token': credential[1], 'protocol': PROTOCOL}
 
     @app.get('/api/connectors')

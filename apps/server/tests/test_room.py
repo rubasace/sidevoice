@@ -531,7 +531,7 @@ class PerBrowserSelectionTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.hub.snapshot('two')['binding']['thread_id'], 'b')
         self.assertIsNone(self.hub.journal.binding_for_thread('a'))
         one.user_started(); one.speaking = False; one.enqueue_input('Sin destino')
-        self.assertIn('Selecciona una conversación', one.error)
+        self.assertIn('Select a conversation', one.error)
 
     async def test_deselecting_needs_the_browsers_current_binding_and_touches_only_that_browser(self):
         one, two = self.browser('one'), self.browser('two')

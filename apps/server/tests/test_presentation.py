@@ -131,7 +131,7 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.c.enqueue_input('No hay nadie')
         self.assertTrue(self.c.input_queue.empty())
         self.assertEqual(receipts[-1]['status'], 'not_sent')
-        self.assertIn('Selecciona una conversación', self.c.error)
+        self.assertIn('Select a conversation', self.c.error)
         await self.hub.select(self.c.id, 'a')
         self.c.enqueue_input('Final de la frase anterior')
         self.assertTrue(self.c.input_queue.empty())

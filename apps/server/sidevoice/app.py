@@ -65,7 +65,7 @@ async def room_is_full(websocket):
     if len(hub.clients) < hub.MAX_CLIENTS:
         return False
     await websocket.send_text(json.dumps({'type': 'error', 'data': {
-        'message': 'La sala ya tiene el máximo de navegadores conectados.'}}))
+        'message': 'The room already has the maximum number of browsers connected.'}}))
     await websocket.close(code=1013)  # Try again later.
     return True
 
@@ -84,7 +84,7 @@ def browser_runtime(data):
     model, device = data.get('model'), data.get('device')
     models = {item['id'] for item in transcription.PROVIDERS['browser']['models']}
     if model not in models or device not in {'webgpu', 'wasm'}:
-        raise ValueError('Motor de transcripción del navegador no compatible.')
+        raise ValueError('Unsupported browser transcription engine.')
     return {'model': model, 'device': device}
 
 
@@ -275,7 +275,7 @@ class VoiceCall:
             return None
         if len(audio) > CATCHUP_SLICE_BYTES or len(pending['pcm']) + len(audio) > CATCHUP_MAX_SECONDS * rate * 2:
             self.catchup = None
-            self.send({'type': 'error', 'data': {'message': 'El audio capturado sin conexión era demasiado largo.'}})
+            self.send({'type': 'error', 'data': {'message': 'The audio captured offline was too long.'}})
             return None
         pending['pcm'].extend(audio)
         pending['seq'] += 1
@@ -306,7 +306,7 @@ class VoiceCall:
             try:
                 result = await self.transcriber.transcribe_audio(pcm, sample_rate)
             except Exception as error:
-                failed = 'No se pudo transcribir lo que se capturó sin conexión: ' + (str(error) or type(error).__name__)
+                failed = 'Could not transcribe what was captured offline: ' + (str(error) or type(error).__name__)
                 call.error = failed
                 self.send({'type': 'error', 'data': {'message': failed}})
                 return None
@@ -357,10 +357,10 @@ class VoiceCall:
                 if result is not None:
                     text, metrics = result.text.strip(), dict(result.metrics or {})
             except asyncio.TimeoutError:
-                failed = ('La transcripción de este navegador no contestó. Si el dispositivo no puede con Whisper, '
-                          'cambia el motor de transcripción a OpenAI en los ajustes.')
+                failed = ('This browser\'s transcription did not answer. If the device cannot run Whisper, '
+                          'switch the transcription engine to OpenAI in the settings.')
             except Exception as error:
-                failed = 'No se pudo transcribir tu intervención: ' + (str(error) or type(error).__name__)
+                failed = 'Could not transcribe your turn: ' + (str(error) or type(error).__name__)
             transcript_at = time.monotonic()
             if text or metrics:
                 # Server-side stages of this turn, on one clock: what the browser measured stays as it came.
