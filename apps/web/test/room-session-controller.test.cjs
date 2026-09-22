@@ -1520,13 +1520,13 @@ test('A message the room recovered from the gap gets its own bubble, and takes n
  const bubble=shown.at(-1).messages.find(m=>m.segment==='s:user-catchup:1');
  assert.equal(bubble.text,'lo que dije sin sala');
  assert.equal(bubble.time,1758290000000,'it is placed when it was spoken, not when the room caught up');
- assert.equal(bubble.offlineNote,'Capturado sin conexión');
+ assert.equal(bubble.offlineNote,'','arriving whole is not news; how it got here is not the reader\'s business');
  assert.equal(bubble.delivery,'pending');
  assert.equal(s.run('pendingPhase'),'listening','the turn that is open right now is untouched');
  assert.equal(s.run('userTurn')!==null,true);
  // A truncated one says what was lost instead of shortening the sentence in silence.
- assert.equal(s.run("offlineNote({role:'user',offline:'truncated'})"),'Capturado sin conexión · solo se guardaron los últimos 30 s');
- assert.equal(s.run("offlineNote({role:'assistant',offline:'buffered'})"),'','only what this browser said can have been captured offline');
+ assert.equal(s.run("offlineNote({role:'user',offline:'truncated'})"),'Solo se guardaron los últimos 30 s');
+ assert.equal(s.run("offlineNote({role:'assistant',offline:'truncated'})"),'','only what this browser said can have been cut by the gap');
  assert.equal(s.run("offlineNote({role:'user'})"),'');
  // Another browser's catch-up is not this one's.
  s.run("message(JSON.stringify({type:'voice-catchup-turn',data:{session_id:'other',history_id:'other:user-catchup:1',thread_id:'a',text:'no es mío'}}))");

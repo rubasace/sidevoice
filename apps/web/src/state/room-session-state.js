@@ -311,11 +311,11 @@ export function createRoomSessionStore(seed = {}) {
     };
 }
 export function offlineNote(r) {
-    if (r.role !== 'user' || !r.offline)
-        return '';
-    return r.offline === 'truncated'
-        ? 'Capturado sin conexión · solo se guardaron los últimos ' + GAP_BUFFER_SECONDS + ' s'
-        : 'Capturado sin conexión';
+    // Only what changes the reading of it: a message the gap buffer had to cut is incomplete and says so.
+    // That it was captured while the room was away is how it got here, not something to tell anybody.
+    return r.role === 'user' && r.offline === 'truncated'
+        ? 'Solo se guardaron los últimos ' + GAP_BUFFER_SECONDS + ' s'
+        : '';
 }
 export function audioNote(r) {
     // Three of these mean nobody was listening when the reply arrived; the room keeps it and repeats it when

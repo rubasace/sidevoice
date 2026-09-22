@@ -74,13 +74,13 @@ test("once the transcript arrives the bubble becomes the text and the waveform g
   expect(screen.getByText("Estoy diciendo esto")).toBeInTheDocument();
 });
 
-test("says under the bubble that a message was captured while there was no connection", () => {
+test("says under a bubble only what the gap cost: what was cut is said, what arrived whole says nothing", () => {
   render(<MessageList conversation={view([
-    message({ segment: "call:user-catchup:1", role: "user", name: "Tú", text: "Lo dije mientras se caía la sala", offline: "buffered", offlineNote: "Capturado sin conexión" }),
-    message({ segment: "call:user-catchup:2", role: "user", name: "Tú", text: "Y esto se cortó", time: base + 1_000, offline: "truncated", offlineNote: "Capturado sin conexión · solo se guardaron los últimos 30 s" }),
+    message({ segment: "call:user-catchup:1", role: "user", name: "Tú", text: "Lo dije mientras se caía la sala", offline: "buffered", offlineNote: "" }),
+    message({ segment: "call:user-catchup:2", role: "user", name: "Tú", text: "Y esto se cortó", time: base + 1_000, offline: "truncated", offlineNote: "Solo se guardaron los últimos 30 s" }),
   ])} />);
-  expect(screen.getByText("Capturado sin conexión")).toBeInTheDocument();
-  expect(screen.getByText("Capturado sin conexión · solo se guardaron los últimos 30 s")).toBeInTheDocument();
+  expect(screen.queryByText(/Capturado/)).toBeNull();
+  expect(screen.getByText("Solo se guardaron los últimos 30 s")).toBeInTheDocument();
 });
 
 test("says under the bubble that a reply is being repeated because this browser never heard it", () => {
