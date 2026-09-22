@@ -101,7 +101,7 @@ class RoomClient:
         self.active = None
         self.quiet_until = 0
         self.dispatch_timer = None
-        self.audio_grace_seconds = 2.0
+        self.audio_grace_seconds = 1.0
         # Which conversation this browser talks to is this browser's own state (issue: the room
         # used to hold one selection for everyone). The room only routes.
         self.target = {}

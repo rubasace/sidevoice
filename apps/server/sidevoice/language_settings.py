@@ -41,7 +41,7 @@ class LanguageSettings(BaseModel):
     english_voice: Literal['inherit', 'af_heart', 'af_bella', 'bf_emma', 'bm_george'] = 'af_heart'
     default_tts_language: Literal['es', 'en', 'fr', 'it', 'pt', 'hi'] = 'es'
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
-    audio_grace_seconds: float = Field(default=2.0, ge=0, le=10)
+    audio_grace_seconds: float = Field(default=1.0, ge=0, le=10)
     # How far back a browser that comes back is played what it never heard (0 is off). This is a
     # preference a person perceives and chooses — how much of the last minutes they want repeated in
     # the car — so it belongs to the device, unlike the detector's tuning, which is the room's.
