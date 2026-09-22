@@ -31,7 +31,7 @@ test("the call bar carries the lights at its left edge and the models at its rig
   const models = document.getElementById("engine-column")!;
   expect(models.textContent).toMatch(/OpenAI · gpt-transcribe/);
   expect(models.textContent).toMatch(/ElevenLabs/);
-  expect(models.textContent).toMatch(/claude-opus-5 · esfuerzo high/);
+  expect(models.textContent).toMatch(/Opus 5 · esfuerzo high/);
   expect(models.querySelector(".engine-dot")).toBeNull();
   expect(models.textContent).not.toMatch(/smart-turn/);
 });

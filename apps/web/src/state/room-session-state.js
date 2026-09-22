@@ -103,6 +103,20 @@ export function engineView(s) {
     return { text: base ? base + OUTPUT_MARKS[s.outputHealth] : '', title: base ? base + ' · ' + OUTPUT_TITLES[s.outputHealth] : '', output: s.outputHealth };
 }
 const VOICE_LABELS = { kokoro: 'Kokoro · en este navegador' };
+const capitalize = word => word.charAt(0).toUpperCase() + word.slice(1);
+/** The model a conversation thinks with, said the way a person says it: the family and its version,
+ *  without the vendor prefix or the build date (`claude-fable-5-1` → `Fable 5.1`, `gpt-5.6-terra` →
+ *  `GPT-5.6 Terra`). A name we cannot read is shown exactly as it came — never guessed at, never cut. */
+export function shortModel(name) {
+    const raw = String(name || '').trim();
+    const claude = /^claude-([a-z]+)-(\d+(?:-\d+)*?)(?:-\d{6,})?$/.exec(raw);
+    if (claude)
+        return capitalize(claude[1]) + ' ' + claude[2].replace(/-/g, '.');
+    const gpt = /^gpt-([\d.]+)(?:-(.+))?$/.exec(raw);
+    if (gpt)
+        return 'GPT-' + gpt[1] + (gpt[2] ? ' ' + gpt[2].split('-').map(capitalize).join(' ') : '');
+    return raw;
+}
 /** Who is answering: one row per model, and the agent's own when its harness could read it. No row for
  *  anything that is not a choice — how a turn ends is the room's and the same for everyone. */
 export function enginePanel(s) {
@@ -121,7 +135,7 @@ export function enginePanel(s) {
     const engine = s.people?.find(person => person.thread_id === selectedThread(s))?.engine;
     if (engine?.model)
         rows.push({ id: 'agent', label: 'Piensa',
-            value: [engine.model, engine.effort && 'esfuerzo ' + engine.effort].filter(Boolean).join(' · '),
+            value: [shortModel(engine.model), engine.effort && 'esfuerzo ' + engine.effort].filter(Boolean).join(' · '),
             state: 'ok', note: '' });
     return rows;
 }
@@ -192,6 +206,7 @@ export function participantsView(s) {
         return { threadId: p.thread_id, title: p.title, selected: p.thread_id === selected, available: !!p.available, switching: s.switching,
             unread, reach, stateLabel: unread && reach !== 'listening' ? base + ' · ' + unread + ' nuevas' : base, subtitle, working: busy,
             machine: p.machine?.host || null, machineId: p.machine?.id || null, harness: p.harness || null,
+            model: p.engine?.model ? shortModel(p.engine.model) : null,
             activityNote: workingCapabilityNote(p), detail: p.reach?.detail ? (p.reach.detail + (p.reach.remedy ? '\n\n' + p.reach.remedy : '')) : undefined };
     });
 }

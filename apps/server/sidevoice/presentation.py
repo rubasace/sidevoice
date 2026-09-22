@@ -315,6 +315,8 @@ def mount_presentation(app):
                  'harness': b.get('harness'), 'available': b['connected'],
                  'machine': {'id': b.get('connector'), 'host': hosts.get(b.get('connector'))},
                  'capabilities': b.get('capabilities'),
+                 # What it thinks with, as its harness records it; absent while no harness has said.
+                 'engine': b.get('engine'),
                  'reach': reach(b),
                  'selected': b['thread'] == current.get('thread_id')} for b in entries]
 

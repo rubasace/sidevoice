@@ -119,6 +119,10 @@ def mount_connector_socketio(app, control):
     async def input_working(sid, data):
         await control.working(await speaker(sid), data or {})
 
+    @server.on('input.engine', namespace=NAMESPACE)
+    async def input_engine(sid, data):
+        await control.engine(await speaker(sid), data or {})
+
     @server.on('input.read', namespace=NAMESPACE)
     async def input_read(sid, data):
         await control.read(await speaker(sid), data or {})
