@@ -16,6 +16,7 @@ export function MessageBubble({ message, position, showName }: { message: ChatMe
         {delivery && <span className="receipt delivery" data-state={delivery} title={receiptView(delivery).label} aria-label={receiptView(delivery).label}>{receiptView(delivery).symbol}</span>}
       </div>
       {message.offlineNote && <span className="chat-audio-note">{message.offlineNote}</span>}
+      {message.deliveryNote && <span className="chat-audio-note">{message.deliveryNote}</span>}
       {message.replayNote && <span className="chat-audio-note">{message.replayNote}</span>}
       {message.audioNote && <span className="chat-audio-note">{message.audioNote}</span>}
     </article>

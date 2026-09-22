@@ -197,6 +197,9 @@ class ConnectorControl:
         # Nothing here watches the clock on a delivery already asked: the acknowledgement's budget
         # is the peer's to keep, and `settle` is what hears it run out. One clock, one owner.
         now = now if now is not None else time.time()
+        # What the room has held too long stops being input before anything is chosen to send.
+        for row in self.journal.expire_pending(now):
+            self.hub.delivery_status(row['id'], 'not_sent')
         for row in self.journal.pending(now):
             binding = self.journal.binding_for_thread(row['thread'])
             if not binding or binding['id'] in self.inflight:

@@ -181,9 +181,12 @@ export function orderedHistory(s, id) { return s.history.filter(r => r.thread ==
 export function unreadCount(s, id) { return s.history.filter(r => r.thread === id && r.role === 'assistant' && r.seq > (s.roomSeen[id] || 0)).length; }
 export function conversationView(s) {
     const id = viewedThread(s), own = s.userTurn?.thread === id, activeDraft = own ? s.sessionId + ':' + s.userTurn.key : null;
-    const records = orderedHistory(s, id);
+    // A browser outside the room reads no transcript. What was said belongs to the call, and showing it
+    // to somebody who has not joined put the last thing they said, undelivered, on an empty page. The
+    // session, not the socket: a reconnection must not blank the transcript somebody is reading.
+    const records = s.sessionId ? orderedHistory(s, id) : [];
     return { messages: records.map(r => ({ ...r, cancellable: !!activeDraft && !s.cancelledInput && r.draft === true && r.segment === activeDraft,
-            audioNote: audioNote(r), offlineNote: offlineNote(r), replayNote: r.role === 'assistant' ? REPLAY_NOTES[s.replayMarks[r.segment]] || '' : '',
+            audioNote: audioNote(r), offlineNote: offlineNote(r), deliveryNote: deliveryNote(r), replayNote: r.role === 'assistant' ? REPLAY_NOTES[s.replayMarks[r.segment]] || '' : '',
             playback: playbackState(r, s), karaoke: s.karaokeState?.segment === r.segment ? s.karaokeState : null })),
         pendingText: own ? s.pendingUserText : '', pendingPhase: own && !s.cancelledInput ? s.pendingPhase : '',
         pendingCancellable: own && !s.cancelledInput, working: working(s, id) };
@@ -309,6 +312,15 @@ export function createRoomSessionStore(seed = {}) {
             publish();
         } },
     };
+}
+/** Input that never reached the conversation, said plainly under it. The tick beside the clock is for
+ *  the ordinary path; a message that will never arrive is not a shade of delivered. */
+export function deliveryNote(r) {
+    if (r.role !== 'user' || r.status !== 'not_sent')
+        return '';
+    return r.audio_reason === 'expired'
+        ? 'No llegó a la conversación: la máquina no volvió a tiempo'
+        : 'No llegó a la conversación';
 }
 export function offlineNote(r) {
     // Only what changes the reading of it: a message the gap buffer had to cut is incomplete and says so.

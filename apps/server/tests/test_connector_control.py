@@ -349,6 +349,31 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.control.detach(self.connector_id, peer)
         self.assertIn('sess-1', self.hub.cleared, 'the work is put out with the connection')
 
+    async def test_input_the_room_held_too_long_is_never_delivered(self):
+        """A machine that drops and comes back loses nothing: that is what the outbox is for. But an hour
+        later the same sentence is not something to answer, and the room says it gave up rather than
+        handing it over as if it had just been said."""
+        from sidevoice import room_history
+        binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
+        peer = await self.attach()
+        self.control.live[binding['id']] = self.connector_id
+        row = self.queue_input('sess-1', 'lo dije cuando no estabas')
+        self.journal.get(row['id'])
+        # Said one second inside the window, and then one second outside it.
+        now = time.time() + room_history.PENDING_TTL - 1
+        self.assertEqual(self.journal.expire_pending(now), [], 'nothing is given up on while it is worth holding')
+        self.assertEqual(self.journal.get(row['id'])['status'], 'pending')
+        now += 2
+        # The tick gives up on it before it chooses anything to send, and the browser that said it hears
+        # about it: nothing is dropped in silence.
+        await self.control.tick(now)
+        self.assertEqual(self.journal.get(row['id'])['status'], 'not_sent')
+        self.assertEqual(self.journal.get(row['id'])['audio_reason'], 'expired')
+        self.assertIn((row['id'], 'not_sent'), self.hub.receipts)
+        self.assertEqual(self.journal.pending(now), [], 'and it is never chosen for delivery again')
+        self.assertEqual(self.control.inflight, {}, 'nor sent by the very tick that gave up on it')
+        self.control.detach(self.connector_id, peer)
+
     async def test_speech_lands_in_room_only_from_owning_connector(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
         self.control.live[binding['id']] = self.connector_id

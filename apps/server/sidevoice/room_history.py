@@ -19,6 +19,11 @@ from pathlib import Path
 
 # Seconds before the next delivery attempt after the n-th failure; the last value repeats.
 RETRY_BACKOFF = (2, 5, 15, 60)
+# How long the room keeps holding a message for a conversation that is not there. A connector that
+# drops and comes back inside this window loses nothing, which is what the outbox is for; past it the
+# sentence has stopped being something to answer and become something said long ago to somebody who
+# was not listening, so it is never delivered (#41).
+PENDING_TTL = int(os.environ.get('VOICE_INPUT_TTL_SECONDS') or 600)
 HISTORY_KEYS = ('seq', 'id', 'thread', 'role', 'text', 'name', 'session', 'revision', 'time', 'status',
                 'audio_reason', 'offline')
 # What a machine says about itself, and how much of it is kept. `harnesses` is a list; the rest is text.
@@ -112,7 +117,9 @@ class RoomHistory:
         row = {'seq': self.seq, 'id': id, 'thread': thread, 'role': role, 'text': text, 'name': name, 'session': session,
                'revision': revision, 'time': int(at) if at else int(time.time() * 1000), 'status': status,
                'language': language, 'offline': offline,
-               'payload': json.dumps(payload) if payload else None, 'audio_reason': None, 'attempts': 0, 'next_attempt': 0}
+               'payload': json.dumps(payload) if payload else None, 'audio_reason': None, 'attempts': 0, 'next_attempt': 0,
+               # The room's own clock, for the outbox: `time` is the speaker's and may be anything.
+               'queued_at': int(time.time())}
         self.messages[id] = row
         while len(self.messages) > self.MAX_MESSAGES:
             oldest = next(iter(self.messages))
@@ -155,6 +162,20 @@ class RoomHistory:
                 row['status'] = 'pending'
             elif row['role'] == 'assistant' and row['status'] in {'queued', 'synthesizing', 'playing', 'waiting_for_turn', 'waiting_for_pause'}:
                 row['status'], row['audio_reason'] = 'interrupted', 'service_restarted'
+
+    def expire_pending(self, now=None):
+        """Input the room has held for longer than it is worth holding. Returns the rows it gave up on,
+        so whoever asked can tell the browser that said them: nothing is dropped in silence."""
+        now = int(now if now is not None else time.time())
+        expired = []
+        for row in self.messages.values():
+            if row['role'] != 'user' or row['status'] != 'pending':
+                continue
+            if now - int(row.get('queued_at') or 0) < PENDING_TTL:
+                continue
+            row['status'], row['audio_reason'] = 'not_sent', 'expired'
+            expired.append(dict(row))
+        return expired
 
     def pending(self, now=None):
         now = int(now if now is not None else time.time())
