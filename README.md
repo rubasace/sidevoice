@@ -159,7 +159,7 @@ renders is paid for once and shared with everyone listening. See
 ## Architecture
 
 ```text
-Browser mic -> STT -> durable outbox (room) -> WebSocket -> connector (one per host)
+Browser mic -> STT -> durable outbox (room) -> Socket.IO -> connector (one per host)
                                                   -> Claude Code: the session's own inbox socket
                                                   -> Codex: `codex queue --thread <id>`
 

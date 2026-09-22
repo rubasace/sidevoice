@@ -33,7 +33,9 @@ npx -y @sidevoice/uplink@<version> install
 It pairs with nothing and takes no room address. It copies the package to
 `~/.local/share/sidevoice/<version>/` (`$XDG_DATA_HOME` respected) and registers **that copy, run with
 `node`** — never `npx` at session start: resolving a package is not something to do inside a harness's
-startup budget, and one session found no `sidevoice` binary at all on a cold cache. Running it twice
+startup budget, and one session found no `sidevoice` binary at all on a cold cache. The copy is one
+bundled file and a manifest, because the published package declares no runtime dependencies at all;
+installing it fetches nothing and runs no step of its own. Running it twice
 changes nothing and says so; running a **newer version** re-points the harness at the new copy and removes
 the old one, which is the whole upgrade. `--harness claude|codex` picks one when the machine has both.
 
@@ -68,13 +70,19 @@ The rest of this document is the same thing by hand, and what each step is for.
   it refuses anything that is not its own page, on purpose.
 - Pair this machine, either from a conversation (`voice_pair`, see above) or by hand:
   `npx -y @sidevoice/uplink@<version> pair <room-url> <code>`
-  This writes `~/.sidevoice/credentials.json` (mode 0600) and nothing else.
+  This writes `~/.sidevoice/credentials.json` (mode 0600) and nothing else: the room's address, the
+  credential, and the protocol version it was issued for. Which path and namespace carry the link is
+  the client's own knowledge and moves with its version.
+
+  **Upgrading to 0.5 means pairing again.** The link is Socket.IO now and the room speaks protocol 2
+  only; a credential from an earlier client is refused with a message that says exactly this, which
+  `voice_connect` relays and the connector writes to `~/.sidevoice/connector.log`.
 
 ## Claude Code
 
 1. Register the MCP server for the user (not the project), pointing at an installed copy of the package
    (what `install` does; `npx` here would resolve the package at every session start):
-   `claude mcp add --scope user sidevoice -- node ~/.local/share/sidevoice/<version>/cli.mjs mcp`
+   `claude mcp add --scope user sidevoice -- node ~/.local/share/sidevoice/<version>/dist/cli.mjs mcp`
 2. Install the skill: copy `skills/voice-presentation/SKILL.md` from this
    repository to `~/.claude/skills/voice-presentation/SKILL.md`.
 3. Verify in a **new** Claude Code session: ask it to "connect this conversation
