@@ -298,6 +298,17 @@ def mount_presentation(app):
     async def state(session_id: str | None = None):
         return hub.snapshot(session_id)
 
+    @app.get('/api/presentation/admission')
+    async def admission():
+        """Why the room would refuse a browser right now.
+
+        A refusal travels in a frame and in a close code, and a proxy can lose both — the page then
+        shows its own generic sentence while the room had written the real one (#63). This is the
+        third way, and the one nothing in between rewrites: a page whose socket closed before it had
+        a session asks here and reads what the room would have told it.
+        """
+        return hub.admission()
+
     @app.get('/api/presentation/latency')
     async def latency(session_id: str | None = None):
         # A latency trace is one browser's own measurements; nobody else's are returned.

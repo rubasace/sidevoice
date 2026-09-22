@@ -186,8 +186,10 @@ unnecessary and it is kept only as the fallback reference.
 
 ## Known limitations
 
-- One room, bounded to `Room.MAX_CLIENTS` browsers at a time; a browser over the
-  limit is refused with a stated reason and disturbs nothing already connected.
+- One room, bounded to `Room.MAX_CLIENTS` browsers at a time; a browser over the limit is refused with a stated reason
+  and disturbs nothing already connected. The reason is said three ways — a frame,
+  the close code, and `/api/presentation/admission` for a page that received
+  neither through its proxy — because a tunnel loses the first two.
   Claude Code delivery is verified end to end; Codex delivery through
   `codex queue` is verified for the CLI path only until checked against Codex
   Desktop.

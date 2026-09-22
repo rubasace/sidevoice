@@ -663,6 +663,9 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         await browser_call(refused)
         error = await self.received(refused, 'error')
         self.assertIn('maximum number of browsers', error['data']['message'])
+        # The frame names the reason as well as saying it, so a page whose proxy kept the sentence
+        # but lost the close code still knows which sentence of its own to show (#63).
+        self.assertEqual(error['data']['reason'], 'room_is_full')
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
         self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
         self.assertTrue(all(client.connected for _, _, client in joined))

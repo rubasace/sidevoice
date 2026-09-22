@@ -439,6 +439,11 @@ class Room:
     """One conversation, one journal, one epoch — and as many browsers as people looking."""
 
     MAX_CLIENTS = 8
+    # What a browser over the limit is refused with, written once. The socket says it in a frame and
+    # in a close code, and the admission endpoint says it again to a page that received neither
+    # through its proxy (#63): three ways out, one sentence, and one name for the reason so a page
+    # can say it in its own language when only the name survived the trip.
+    FULL_MESSAGE = 'The room already has the maximum number of browsers connected.'
     MAX_UTTERANCES = 2048
     MAX_PENDING = 16
     # How many missed replies one browser is handed when it comes back. Coming out of a tunnel is
@@ -470,12 +475,19 @@ class Room:
         if client.id in self.clients:
             return client
         if len(self.clients) >= self.MAX_CLIENTS:
-            raise RuntimeError('The room already has the maximum number of browsers connected.')
+            raise RuntimeError(self.FULL_MESSAGE)
         client.room = self
         self.clients[client.id] = client
         if client.id not in self.sessions:
             self.sessions.append(client.id)
         return client
+
+    def admission(self):
+        """Whether one more browser would be let in right now, and what it would be told if not."""
+        full = len(self.clients) >= self.MAX_CLIENTS
+        return {'admitted': not full, 'reason': 'room_is_full' if full else None,
+                'message': self.FULL_MESSAGE if full else None,
+                'clients': len(self.clients), 'max': self.MAX_CLIENTS}
 
     def leave(self, client):
         client.connected = False

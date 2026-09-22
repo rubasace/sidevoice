@@ -62,11 +62,18 @@ def prior_sessions(value):
 
 
 async def room_is_full(websocket):
-    """Refusing one browser is not tearing the room down for the ones already in it."""
-    if len(hub.clients) < hub.MAX_CLIENTS:
+    """Refusing one browser is not tearing the room down for the ones already in it.
+
+    The reason is said twice — a frame, then the close code — and a tunnel can lose both: a phone
+    read only the page's own "la sala rechazó la conexión" while this sentence was written for it
+    (2026-09-22). The page asks `/api/presentation/admission` when neither arrived; the sentence and
+    the name of the reason are the room's, in one place, so all three say the same thing.
+    """
+    admission = hub.admission()
+    if admission['admitted']:
         return False
     await websocket.send_text(json.dumps({'type': 'error', 'data': {
-        'message': 'The room already has the maximum number of browsers connected.'}}))
+        'message': admission['message'], 'reason': admission['reason']}}))
     await websocket.close(code=1013)  # Try again later.
     return True
 

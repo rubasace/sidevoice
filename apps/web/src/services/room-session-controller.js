@@ -880,8 +880,36 @@ function measureMic(samples,enabled){
 }
 function startMeter(rate){try{audioContext=window.roomVoice?.context||roomAudioContext(rate);analyser=audioContext.createAnalyser();analyser.fftSize=1024;micSource=audioContext.createMediaStreamSource(state.stream);micSource.connect(analyser);const data=new Float32Array(1024);let clipUntil=0,lastWave=0;function tick(){if(!analyser)return;analyser.getFloatTimeDomainData(data);const enabled=!!state.stream?.getAudioTracks()[0]?.enabled,level=measureMic(data,enabled);if(level.signal==='clip')clipUntil=Date.now()+600;const signal=enabled&&Date.now()<clipUntil?'clip':level.state;$('mute').style.setProperty('--mic-fill',level.value+'%');const meter=$('mic-level-meter'),mic=$('mic-control');mic.dataset.signal=signal;if(Date.now()-lastWave>=80){updateWave(level.value);lastWave=Date.now()}meter.setAttribute('aria-valuenow',String(level.value));const description=signal==='clip'?'Posible saturación del micrófono':signal==='high'?'Nivel de micrófono alto':'Nivel de micrófono';if(meter.dataset.signal!==signal){meter.dataset.signal=signal;meter.setAttribute('title',description);meter.setAttribute('aria-label',description)}meterFrame=requestAnimationFrame(tick)}tick()}catch{}}
 function roomSocketUrl(){return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/presentation/ws'}
+const ROOM_IS_FULL='La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.';
+/* Why the room refused, asked of the room itself over an ordinary request.
+ * The room says it twice on the socket — an error frame, then the close code 1013 — and a tunnel
+ * can lose both: a phone read only «La sala rechazó la conexión» while the room had written that it
+ * was full, and restarting the room was what let it in (#63). An HTTP request is the one path no
+ * proxy rewrites. `null` means the room could not be reached at all, which is a different sentence.
+ * A seat freed between the refusal and this question makes the room say it would admit us now; that
+ * is a truthful answer to a question asked a moment too late, and it costs only the generic line. */
+async function roomRefusal(){try{const answer=await fetch('/api/presentation/admission',{cache:'no-store'});if(!answer.ok)return null;const admission=await answer.json();return admission&&typeof admission==='object'?admission:{}}catch{return null}}
+function refusalText(admission,broken){
+ if(admission===null)return 'No se pudo conectar con la sala';
+ if(admission.reason==='room_is_full')return ROOM_IS_FULL;   // the room's reason, in this page's language
+ if(admission.admitted===false&&admission.message)return admission.message;
+ return broken?'No se pudo conectar con la sala':'La sala rechazó la conexión';
+}
 // The room speaks first: its call id and the PCM format it expects. Anything else arriving meanwhile is an ordinary room event.
-function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>fail('La sala no respondió'),10000),refusal=null;socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));socket.onerror=()=>fail('No se pudo conectar con la sala');socket.onclose=event=>fail(event?.code===1013?'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.':refusal||'La sala rechazó la conexión');socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});noteJoinPreparation(m.data||{});return}if(m.type!=='voice-session'){if(m.type==='error')refusal=m.data?.message||m.data?.error||refusal;message(e.data);return}state.roomInfo=m.data?.room||state.roomInfo;clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
+function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>fail('La sala no respondió'),10000),refusal=null,refused=null,broken=false;socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));
+ // An error event is always followed by a close event, and the close is the one that can find out
+ // why: failing here would answer «no se pudo conectar» to a room that knows it is full.
+ socket.onerror=()=>{broken=true};
+ socket.onclose=event=>{clearTimeout(timer);timer=null;
+  // However the reason arrived — the close code, the frame's own name for it, the frame's sentence —
+  // the person reads one sentence for one reason.
+  if(event?.code===1013||refused==='room_is_full')return fail(ROOM_IS_FULL);
+  if(refusal)return fail(refusal);
+  // The question keeps a short patience of its own: a room that does not answer it cannot say why
+  // either, and nobody is left looking at a join line while a request hangs.
+  timer=setTimeout(()=>fail('La sala rechazó la conexión'),3000);
+  roomRefusal().then(admission=>fail(refusalText(admission,broken)))};
+ socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});noteJoinPreparation(m.data||{});return}if(m.type!=='voice-session'){if(m.type==='error'){refusal=m.data?.message||m.data?.error||refusal;refused=m.data?.reason||refused}message(e.data,socket);return}state.roomInfo=m.data?.room||state.roomInfo;clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
 // Capturing at the room's rate lets the browser resample; the worklet covers browsers that refuse the rate.
 function roomAudioContext(rate){try{return new AudioContext({sampleRate:rate})}catch{return new AudioContext()}}
 async function startCapture(socket,session){if(!micSource)throw Error('No se pudo capturar el micrófono');

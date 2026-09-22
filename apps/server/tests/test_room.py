@@ -295,6 +295,21 @@ class MultiClientRoomTests(RoomFixture):
         self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
         self.assertTrue(all(client.connected for client in clients))
 
+    async def test_the_room_says_whether_it_would_admit_a_browser_and_why_not(self):
+        # A refusal travels in a frame and in a close code, and a proxy loses both: this is the answer
+        # the page that was refused asks for over plain HTTP (#63).
+        free = self.hub.admission()
+        self.assertEqual((free['admitted'], free['reason'], free['message']), (True, None, None))
+        self.assertEqual((free['clients'], free['max']), (len(self.hub.clients), self.hub.MAX_CLIENTS))
+        while len(self.hub.clients) < self.hub.MAX_CLIENTS:
+            self.browser('client-%d' % len(self.hub.clients))
+        full = self.hub.admission()
+        self.assertEqual((full['admitted'], full['reason']), (False, 'room_is_full'))
+        self.assertEqual(full['message'], self.hub.FULL_MESSAGE, 'one sentence, written in one place')
+        with self.assertRaises(RuntimeError) as refused:
+            self.browser('one-too-many')
+        self.assertEqual(str(refused.exception), full['message'], 'and the socket refuses with that same one')
+
     # ----- audio the room pays for -----
 
     async def test_paid_synthesis_happens_once_per_utterance_and_is_fanned_out(self):

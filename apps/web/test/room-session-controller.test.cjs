@@ -572,6 +572,9 @@ test('The room speaks first: the page adopts its call id and treats anything ear
  assert.equal(s.run("$('voice-loading').open"),false);
  socket.onmessage({data:JSON.stringify({type:'voice-session',data:{session_id:'call-1',sample_rate:16000,channels:1}})});
  assert.deepEqual(await session,{session_id:'call-1',sample_rate:16000,channels:1});
+ // A close that says nothing: the page asks the room, and a room that would have admitted it says
+ // nothing more than that the connection was refused (#63).
+ s.context.fetch=async()=>({ok:true,json:async()=>({admitted:true,reason:null,message:null,clients:1,max:8})});
  const refused={send(){}};const rejection=s.run('openSession')(refused);refused.onclose();
  await assert.rejects(rejection,{message:'La sala rechazó la conexión'});
 });
@@ -1290,17 +1293,18 @@ test('The echo light says whether the page can expect its own voice to be cancel
 
 /* One indicator from the tap to the room: these two tests are the sequence a person reads, and what
  * takes its place when a step fails. */
-function joining(s,{preferences={},capabilities={webgpu:false,wasm:true,models:['onnx-community/whisper-tiny']},prepareVoice,prepareWhisper,getUserMedia}={}){
+function joining(s,{preferences={},capabilities={webgpu:false,wasm:true,models:['onnx-community/whisper-tiny']},prepareVoice,prepareWhisper,getUserMedia,admission={admitted:true,reason:null,message:null,clients:1,max:8}}={}){
  const published=[],sockets=[],track={enabled:true,stop(){},getSettings:()=>({echoCancellation:true}),applyConstraints:async()=>{}};
  s.context.window.sidevoiceUI=new Proxy({},{get:(_,name)=>value=>{if(name==='setJoinStatus')published.push(value?value.text:null)}});
  s.context.crypto={randomUUID:()=>'hello-id'};
  s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
  s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
  s.context.WebSocket.OPEN=1;
- s.context.fetch=async path=>({ok:true,json:async()=>
-  path.includes('/languages')?{stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',stt_device:'auto',default_model:'kokoro',tts_device:'auto',...preferences}
+ s.context.fetch=async path=>{if(admission==='unreachable'&&path.includes('/admission'))throw Error('Failed to fetch');return {ok:true,json:async()=>
+  path.includes('/admission')?admission
+  :path.includes('/languages')?{stt_provider:'browser',stt_model:'onnx-community/whisper-tiny',stt_device:'auto',default_model:'kokoro',tts_device:'auto',...preferences}
   :path.includes('/participants')?{participants:[{thread_id:'t-1',title:'Astra',available:true,reach:{state:'listening'}}]}
-  :{binding:null,room:{revision:0},clients:[],call:null,participants:[]}});
+  :{binding:null,room:{revision:0},clients:[],call:null,participants:[]}}};
  s.context.window.roomVoice={unlock:async()=>{},cancel(){},prepare:prepareVoice||(async()=>{s.handlers['voice-preparation']({detail:{phase:'loading',progress:42}})})};
  s.context.window.roomTranscription={capabilities:async()=>capabilities,start(){},stop(){},
   prepare:prepareWhisper||(async({model})=>{s.handlers['voice-preparation']({detail:{kind:'transcription',phase:'loading',progress:17}});return {model,device:'wasm'}})};
@@ -1348,6 +1352,40 @@ test('A step that fails leaves its reason, and what to do, where the step was',a
  socket.onclose({code:1013});
  await joined;
  assert.equal(room.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.');
+});
+
+/* What the room wrote must reach the person, and a tunnel keeps none of it: the close arrived without
+ * the 1013 the room closed with, and the error frame it sent just before never came (#63). */
+test('Somebody the room refuses reads the room\'s own reason, not the page\'s guess',async()=>{
+ const full=setup({strictDOM:true});
+ const room=joining(full,{admission:{admitted:false,reason:'room_is_full',
+  message:'The room already has the maximum number of browsers connected.',clients:8,max:8}});
+ const joined=room.tap();
+ const socket=await firstSocket(room.sockets);
+ socket.onerror();socket.onclose({code:1006});   // everything the socket could have said, lost on the way
+ await joined;
+ assert.equal(room.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.',
+  'the reason came from the room, asked over a request no proxy rewrites');
+
+ // The frame that does arrive says the same thing, by name: one reason, one sentence.
+ const told=setup({strictDOM:true});
+ const framed=joining(told);
+ const tellJoined=framed.tap();
+ const telling=await firstSocket(framed.sockets);
+ telling.onmessage({data:JSON.stringify({type:'error',data:{reason:'room_is_full',
+  message:'The room already has the maximum number of browsers connected.'}})});
+ telling.onclose({code:1006});
+ await tellJoined;
+ assert.equal(framed.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.');
+
+ // A room that answers nothing at all is not a room that refused: the page says which it was.
+ const gone=setup({strictDOM:true});
+ const away=joining(gone,{admission:'unreachable'});
+ const awayJoined=away.tap();
+ const lost=await firstSocket(away.sockets);
+ lost.onerror();lost.onclose({code:1006});
+ await awayJoined;
+ assert.equal(away.published.at(-1),'No se pudo conectar con la sala.');
 });
 
 test('The page answers when the room asks whether anybody is still there',()=>{
