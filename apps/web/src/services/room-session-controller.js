@@ -321,7 +321,12 @@ async function refreshHistory() { try {
     }
 }
 catch { } }
-$('pair-connector').onclick=async()=>{try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;$('pair-code').hidden=false;$('pair-help').hidden=false}catch(e){setRoomError(e.message||'No se pudo generar el código')}}
+let pairTimer=null;
+function showPairingCountdown(deadline){clearInterval(pairTimer);const tick=()=>{const left=Math.max(0,Math.round((deadline-Date.now())/1000));$('pair-expires').textContent=left>0?'Caduca en '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0'):'Código caducado';$('pair-code').dataset.expired=left>0?'':'true';if(left<=0)clearInterval(pairTimer)};tick();pairTimer=setInterval(tick,1000)}
+async function freshPairingCode(){try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;showPairingCountdown(Date.now()+(r.expires_in||180)*1000);return true}catch(e){setRoomError(e.message||'No se pudo generar el código');return false}}
+$('pair-connector').onclick=async()=>{if(await freshPairingCode()&&!$('pair-dialog').open)$('pair-dialog').showModal()};
+$('pair-refresh').onclick=()=>{void freshPairingCode()};
+$('pair-close').onclick=()=>$('pair-dialog').close();$('pair-dialog').addEventListener('close',()=>{clearInterval(pairTimer);pairTimer=null});
 async function selectOnlyListeningConversation(){
  if(targetId()||state.switching||!state.ws)return false;
  const listening=state.people.filter(person=>person.available&&person.reach?.state==='listening');
