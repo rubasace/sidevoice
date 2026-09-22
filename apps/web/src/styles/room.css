@@ -150,3 +150,9 @@ dialog{width:min(480px,92vw);max-height:85dvh;overflow:auto;background:#222a34;c
 .key-field input{width:100%;padding-inline-end:36px}
 .key-field .key-clear{position:absolute;inset-block:0;inset-inline-end:4px;margin:auto;width:28px;height:28px;border-radius:8px;font-size:13px;line-height:1}
 .key-field .key-clear[disabled]{display:none}
+.machines{margin-top:22px;font-size:12px}.machines h3{font-size:12px;text-transform:uppercase;letter-spacing:1.3px;margin:0 0 12px;color:#aab6c4;font-weight:600}.machines>.muted{line-height:1.6;margin:10px 0 0}
+.machine-row{display:flex;align-items:flex-start;gap:8px;padding:10px;margin:6px 0;border:1px solid #2a3440;border-radius:12px;background:#141b23}.machine-row[data-state=revoked]{opacity:.62}
+.machine-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}.machine-name{font-weight:550;line-height:1.4;overflow-wrap:anywhere}.machine-detail{color:#a1acb9;line-height:1.5;overflow-wrap:anywhere}
+.machine-state{font-size:11px;color:#a8b5c4;margin-left:8px;white-space:nowrap}.machine-state[data-state=offline]{color:#8d9aa8}.machine-state[data-state=revoked]{color:#e0a0a0}
+.machine-state .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle;background:#5bbf8a}.machine-state[data-state=offline] .dot{background:#6b7885}.machine-state[data-state=revoked] .dot{background:#b96a6a}
+.machine-action,.machine-confirm button{flex:none;font-size:12px}.machine-confirm{display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:120px;text-align:right}.machine-confirm .muted{line-height:1.4}

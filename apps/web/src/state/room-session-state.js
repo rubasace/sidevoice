@@ -21,6 +21,7 @@ export function initialSessionFacts() {
         screenLock: { state: '', note: '' }, deviceNote: '', holding: false, userQuietAt: 0, liveNote: '',
         audioDevices: { inputs: [], outputs: [], inputId: 'default', outputId: 'default', available: true, outputAvailable: true, busy: false },
         harness: {}, turns: {}, now: 0, karaokeState: null, bootError: null, languageModels: [],
+        machines: [], machinesAt: 0, machineBusy: '',
     };
 }
 export function selectedThread(s) { return s.roomBinding?.thread_id || null; }
@@ -187,6 +188,40 @@ export function participantsView(s) {
             activityNote: workingCapabilityNote(p), detail: p.reach?.detail ? (p.reach.detail + (p.reach.remedy ? '\n\n' + p.reach.remedy : '')) : undefined };
     });
 }
+/** How long ago, said the way a person says it. The clock comes in with the facts — nothing here
+ *  reads one — so the same facts always render the same line. */
+export function sinceText(seconds, now) {
+    if (!seconds || !now)
+        return '';
+    const elapsed = Math.max(0, Math.round(now / 1000 - seconds));
+    if (elapsed < 90)
+        return 'hace un momento';
+    const minutes = Math.round(elapsed / 60);
+    if (minutes < 60)
+        return 'hace ' + minutes + ' min';
+    const hours = Math.round(minutes / 60);
+    if (hours < 24)
+        return 'hace ' + hours + ' h';
+    const days = Math.round(hours / 24);
+    return days === 1 ? 'hace 1 día' : 'hace ' + days + ' días';
+}
+/** The machines paired with this room, each as one row: what it is, whether it is here, and since
+ *  when. A machine whose pairing was revoked stays in the list saying so — a row that vanished
+ *  would leave whoever wonders why it went quiet with nothing to read. */
+export function machinesView(s) {
+    return (s.machines || []).map(m => {
+        const revoked = !!m.revoked;
+        const harnesses = Array.isArray(m.harnesses) ? m.harnesses : [];
+        return { id: m.id, host: m.host || 'Máquina sin nombre',
+            description: [m.platform, m.version, harnesses.join(' · ')].filter(Boolean).join(' · '),
+            harnesses, connected: !revoked && !!m.connected, revoked,
+            state: revoked ? 'revoked' : m.connected ? 'connected' : 'offline',
+            stateLabel: revoked ? 'Revocada' : m.connected ? 'Conectada' : 'Desconectada',
+            pairedLabel: sinceText(m.created, s.machinesAt) && 'Emparejada ' + sinceText(m.created, s.machinesAt),
+            seenLabel: sinceText(m.last_seen, s.machinesAt) && 'Vista ' + sinceText(m.last_seen, s.machinesAt),
+            busy: s.machineBusy === m.id };
+    });
+}
 export function liveText(s) {
     // A notice the runtime put there (the voice model loading, a saved preference, a server that did not
     // answer) speaks for the moment it belongs to; it is cleared when the call moves on, not overwritten
@@ -231,7 +266,7 @@ export function createRoomSessionStore(seed = {}) {
             join: joinView(facts), engine: engineView(facts), echo: echoCoverage({ ...facts.echoFacts, connected: !!facts.ws, track: !!facts.stream }), live: liveText(facts),
             mic: micView(facts), call: callView(facts), title: viewedTitle(facts), screenLock: facts.screenLock, deviceNote: facts.deviceNote,
             enginePanel: enginePanel(facts), capabilityPanel: capabilityPanel(facts),
-            audioDevices: facts.audioDevices,
+            audioDevices: facts.audioDevices, machines: machinesView(facts),
             bootError: facts.bootError, languageModels: facts.languageModels };
     }
     function publish() { if (depth || !dirty)

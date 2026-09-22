@@ -52,6 +52,24 @@ export interface ParticipantView {
   detail?: string;
 }
 
+/** One machine paired with this room, as its row reads. A revoked machine is still a row: it stays
+ *  in the list, saying so, until somebody takes it away. */
+export interface MachineView {
+  id: string;
+  host: string;
+  /** Operating system, connector version and harnesses, in one line — whatever of it the machine said. */
+  description: string;
+  harnesses: string[];
+  connected: boolean;
+  revoked: boolean;
+  state: "connected" | "offline" | "revoked";
+  stateLabel: string;
+  pairedLabel: string;
+  seenLabel: string;
+  /** The room is being asked to revoke or remove this one; its buttons wait. */
+  busy: boolean;
+}
+
 /** The step a join (or a reconnection) is on, already written the way the person reads it. */
 export interface JoinStatusView {
   step: string | null;
@@ -91,4 +109,7 @@ export interface SidevoiceActions {
   updateLanguageVoice(language: string, voice: string): void;
   updateLanguageSpeed(language: string, speed: number | null): void;
   previewVoice(language: string): Promise<void>;
+  /** Take this machine's pairing away from the room. Asked again on a machine already revoked, it
+   *  takes the row away too. */
+  revokeMachine(id: string): Promise<void>;
 }

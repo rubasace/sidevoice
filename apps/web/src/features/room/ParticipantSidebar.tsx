@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { MachineList } from "./MachineList";
 import { ParticipantList } from "./ParticipantList";
 
 export function ParticipantSidebar() {
@@ -11,6 +12,7 @@ export function ParticipantSidebar() {
         <code id="pair-code" hidden />
         <p className="muted" id="pair-help" hidden>Código válido 3 minutos, un solo uso. Dáselo al agente cuando pida emparejar; a mano: <code>sidevoice pair &lt;url de esta sala&gt; CÓDIGO</code></p>
       </div>
+      <MachineList />
     </aside>
   );
 }

@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationView, JoinStatusView, LanguageModelView, ParticipantView, KaraokeRange } from './room-types';
+import type { ChatMessage, ConversationView, JoinStatusView, LanguageModelView, MachineView, ParticipantView, KaraokeRange } from './room-types';
 export interface AudioDevices {
  inputs: {id: string; label: string}[]; outputs: {id: string; label: string}[];
  inputId: string; outputId: string; available: boolean; outputAvailable: boolean; busy: boolean;
@@ -18,6 +18,8 @@ export interface SessionFacts {
  audioDevices: AudioDevices; liveNote: string;
  harness: Record<string, boolean>; turns: Record<string, {session: string; thread: string; status?: string; settled?: boolean; harnessEnded?: boolean; readyAt?: number}>;
  now: number; karaokeState: (KaraokeRange & {segment: string}) | null; bootError: string | null; languageModels: LanguageModelView[];
+ /** The machines paired with this room, as the room last listed them, and the clock of that answer. */
+ machines: Record<string, unknown>[]; machinesAt: number; machineBusy: string;
 }
 export interface SessionStatus {
  speaker: 'user' | 'room' | 'nobody'; conversation: 'idle' | 'working' | 'speaking';
@@ -33,7 +35,7 @@ export interface SessionSnapshot {
  enginePanel: {id: string; label: string; value: string; state: 'ok' | 'warn' | 'fail'; note: string}[];
  capabilityPanel: {id: string; label: string; value: string; state: 'ok' | 'warn' | 'fail'; note: string}[];
  screenLock: {state: string; note: string}; deviceNote: string;
- bootError: string | null; languageModels: LanguageModelView[];
+ bootError: string | null; languageModels: LanguageModelView[]; machines: MachineView[];
 }
 export interface SessionStore {
  facts: SessionFacts;
@@ -44,3 +46,4 @@ export interface SessionStore {
 }
 export function createRoomSessionStore(seed?: Partial<SessionFacts>): SessionStore;
 export function receiptView(status: string): {symbol: string; label: string};
+export function sinceText(seconds: number | null | undefined, now: number): string;
