@@ -322,10 +322,12 @@ async function refreshHistory() { try {
 }
 catch { } }
 let pairTimer=null;
-function showPairingCountdown(deadline){clearInterval(pairTimer);const tick=()=>{const left=Math.max(0,Math.round((deadline-Date.now())/1000));$('pair-expires').textContent=left>0?'Caduca en '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0'):'Código caducado';$('pair-code').dataset.expired=left>0?'':'true';if(left<=0)clearInterval(pairTimer)};tick();pairTimer=setInterval(tick,1000)}
+function showPairingCountdown(deadline){clearInterval(pairTimer);const tick=()=>{const left=Math.max(0,Math.round((deadline-Date.now())/1000));$('pair-expires').textContent='Caduca en '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0');if(left<=0){clearInterval(pairTimer);pairTimer=null;if($('pair-dialog').open)void freshPairingCode()}};tick();pairTimer=setInterval(tick,1000)}
 async function freshPairingCode(){try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;showPairingCountdown(Date.now()+(r.expires_in||180)*1000);return true}catch(e){setRoomError(e.message||'No se pudo generar el código');return false}}
 $('pair-connector').onclick=async()=>{if(await freshPairingCode()&&!$('pair-dialog').open)$('pair-dialog').showModal()};
 $('pair-refresh').onclick=()=>{void freshPairingCode()};
+let pairCopied=null;
+$('pair-copy').onclick=async()=>{const code=$('pair-code').textContent;if(!code)return;try{await navigator.clipboard.writeText(code)}catch{setRoomError('No se pudo copiar el código');return}const meta=$('pair-expires');clearTimeout(pairCopied);const before=meta.textContent;meta.textContent='Copiado';pairCopied=setTimeout(()=>{if(meta.textContent==='Copiado')meta.textContent=before},1200)};
 $('pair-close').onclick=()=>$('pair-dialog').close();$('pair-dialog').addEventListener('close',()=>{clearInterval(pairTimer);pairTimer=null});
 async function selectOnlyListeningConversation(){
  if(targetId()||state.switching||!state.ws)return false;

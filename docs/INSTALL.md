@@ -46,7 +46,7 @@ It exits by itself 15 s after the last conversation leaves it, or you stop it an
 Pairing happens in the conversation, the first time it joins: ask the agent to connect to the room
 ("conéctate a la sala https://…", or the prompt `/mcp__sidevoice__voice-room` on Claude Code). If this machine is not paired with that room,
 `voice_connect` says so and the agent asks you for the one-time code the room shows under
-**Emparejar conector**; it redeems it with `voice_pair` and joins. The code is shown only to the
+**Emparejar máquina**; it redeems it with `voice_pair` and joins. The code is shown only to the
 person in the room and works once, within three minutes; the room does not hand it to any client that
 asks, and neither the installer nor the agent tries to get one. One room per machine for now: pairing
 with another room replaces the current pairing, and the agent says so before doing it.
@@ -65,7 +65,7 @@ The rest of this document is the same thing by hand, and what each step is for.
 
 - Check Node.js 22 or newer is on PATH: `node --version`.
 - **(from the user)** the room URL (for example `https://sidevoice.example`) and
-  a pairing code, which the user reads from the room UI ("Emparejar conector").
+  a pairing code, which the user reads from the room UI ("Emparejar máquina").
   Codes are twelve characters in three groups (no I, L, O or U, so they survive being read
   aloud), expire after three minutes, work once, and the room stops accepting attempts for ten
   minutes after ten wrong ones. Never request one from the room:

@@ -91,7 +91,7 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_credential_the_room_does_not_know_is_refused_with_what_to_do_about_it(self):
         with self.assertRaises(socketio.exceptions.ConnectionError) as refusal:
             await self.connect(token='not-the-token')
-        self.assertIn('Emparejar conector', self.reason(refusal.exception),
+        self.assertIn('Emparejar máquina', self.reason(refusal.exception),
                       'the message says where the code comes from, and reaches the client')
         self.assertEqual(self.control.peers, {}, 'a refused credential never reaches an event')
 
@@ -104,7 +104,7 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(socketio.exceptions.ConnectionError) as refusal:
             await self.connect()
         self.assertIn('revoked', self.reason(refusal.exception))
-        self.assertIn('Emparejar conector', self.reason(refusal.exception), 'and says how to come back')
+        self.assertIn('Emparejar máquina', self.reason(refusal.exception), 'and says how to come back')
         self.assertEqual(self.control.peers, {})
 
     async def test_the_handshake_carries_what_the_machine_says_about_itself(self):

@@ -309,8 +309,11 @@ def mount_presentation(app):
         current = client.target if client else {}
         entries = hub.control.participants() if hub.control else [{**b, 'connected': False} for b in hub.journal.bindings()]
         reach = hub.control.reachability if hub.control else (lambda b: {'state': 'offline', 'detail': None})
+        # A conversation runs on a machine; the row says which, by the name the machine gave when it paired.
+        hosts = {c['id']: c.get('host') for c in hub.journal.paired_connectors()}
         return [{'thread_id': b['thread'], 'title': b.get('title') or ('Conversation ' + b['thread'][:8]),
                  'harness': b.get('harness'), 'available': b['connected'],
+                 'machine': {'id': b.get('connector'), 'host': hosts.get(b.get('connector'))},
                  'capabilities': b.get('capabilities'),
                  'reach': reach(b),
                  'selected': b['thread'] == current.get('thread_id')} for b in entries]

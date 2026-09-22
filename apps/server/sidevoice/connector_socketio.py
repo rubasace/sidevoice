@@ -81,7 +81,7 @@ def mount_connector_socketio(app, control):
             raise ConnectionRefusedError(
                 REVOKED_REASON if control.journal.connector_credential(connector_id, token) == 'revoked' else
                 'This machine is not paired with the room, or its credential is no longer valid: '
-                'pair it again with the code the room shows under "Emparejar conector" (Pair a connector).')
+                'pair it again with the code the room shows under "Emparejar máquina" (Pair a machine).')
         if credential.get('protocol') != PROTOCOL:
             raise ConnectionRefusedError(
                 f'This connector speaks protocol {credential.get("protocol")!r} and the room speaks '

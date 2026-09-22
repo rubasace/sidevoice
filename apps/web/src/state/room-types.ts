@@ -50,6 +50,12 @@ export interface ParticipantView {
   /** Honest activity support: unsupported and unknown are different messages. */
   activityNote?: string | null;
   detail?: string;
+  /** The line under the title: machine, thinking, unread, and a reach that is not normal — never "listening". */
+  subtitle: string;
+  working: boolean;
+  /** The machine this conversation runs on, by the name it gave when it paired; null when unknown. */
+  machine?: string | null;
+  machineId?: string | null;
 }
 
 /** One machine paired with this room, as its row reads. A revoked machine is still a row: it stays
@@ -66,6 +72,12 @@ export interface MachineView {
   stateLabel: string;
   pairedLabel: string;
   seenLabel: string;
+  /** How many of the room's conversations run on this machine right now, and the line that says so. */
+  conversations: number;
+  conversationsLabel: string;
+  /** What the machine said it runs, for the row; the version goes in the details. */
+  platform: string;
+  version: string;
   /** The room is being asked to revoke or remove this one; its buttons wait. */
   busy: boolean;
 }

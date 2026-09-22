@@ -121,7 +121,7 @@ for Codex. Then, in a **new** conversation, ask the agent to join:
 > conéctate a la sala https://voice.example
 
 The first time, the agent asks you for the one-time code the room shows under
-**Emparejar conector**. Give it, and the conversation appears in the room. From
+**Emparejar máquina**. Give it, and the conversation appears in the room. From
 then on any conversation on that machine joins with the same sentence, or with
 the prompt `/mcp__sidevoice__voice-room` on Claude Code; nothing else to type.
 

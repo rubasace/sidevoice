@@ -120,7 +120,7 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         said = dict((event, data) for event, data in peer.sent)
         self.assertEqual([data['reason'] for event, data in peer.sent if event == 'binding.close'],
                          ['connector_revoked', 'connector_revoked'])
-        self.assertIn('Emparejar conector', said['connector.revoked']['reason'],
+        self.assertIn('Emparejar máquina', said['connector.revoked']['reason'],
                       'a connector told why stops asking, instead of reading a closed socket')
         self.assertEqual(self.journal.connector_credential(self.connector_id, self.token), 'revoked')
 

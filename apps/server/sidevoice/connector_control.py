@@ -76,7 +76,7 @@ class PairingRequest(BaseModel):
 
 
 REVOKED_REASON = ('The room revoked this machine\'s pairing: pair it again with the code the room shows '
-                  'under "Emparejar conector" (Pair a connector).')
+                  'under "Emparejar máquina" (Pair a machine).')
 
 
 class RedemptionLimit:

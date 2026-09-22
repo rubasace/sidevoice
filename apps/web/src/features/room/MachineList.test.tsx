@@ -27,10 +27,12 @@ test("a machine reads as a machine, and revoking asks first — in the row, neve
   const row = document.querySelector(".machine-row")!;
   expect(row.getAttribute("data-state")).toBe("connected");
   expect(row.textContent).toMatch(/macbook-pro/);
-  expect(row.textContent).toMatch(/macOS arm64 · 0\.5\.0 · claude/);
-  expect(row.textContent).toMatch(/Conectada/);
+  expect(row.textContent).toMatch(/macOS arm64/);       // what it runs and which connector: the row, in one line
+  expect(row.textContent).toMatch(/0\.5\.0/);
+  expect(row.textContent).not.toMatch(/Conectada|c-1/);   // the dot says connected; the rest waits to be asked
+  await act(async () => { screen.getByRole("button", { name: "Mostrar detalles de macbook-pro" }).click(); });
+  expect(row.textContent).toMatch(/Conectada · claude/);
   expect(row.textContent).toMatch(/Emparejada hace 1 día/);
-  expect(row.textContent).not.toMatch(/c-1/);
 
   // Asking does not revoke; confirming does, and nothing was left to `window.confirm`.
   const confirmSpy = vi.spyOn(window, "confirm");
@@ -48,11 +50,11 @@ test("a revoked machine stays listed, says so, and is removed by a second action
 
   const row = document.querySelector(".machine-row")!;
   expect(row.getAttribute("data-state")).toBe("revoked");
-  expect(row.textContent).toMatch(/Revocada/);
   expect(row.textContent).not.toMatch(/Conectada/);
   expect(document.getElementById("machines")!.textContent)
     .toMatch(/sigue en la lista hasta que la quitas/);
 
+  await act(async () => { screen.getByRole("button", { name: "Mostrar detalles de macbook-pro" }).click(); });
   await act(async () => { screen.getByRole("button", { name: "Quitar macbook-pro" }).click(); });
   await act(async () => { screen.getByRole("button", { name: "Sí, quitar" }).click(); });
   expect(revokeMachine).toHaveBeenCalledWith("c-1");

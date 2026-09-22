@@ -344,7 +344,7 @@ class ConnectorInteropTests(unittest.IsolatedAsyncioTestCase):
         log = data / 'connector.log'
         await until(lambda: log.exists() and 'will not be asked again' in log.read_text(), timeout=20)
         said = log.read_text()
-        self.assertIn('Emparejar conector', said, 'it says where the code comes from')
+        self.assertIn('Emparejar máquina', said, 'it says where the code comes from')
         attempts = said.count('will not be asked again')
         await asyncio.sleep(3)
         self.assertEqual(log.read_text().count('will not be asked again'), attempts,
