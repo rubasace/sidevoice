@@ -16,7 +16,7 @@ from loguru import logger
 # person at the other end to pair again.
 from socketio.exceptions import ConnectionRefusedError, TimeoutError as AcknowledgementTimeout
 
-from .connector_control import ConnectorPeer, HEARTBEAT_MISSES, PROTOCOL
+from .connector_control import REVOKED_REASON, ConnectorPeer, HEARTBEAT_MISSES, PROTOCOL
 
 # The route names the capability, not the transport: a machine reaches the room's connector link
 # here whatever carries it, so a change of transport moves no Ingress and no credential.
@@ -73,8 +73,13 @@ def mount_connector_socketio(app, control):
     async def connect(sid, environ, auth):
         credential = auth if isinstance(auth, dict) else {}
         connector_id, token = credential.get('connector_id'), credential.get('token')
-        if not control.journal.authenticate_connector(connector_id, token):
+        # A machine says who it is on every connection, not only when it was paired: the room keeps
+        # the latest, so the page shows what is true now rather than what was true months ago.
+        if not control.journal.authenticate_connector(connector_id, token, credential):
+            # A pairing the person took away is not a credential nobody recognises, and saying so is
+            # the difference between "pair this machine again" and "somebody revoked it on purpose".
             raise ConnectionRefusedError(
+                REVOKED_REASON if control.journal.connector_credential(connector_id, token) == 'revoked' else
                 'This machine is not paired with the room, or its credential is no longer valid: '
                 'pair it again with the code the room shows under "Emparejar conector" (Pair a connector).')
         if credential.get('protocol') != PROTOCOL:

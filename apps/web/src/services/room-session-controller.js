@@ -215,6 +215,7 @@ function historyThreadId(){return state.viewedThread||targetId()}
 
 async function api(path,options){const r=await fetch(path,options),d=await r.json();if(!r.ok)throw Error(d.detail||'No se pudo completar la operación');return d}
 const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+const remove=path=>api(path,{method:'DELETE'});
 
 /* What the microphone heard while the room was unreachable, said plainly. The person spoke to
  * nobody for a moment, and how much of it survived is a fact they are entitled to read. */
@@ -320,14 +321,23 @@ async function refreshHistory() { try {
     }
 }
 catch { } }
-$('pair-connector').onclick=async()=>{try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;$('pair-code').hidden=false;$('pair-help').hidden=false}catch(e){setRoomError(e.message||'No se pudo generar el código')}}
+let pairTimer=null;
+function showPairingCountdown(deadline){clearInterval(pairTimer);const tick=()=>{const left=Math.max(0,Math.round((deadline-Date.now())/1000));$('pair-expires').textContent=left>0?'Caduca en '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0'):'Código caducado';$('pair-code').dataset.expired=left>0?'':'true';if(left<=0)clearInterval(pairTimer)};tick();pairTimer=setInterval(tick,1000)}
+async function freshPairingCode(){try{const r=await post('/api/connectors/pairing-code',{});$('pair-code').textContent=r.code;showPairingCountdown(Date.now()+(r.expires_in||180)*1000);return true}catch(e){setRoomError(e.message||'No se pudo generar el código');return false}}
+$('pair-connector').onclick=async()=>{if(await freshPairingCode()&&!$('pair-dialog').open)$('pair-dialog').showModal()};
+$('pair-refresh').onclick=()=>{void freshPairingCode()};
+$('pair-close').onclick=()=>$('pair-dialog').close();$('pair-dialog').addEventListener('close',()=>{clearInterval(pairTimer);pairTimer=null});
 async function selectOnlyListeningConversation(){
  if(targetId()||state.switching||!state.ws)return false;
  const listening=state.people.filter(person=>person.available&&person.reach?.state==='listening');
  if(listening.length!==1)return false;
  await select(listening[0].thread_id);return true;
 }
-async function refreshPeople(){try{const data=await api(roomQuery('/api/presentation/participants'));state.people=data.participants;await reselectRemembered()||await selectOnlyListeningConversation()}catch{}}
+async function refreshPeople(){try{const data=await api(roomQuery('/api/presentation/participants'));state.people=data.participants;await reselectRemembered()||await selectOnlyListeningConversation()}catch{}finally{refreshMachines()}}
+// The machines paired with this room, on the same beat as the conversations: a machine connects and
+// goes away as they do, and the clock of the answer travels with it so the rows can say "hace 3 días"
+// without anything below reading a clock of its own.
+async function refreshMachines(){try{const data=await api('/api/connectors');roomStore.batch(()=>{state.machines=data.connectors||[];state.machinesAt=Date.now()})}catch{}}
 async function reselectRemembered(){
  // After a reload or a reconnect this tab goes back to the conversation it was on, if it is still in the room.
  const wanted=rememberedThread();
@@ -1511,6 +1521,14 @@ window.sidevoiceActions={
   voiceDraft[language]={...voiceDraft[language],speed};renderLanguageRows();
  },
  previewVoice,
+ async revokeMachine(id){
+  // Twice over the same endpoint: the first takes the pairing away, the second takes the row away.
+  // Which of the two this is, is what the room has on file, never what this page remembers.
+  state.machineBusy=id;
+  try{await remove('/api/connectors/'+encodeURIComponent(id))}
+  catch(e){setRoomError(e.message||'No se pudo revocar esa máquina')}
+  finally{state.machineBusy='';await refreshMachines();await refreshPeople()}
+ },
 };
 function toggleMic(){holding=false;setMic(!(state.stream?.getAudioTracks()[0]?.enabled??state.micEnabled))}
 function typing(e){return e.target instanceof Element&&!!e.target.closest('input,textarea,select,[contenteditable=true],[role=menu],[role=menuitem],[data-radix-popper-content-wrapper]')}

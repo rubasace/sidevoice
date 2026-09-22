@@ -207,5 +207,8 @@ npx -y @sidevoice/uplink@<version> uninstall
 Unregisters the MCP server from Claude Code, stops the connector, removes the installed
 copies under `~/.local/share/sidevoice/`, a `voice-room` skill copy an older version left,
 and `~/.sidevoice/` (credential, socket, outbox, log). Codex's `config.toml` is printed,
-not edited. The room keeps this machine's pairing until it is revoked from the room UI;
-the command says so.
+not edited. The room keeps this machine's pairing until you revoke it under **Máquinas**
+on the room's page; the command says so. Revoking takes the voice from that machine's
+conversations at once and refuses its next connection, saying the pairing was revoked and
+that the machine has to be paired again; a revoked machine stays in the list, saying so,
+until you remove it from the same place.

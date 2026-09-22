@@ -103,6 +103,48 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
             'thread': 'thread-b', 'harness': 'codex', 'title': 'B', 'engine': 'gpt'})
         self.assertIsNone(self.control.participants()[1]['engine'])
 
+    async def test_revoking_a_machine_stops_it_serving_now_and_tells_it_why(self):
+        # Taking a pairing away is not a note for the machine's next connection: the conversations it
+        # carried lose their voice at once, the way they do when the room closes a channel.
+        peer = await self.attach()
+        first, second = await self.join('thread-a'), await self.join('thread-b')
+
+        lost = await self.control.revoke(self.connector_id)
+
+        self.assertEqual(sorted(record['thread'] for record in lost), ['thread-a', 'thread-b'])
+        self.assertFalse(self.control.is_live(first['binding_id']))
+        self.assertFalse(self.control.is_live(second['binding_id']))
+        self.assertEqual(self.journal.bindings(), [], 'nothing of that machine is still bound')
+        self.assertEqual(self.control.peers, {}, 'and nothing is still reachable through it')
+        self.assertTrue(peer.disconnected)
+        said = dict((event, data) for event, data in peer.sent)
+        self.assertEqual([data['reason'] for event, data in peer.sent if event == 'binding.close'],
+                         ['connector_revoked', 'connector_revoked'])
+        self.assertIn('Emparejar conector', said['connector.revoked']['reason'],
+                      'a connector told why stops asking, instead of reading a closed socket')
+        self.assertEqual(self.journal.connector_credential(self.connector_id, self.token), 'revoked')
+
+    async def test_a_machine_says_who_it_is_at_pairing_and_again_on_every_connection(self):
+        journal = RoomHistory(Path(self.temp.name) / 'identity.json')
+        connector_id, token = journal.redeem_pairing_code(
+            journal.create_pairing_code(),
+            {'host': 'macbook-pro', 'platform': 'darwin arm64', 'version': '0.4.3', 'harnesses': ['claude']})
+        paired, = journal.paired_connectors()
+        self.assertEqual((paired['host'], paired['platform'], paired['version'], paired['harnesses']),
+                         ('macbook-pro', 'darwin arm64', '0.4.3', ['claude']))
+
+        # The machine upgraded and grew a harness since: the row says what is true now.
+        self.assertTrue(journal.authenticate_connector(connector_id, token,
+                                                       {'version': '0.5.0', 'harnesses': ['claude', 'codex']}))
+        upgraded, = journal.paired_connectors()
+        self.assertEqual((upgraded['version'], upgraded['harnesses']), ('0.5.0', ['claude', 'codex']))
+        self.assertEqual(upgraded['host'], 'macbook-pro', 'what it did not say again is not lost')
+
+        # Nothing is invented: a connector that describes nothing leaves the row as it was.
+        self.assertTrue(journal.authenticate_connector(connector_id, token, {'host': '', 'platform': None}))
+        silent, = journal.paired_connectors()
+        self.assertEqual((silent['host'], silent['platform']), ('macbook-pro', 'darwin arm64'))
+
     async def test_pairing_is_one_time_and_credentials_are_checked(self):
         code = self.journal.create_pairing_code()
         first = self.journal.redeem_pairing_code(code)
@@ -360,3 +402,58 @@ class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(int(locked.headers['Retry-After']) > 0)
             self.assertEqual(client.post('/api/connectors/pair', json={'code': real}).status_code, 429)
             self.assertIsNotNone(journal.pairing_codes.get(RoomHistory.normalise_pairing_code(real)), 'the real code was not spent by the lockout')
+
+class RevocationSurfaceTests(unittest.IsolatedAsyncioTestCase):
+    """Taking a machine's pairing away: the person in the room does it, and nobody else can."""
+
+    def room(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from sidevoice.connector_control import mount_connector_control
+        app = FastAPI()
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        journal = RoomHistory(Path(temp.name) / 'room-state.json')
+        control = mount_connector_control(app, FakeHub(journal), heartbeat_seconds=5)
+        return TestClient(app), journal, control
+
+    def machine(self, client, **identity):
+        code = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://testserver'}).json()['code']
+        paired = client.post('/api/connectors/pair', json={'code': code, **identity})
+        self.assertEqual(paired.status_code, 200, paired.text)
+        return paired.json()['connector_id']
+
+    async def test_only_the_room_page_revokes_and_a_second_time_takes_the_row_away(self):
+        client, journal, control = self.room()
+        with client:
+            connector_id = self.machine(client, host='laptop')
+            peer = FakePeer()
+            await control.attach(connector_id, peer)
+
+            self.assertEqual(client.delete(f'/api/connectors/{connector_id}').status_code, 403,
+                             'reaching the address is not being in the room')
+            self.assertEqual(client.delete(f'/api/connectors/{connector_id}',
+                                           headers={'Origin': 'http://evil.example'}).status_code, 403)
+
+            revoked = client.delete(f'/api/connectors/{connector_id}', headers={'Origin': 'http://testserver'})
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            self.assertEqual(revoked.json()['status'], 'revoked')
+            self.assertTrue(peer.disconnected, 'the live machine stops serving now, not on its next connection')
+            listed = client.get('/api/connectors', headers={'Origin': 'http://testserver'}).json()['connectors']
+            self.assertEqual([(row['host'], row['revoked'], row['connected']) for row in listed], [('laptop', 1, False)],
+                             'it stays listed as revoked, so nobody wonders why that machine went quiet')
+
+            removed = client.delete(f'/api/connectors/{connector_id}', headers={'Origin': 'http://testserver'})
+            self.assertEqual(removed.json()['status'], 'removed')
+            self.assertEqual(client.get('/api/connectors', headers={'Origin': 'http://testserver'}).json()['connectors'], [])
+            self.assertEqual(client.delete(f'/api/connectors/{connector_id}',
+                                           headers={'Origin': 'http://testserver'}).status_code, 404)
+
+    async def test_the_list_carries_what_each_machine_said_about_itself(self):
+        client, journal, control = self.room()
+        with client:
+            self.machine(client, host='macbook-pro', platform='darwin arm64', version='0.4.3',
+                         harnesses=['claude', 'codex'])
+            row, = client.get('/api/connectors', headers={'Origin': 'http://testserver'}).json()['connectors']
+            self.assertEqual((row['host'], row['platform'], row['version'], row['harnesses']),
+                             ('macbook-pro', 'darwin arm64', '0.4.3', ['claude', 'codex']),
+                             'a row reads as a machine, not as a UUID')

@@ -39,6 +39,9 @@ publishes a conversational version to the room. There is no separate voice opera
 - Written messages alongside voice; cancel a microphone draft before it is sent.
 - Switch between registered conversations and close their voice channels: the
   agent's next attempt to speak fails with the reason and it continues in writing.
+- A **Máquinas** panel listing every paired machine — host, system, connector
+  version, harnesses, whether it is connected, since when — and revoking one
+  from there, which takes its voice away at once and refuses its next connection.
 - Room history for the session and delivery receipts. Accepted does not mean read.
   The room writes nothing anyone said to disk; only pairings survive a restart.
 - Global and per-language voice/speed settings, samples and reset.
@@ -140,7 +143,7 @@ Pairing is one room per machine; naming another room replaces it, and the agent
 says so before doing it. A room reached in clear (`http://`) is accepted only on
 loopback or a Kubernetes service name (`sidevoice.ai.svc.cluster.local`);
 anywhere else it must be `https://`. After `uninstall`, the room still lists the
-machine as paired until you revoke it from the room's page.
+machine as paired until you revoke it under **Máquinas** on the room's page.
 
 On Claude Code, one setting decides whether your voice reaches a conversation at
 all: a session that bypasses permission prompts has incoming messages **held for

@@ -95,6 +95,25 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
                       'the message says where the code comes from, and reaches the client')
         self.assertEqual(self.control.peers, {}, 'a refused credential never reaches an event')
 
+    async def test_a_pairing_taken_away_from_the_room_is_refused_saying_so(self):
+        # Not "we do not know you": the person revoked it on purpose, and the machine's conversations
+        # must be able to say which of the two happened.
+        client, _ = await self.connect()
+        await self.control.revoke(self.connector_id)
+        await until(lambda: not client.connected)
+        with self.assertRaises(socketio.exceptions.ConnectionError) as refusal:
+            await self.connect()
+        self.assertIn('revoked', self.reason(refusal.exception))
+        self.assertIn('Emparejar conector', self.reason(refusal.exception), 'and says how to come back')
+        self.assertEqual(self.control.peers, {})
+
+    async def test_the_handshake_carries_what_the_machine_says_about_itself(self):
+        await self.connect(host='macbook-pro', platform='darwin arm64', version='0.5.0',
+                           harnesses=['claude', 'codex'])
+        row, = self.journal.paired_connectors()
+        self.assertEqual((row['host'], row['platform'], row['version'], row['harnesses']),
+                         ('macbook-pro', 'darwin arm64', '0.5.0', ['claude', 'codex']))
+
     async def test_a_connector_from_before_this_version_is_told_to_pair_again(self):
         with self.assertRaises(socketio.exceptions.ConnectionError) as refusal:
             await self.connect(protocol=PROTOCOL - 1)

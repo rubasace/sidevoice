@@ -42,10 +42,11 @@ def require_same_origin(request):
 def require_room_page(request):
     """Endpoints that exist for the person in the room: a browser on the room's own page, and nothing else.
     Same-origin alone lets a call with no Origin through (a command line, a script), which is right for
-    the room's data endpoints and wrong for handing out a pairing code: reaching the address is not
-    being in the room. The code is shown to the person; the person carries it to their machine."""
+    the room's data endpoints and wrong for handing out a pairing code or taking one away: reaching the
+    address is not being in the room. The code is shown to the person; the person carries it to their
+    machine, and only that same person may take the pairing back."""
     if not request.headers.get('origin'):
-        raise HTTPException(403, 'A pairing code is requested from the room\'s own page.')
+        raise HTTPException(403, 'This is done from the room\'s own page, not from an external client.')
     require_same_origin(request)
 
 
