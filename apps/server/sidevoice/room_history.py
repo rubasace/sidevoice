@@ -149,16 +149,29 @@ class RoomHistory:
 
     # ----- connectors: pairing and credentials (durable) -----
 
+    # Crockford's base32: 32 symbols, no I, L, O or U, so a code survives being read aloud, dictated to an
+    # agent or typed from a phone. Twelve symbols are 60 bits — against a ten-minute window and the
+    # redemption limit in connector_control, not a budget anyone can spend — shown as three groups of four.
+    PAIRING_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+    PAIRING_LENGTH = 12
+
+    @classmethod
+    def normalise_pairing_code(cls, code):
+        """What a person typed or said, as the code it names: case, separators and the look-alikes Crockford
+        decodes (O as 0, I and L as 1) are forgiven. Anything else is simply not a code."""
+        text = ''.join(ch for ch in str(code or '').upper() if ch not in ' -_.')
+        return text.translate(str.maketrans('OIL', '011'))
+
     def create_pairing_code(self, ttl=600):
         now = int(time.time())
         self.pairing_codes = {code: entry for code, entry in self.pairing_codes.items() if entry['expires'] >= now}
-        code = secrets.token_hex(4).upper()
+        code = ''.join(secrets.choice(self.PAIRING_ALPHABET) for _ in range(self.PAIRING_LENGTH))
         self.pairing_codes[code] = {'expires': now + ttl, 'redeemed': False}
-        return code
+        return '-'.join(code[i:i + 4] for i in range(0, self.PAIRING_LENGTH, 4))
 
     def redeem_pairing_code(self, code, host=''):
         """One-time exchange: a valid code becomes a connector credential. Returns (id, token) or None."""
-        entry = self.pairing_codes.get((code or '').strip().upper())
+        entry = self.pairing_codes.get(self.normalise_pairing_code(code))
         if not entry or entry['redeemed'] or entry['expires'] < int(time.time()):
             return None
         entry['redeemed'] = True

@@ -9,7 +9,7 @@ export function ParticipantSidebar() {
       <div className="pairing">
         <Button id="pair-connector" variant="ghost" size="compact">Emparejar conector</Button>
         <code id="pair-code" hidden />
-        <p className="muted" id="pair-help" hidden>Código válido 10 minutos, un solo uso. En la máquina del agente: <code>sidevoice pair &lt;url de esta sala&gt; CÓDIGO</code></p>
+        <p className="muted" id="pair-help" hidden>Código válido 10 minutos, un solo uso. Dáselo al agente cuando pida emparejar; a mano: <code>sidevoice pair &lt;url de esta sala&gt; CÓDIGO</code></p>
       </div>
     </aside>
   );

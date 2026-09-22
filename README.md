@@ -132,7 +132,7 @@ Other things you may want, each a single command:
 
 ```sh
 npx -y @sidevoice/uplink@0.4.3 install           # again after an upgrade: re-points the harness, removes the old copy
-npx -y @sidevoice/uplink@0.4.3 pair https://voice.example ABCD1234   # pair by hand instead of from a conversation
+npx -y @sidevoice/uplink@0.4.3 pair https://voice.example ABCD-EFGH-JKMN   # pair by hand instead of from a conversation
 npx -y @sidevoice/uplink@0.4.3 uninstall         # unregister, stop the connector, remove copies and credential
 ```
 

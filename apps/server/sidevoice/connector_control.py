@@ -70,6 +70,31 @@ class PairingRequest(BaseModel):
     host: str = Field(default='', max_length=200)
 
 
+class RedemptionLimit:
+    """How many wrong codes the room will hear before it stops listening for a while.
+
+    A pairing code is 60 bits and lives ten minutes; what makes that a wall rather than a budget is
+    that guessing is cut off. The count is for the whole room, not per caller: behind a proxy a source
+    address is whatever the last hop says, and this room has one user, for whom a lockout means
+    waiting out the window rather than losing anything. A correct code is refused during the lockout
+    too — silently accepting it would tell a guesser which attempts were the right ones."""
+
+    def __init__(self, failures=10, window=600):
+        self.failures, self.window, self.recent = failures, window, []
+
+    def blocked(self, now=None):
+        now = now if now is not None else time.time()
+        self.recent = [at for at in self.recent if at > now - self.window]
+        return len(self.recent) >= self.failures
+
+    def failed(self, now=None):
+        self.recent.append(now if now is not None else time.time())
+
+    def retry_after(self, now=None):
+        now = now if now is not None else time.time()
+        return max(1, int(self.recent[0] + self.window - now)) if self.recent else 0
+
+
 class ConnectorControl:
     def __init__(self, journal, hub, *, heartbeat_seconds=HEARTBEAT_SECONDS, ack_timeout=ACK_TIMEOUT_SECONDS):
         self.journal, self.hub = journal, hub
@@ -326,6 +351,7 @@ class ConnectorControl:
             return {**reply, 'status': 'rejected', 'error': str(error) or type(error).__name__}
 
 def mount_connector_control(app, hub, **options):
+    redemption = options.pop('redemption_limit', {})
     control = ConnectorControl(hub.journal, hub, **options)
     hub.control = control
     from contextlib import asynccontextmanager
@@ -352,10 +378,16 @@ def mount_connector_control(app, hub, **options):
         require_room_page(request)
         return {'code': hub.journal.create_pairing_code(), 'expires_in': 600}
 
+    limit = RedemptionLimit(**redemption)
+
     @app.post('/api/connectors/pair')
     async def pair(payload: PairingRequest):
+        if limit.blocked():
+            raise HTTPException(429, 'Demasiados códigos incorrectos; la sala no acepta emparejamientos durante unos minutos.',
+                                headers={'Retry-After': str(limit.retry_after())})
         credential = hub.journal.redeem_pairing_code(payload.code, payload.host)
         if credential is None:
+            limit.failed()
             raise HTTPException(403, 'Código de emparejamiento inválido o caducado.')
         return {'connector_id': credential[0], 'token': credential[1], 'protocol': PROTOCOL}
 

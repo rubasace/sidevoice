@@ -328,9 +328,12 @@ class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(from_elsewhere.status_code, 403)
             from_the_room = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://testserver'})
             self.assertEqual(from_the_room.status_code, 200)
-            self.assertRegex(from_the_room.json()['code'], r'^[0-9A-F]{8}$')
+            # Sixty bits in an alphabet that survives being read aloud: no I, L, O or U, three groups of four.
+            self.assertRegex(from_the_room.json()['code'], r'^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$')
             # Redeeming needs no browser: that step is the machine's, with the code the person carried to it.
-            redeemed = client.post('/api/connectors/pair', json={'code': from_the_room.json()['code'], 'host': 'laptop'})
+            # Redeemed as a person would type or dictate it: lower case, no dashes, a look-alike letter.
+            spoken = from_the_room.json()['code'].replace('-', ' ').lower().replace('0', 'o', 1)
+            redeemed = client.post('/api/connectors/pair', json={'code': spoken, 'host': 'laptop'})
             self.assertEqual(redeemed.status_code, 200)
             self.assertIn('token', redeemed.json())
             self.assertEqual(redeemed.json()['protocol'], PROTOCOL)
@@ -338,3 +341,22 @@ class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
             listed = client.get('/api/connectors', headers={'Origin': 'http://testserver'})
             self.assertEqual(listed.status_code, 200, listed.text)
             self.assertEqual([(c['host'], c['connected']) for c in listed.json()['connectors']], [('laptop', False)])
+
+    async def test_guessing_codes_locks_redemption_for_the_whole_room(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from sidevoice.connector_control import mount_connector_control
+        app = FastAPI()
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        journal = RoomHistory(Path(temp.name) / 'room.sqlite3')
+        mount_connector_control(app, FakeHub(journal), heartbeat_seconds=5, redemption_limit={'failures': 3, 'window': 600})
+        with TestClient(app) as client:
+            real = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://testserver'}).json()['code']
+            for _ in range(3):
+                self.assertEqual(client.post('/api/connectors/pair', json={'code': 'NOPE-NOPE-NOPE'}).status_code, 403)
+            # The fourth wrong one, and even the right one, are refused for the window: a guesser learns nothing.
+            locked = client.post('/api/connectors/pair', json={'code': 'NOPE-NOPE-NOPE'})
+            self.assertEqual(locked.status_code, 429)
+            self.assertTrue(int(locked.headers['Retry-After']) > 0)
+            self.assertEqual(client.post('/api/connectors/pair', json={'code': real}).status_code, 429)
+            self.assertIsNotNone(journal.pairing_codes.get(RoomHistory.normalise_pairing_code(real)), 'the real code was not spent by the lockout')

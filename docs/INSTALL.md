@@ -66,7 +66,9 @@ The rest of this document is the same thing by hand, and what each step is for.
 - Check Node.js 22 or newer is on PATH: `node --version`.
 - **(from the user)** the room URL (for example `https://sidevoice.example`) and
   a pairing code, which the user reads from the room UI ("Emparejar conector").
-  Codes expire after ten minutes and work once. Never request one from the room:
+  Codes are twelve characters in three groups (no I, L, O or U, so they survive being read
+  aloud), expire after ten minutes, work once, and the room stops accepting attempts for ten
+  minutes after ten wrong ones. Never request one from the room:
   it refuses anything that is not its own page, on purpose.
 - Pair this machine, either from a conversation (`voice_pair`, see above) or by hand:
   `npx -y @sidevoice/uplink@<version> pair <room-url> <code>`
