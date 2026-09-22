@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sidevoice · laboratorio de diseño</title>
+<!--
+  Four whole rooms, one under the other, to be looked at and argued with. Not a component library and
+  not a step towards one: static HTML, no import from the app, nothing the app imports. Vite serves any
+  .html at the web root in dev and builds only index.html, so this page exists at
+  /voice/design-lab.html while somebody is working and is absent from every release.
+-->
+<style>
+  :root{
+    --bg:#14171b; --panel:#1c2128; --panel-2:#202730; --line:#303742; --line-soft:#272e37;
+    --ink:#e8edf1; --ink-2:#c9d2db; --muted:#9aa6b3; --faint:#7f8b99;
+    --accent:#a8c7fa; --accent-ink:#192b42; --ok:#64a64d; --warn:#e0a640; --bad:#ff7272;
+    --radius:18px;
+    font-family:Inter,system-ui,-apple-system,sans-serif;
+    color:var(--ink); background:var(--bg); color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 0 120px;font-size:14px;line-height:1.5}
+  .page-head{max-width:1180px;margin:0 auto;padding:56px 28px 8px}
+  .page-head h1{font-size:26px;font-weight:600;margin:0 0 10px;letter-spacing:-.2px}
+  .page-head p{color:var(--muted);margin:0;max-width:68ch;line-height:1.75}
+  .page-head code{color:var(--accent);font-size:12.5px}
+  .option{max-width:1180px;margin:0 auto;padding:44px 28px 0}
+  .option-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  .option-head h2{font-size:19px;font-weight:600;margin:0;letter-spacing:-.1px}
+  .option-head .tag{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);
+    border:1px solid var(--line);border-radius:20px;padding:4px 11px}
+  .option > p{color:var(--muted);margin:0 0 20px;max-width:74ch;line-height:1.8}
+  .option > p b{color:var(--ink-2);font-weight:550}
+  .frame{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
+    height:620px;display:flex;flex-direction:column}
+
+  /* ---------- pieces shared by every room ---------- */
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 7px #64a64d80;flex:none}
+  .dot.off{background:var(--faint);box-shadow:none}
+  .dot.think{animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .mark{display:inline-flex;gap:2px;align-items:flex-end;height:16px}
+  .mark i{display:block;width:2.4px;border-radius:2px;background:var(--accent)}
+  .mark i:nth-child(1),.mark i:nth-child(5){height:6px}
+  .mark i:nth-child(2),.mark i:nth-child(4){height:12px}
+  .mark i:nth-child(3){height:16px}
+  .brand{display:inline-flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--ink)}
+  .icon{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .island{display:inline-flex;align-items:center;gap:14px;background:#202124;border-radius:36px;padding:10px 12px}
+  .circle{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:#2b313a;
+    color:var(--ink-2);border:0}
+  .circle.call{background:#2f8f5f;color:#fff;width:58px;border-radius:29px}
+  .status{display:grid;gap:3px;font-size:11px;color:var(--muted);line-height:1.35}
+  .status div{display:flex;align-items:center;gap:7px;white-space:nowrap}
+  .status dt{color:var(--faint);margin:0}
+  .status dd{margin:0;color:var(--ink-2)}
+  .bubble{max-width:74%;padding:11px 15px;border-radius:16px;line-height:1.6;font-size:14.5px}
+  .bubble.them{background:var(--panel-2);border:1px solid var(--line-soft);border-bottom-left-radius:6px}
+  .bubble.you{background:#25423a;border:1px solid #2f5a4b;border-bottom-right-radius:6px;margin-left:auto}
+  .row-msg{display:flex;margin-bottom:14px}
+  .sub{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px;min-width:0}
+  .sub .icon{width:11px;height:11px}
+  .ellip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sec{font-size:10.5px;letter-spacing:1.3px;text-transform:uppercase;color:var(--faint);
+    display:flex;align-items:center;gap:7px;margin:0 0 12px}
+  .sec .icon{width:13px;height:13px}
+
+  /* ---------- A · Sala ---------- */
+  .a-head{height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;
+    border-bottom:1px solid var(--line-soft)}
+  .a-body{flex:1;display:grid;grid-template-columns:272px minmax(0,1fr);gap:16px;padding:16px 18px;min-height:0}
+  .a-side{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 16px;overflow:hidden}
+  .a-main{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    display:flex;flex-direction:column;overflow:hidden}
+  .a-main-head{padding:16px 24px;border-bottom:1px solid var(--line-soft);text-align:center;font-weight:600}
+  .a-msgs{flex:1;padding:22px 26px;overflow:hidden}
+  .a-item{display:flex;gap:9px;align-items:center;padding:9px 10px;border-radius:12px;border:1px solid transparent}
+  .a-item.on{background:#233348;border-color:#3d5b7d}
+  .a-name{font-weight:550;line-height:1.35}
+  .a-bar{height:88px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+    align-items:center;padding:0 22px}
+  .a-composer{margin:0 26px 18px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;
+    color:var(--faint);font-size:13px}
+
+  /* ---------- B · Foco ---------- */
+  .b-wrap{flex:1;display:grid;grid-template-columns:62px minmax(0,1fr);min-height:0}
+  .b-rail{border-right:1px solid var(--line-soft);padding:16px 0;display:flex;flex-direction:column;
+    align-items:center;gap:14px;background:#171b21}
+  .b-av{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;font-size:12px;
+    font-weight:600;background:#28303a;color:var(--ink-2);position:relative}
+  .b-av.sel{background:#2f4a6b;color:#dce9fb;box-shadow:0 0 0 1px #4d719e}
+  .b-av .dot{position:absolute;right:-2px;bottom:-2px;width:9px;height:9px;border:2px solid #171b21}
+  .b-main{display:flex;flex-direction:column;min-height:0}
+  .b-top{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 26px}
+  .b-title{font-weight:600;font-size:15px}
+  .b-msgs{flex:1;padding:8px 0 0;overflow:hidden;position:relative}
+  .b-inner{max-width:720px;margin:0 auto;padding:0 20px}
+  .b-float{position:absolute;left:0;right:0;bottom:16px;display:flex;justify-content:center}
+  .b-pill{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:20px;
+    padding:5px 12px;background:#1a1f26}
+  .b-side-btn{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:12px;padding:8px 13px;background:#1e242c}
+
+  /* ---------- C · Consola ---------- */
+  .c-strip{display:flex;align-items:center;gap:10px;padding:12px 20px;border-bottom:1px solid var(--line-soft);
+    background:#171b21;overflow:hidden}
+  .chip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:11px;
+    padding:7px 12px;font-size:12px;background:#1d232b;white-space:nowrap}
+  .chip small{color:var(--faint);font-size:11px}
+  .c-body{flex:1;display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);min-height:0}
+  .c-list{border-right:1px solid var(--line-soft);overflow:hidden}
+  .c-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;
+    padding:13px 18px;border-bottom:1px solid var(--line-soft)}
+  .c-row.on{background:#1d2836}
+  .c-count{font-size:11px;font-variant-numeric:tabular-nums;color:var(--accent-ink);background:var(--accent);
+    border-radius:10px;padding:1px 7px;font-weight:600}
+  .c-main{display:flex;flex-direction:column;min-height:0}
+  .c-main-head{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;
+    border-bottom:1px solid var(--line-soft)}
+  .c-msgs{flex:1;padding:20px 22px;overflow:hidden}
+  .c-foot{border-top:1px solid var(--line-soft);padding:10px 20px;display:flex;align-items:center;
+    justify-content:space-between;gap:20px}
+
+  /* ---------- D · Tarjetas ---------- */
+  .d-body{flex:1;display:grid;grid-template-columns:300px minmax(0,1fr);gap:0;min-height:0}
+  .d-side{border-right:1px solid var(--line-soft);padding:18px 16px;overflow:hidden;background:#171b21}
+  .d-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px;margin-bottom:10px}
+  .d-card.on{border-color:#4d719e;background:#1f2a38}
+  .d-card .line{font-size:12px;color:var(--muted);margin-top:7px;line-height:1.5}
+  .d-mach{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--line);
+    border-radius:12px;background:var(--panel);margin-bottom:8px}
+  .d-main{display:flex;flex-direction:column;min-height:0}
+  .d-main-head{padding:18px 26px 14px}
+  .d-main-head h3{margin:0;font-size:17px;font-weight:600}
+  .d-msgs{flex:1;padding:6px 26px;overflow:hidden}
+  .d-av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:11px;
+    font-weight:600;background:#2f4a6b;color:#dce9fb;flex:none;margin-top:2px}
+  .d-bar{padding:14px 26px 18px;display:flex;align-items:center;gap:16px}
+  .d-input{flex:1;border:1px solid var(--line);border-radius:22px;padding:11px 18px;color:var(--faint);font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>Sidevoice · cuatro salas</h1>
+  <p>Cuatro maquetas enteras, una debajo de otra, con el mismo contenido en todas para que la comparación
+  sea de forma y no de relleno. Son HTML estático: no importan nada de la aplicación y la aplicación no
+  importa nada de aquí. Vite sirve cualquier <code>.html</code> de la raíz en desarrollo y compila solo
+  <code>index.html</code>, así que esta página existe mientras trabajamos y no sale en ninguna versión.</p>
+</div>
+
+<!-- ============ A ============ -->
+<section class="option">
+  <div class="option-head"><h2>A · Sala</h2><span class="tag">lo de ahora, con aire</span></div>
+  <p>La misma estructura de hoy, afinada: menos líneas, más espacio, una sola tipografía con jerarquía de
+  verdad. <b>Qué cambia:</b> la cabecera adelgaza, las tarjetas pierden borde y ganan margen, la
+  transcripción se centra en una columna legible y la barra de abajo se queda con la isla y los dos
+  extremos. <b>Qué arriesga:</b> poco, y por eso es la opción de salir mañana.</p>
+  <div class="frame">
+    <div class="a-head">
+      <span class="brand"><span class="mark"><i></i><i></i><i></i><i></i><i></i></span> Sidevoice</span>
+      <svg class="icon" viewBox="0 0 24 24" style="width:19px;height:19px;color:var(--muted)"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>
+    </div>
+    <div class="a-body">
+      <div class="a-side">
+        <p class="sec"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg> Conversaciones</p>
+        <div class="a-item on">
+          <span class="dot think"></span>
+          <span style="min-width:0">
+            <span class="a-name ellip" style="display:block">Sidevoice · main</span>
+            <span class="sub ellip"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg> daimon · Claude Code</span>
+          </span>
+        </div>
+        <div class="a-item">
+          <span class="dot"></span>
+          <span style="min-width:0">
+            <span class="a-name ellip" style="display:block">Astra · refactor del catálogo</span>
+            <span class="sub ellip"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg> macbook · Codex · 2 nuevas</span>
+          </span>
+        </div>
+        <div class="a-item">
+          <span class="dot off"></span>
+          <span style="min-width:0">
+            <span class="a-name ellip" style="display:block">Homelab · flux</span>
+            <span class="sub ellip">Desconectada</span>
+          </span>
+        </div>
+        <p class="sec" style="margin-top:26px"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg> Máquinas</p>
+        <div class="a-item"><span class="dot"></span><span style="min-width:0"><span class="a-name ellip" style="display:block">daimon</span><span class="sub ellip">Linux x64 · 0.5.0</span></span></div>
+        <div class="a-item"><span class="dot"></span><span style="min-width:0"><span class="a-name ellip" style="display:block">macbook-pro</span><span class="sub ellip">macOS arm64 · 0.5.0</span></span></div>
+      </div>
+      <div class="a-main">
+        <div class="a-main-head">Sidevoice · main</div>
+        <div class="a-msgs">
+          <div class="row-msg"><div class="bubble you">Vamos a enseñar un poquito esa parte de la interfaz.</div></div>
+          <div class="row-msg"><div class="bubble them">Listo. Las máquinas y las conversaciones quedan separadas, y cada conversación dice en qué máquina corre.</div></div>
+          <div class="row-msg"><div class="bubble you">Me gusta. ¿Y en el móvil?</div></div>
+        </div>
+        <div class="a-composer">Escribe un mensaje…</div>
+      </div>
+    </div>
+    <div class="a-bar">
+      <dl class="status"><div><span class="dot"></span><dt>Eco</dt><dd>Cancelación activa</dd></div><div><span class="dot"></span><dt>Audio</dt><dd>En orden</dd></div></dl>
+      <div class="island" style="justify-self:center">
+        <button class="circle">⋯</button>
+        <button class="circle"><svg class="icon" viewBox="0 0 24 24" style="width:20px;height:20px"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg></button>
+        <button class="circle call"><svg class="icon" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#fff"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg></button>
+      </div>
+      <dl class="status" style="justify-self:end;text-align:right"><div><dt>STT</dt><dd>OpenAI · gpt-transcribe</dd></div><div><dt>LLM</dt><dd>Fable 5.1</dd></div></dl>
+    </div>
+  </div>
+</section>
+
+<!-- ============ B ============ -->
+<section class="option">
+  <div class="option-head"><h2>B · Foco</h2><span class="tag">la conversación es la página</span></div>
+  <p>La transcripción ocupa todo y lo demás se pide. <b>Qué cambia:</b> la barra lateral se reduce a un
+  carril de marcas con su punto de estado; las máquinas viven detrás de un botón; la isla flota sobre la
+  transcripción y los datos de la llamada son una línea discreta. <b>Qué arriesga:</b> con varias
+  conversaciones vivas hay que pasar el ratón para saber cuál es cuál, y emparejar deja de estar a la vista.</p>
+  <div class="frame">
+    <div class="b-wrap">
+      <div class="b-rail">
+        <span class="mark" style="margin-bottom:6px"><i></i><i></i><i></i><i></i><i></i></span>
+        <div class="b-av sel">SV<span class="dot think"></span></div>
+        <div class="b-av">AS<span class="dot"></span></div>
+        <div class="b-av">HL<span class="dot off"></span></div>
+        <div style="flex:1"></div>
+        <div class="b-av" style="background:transparent;border:1px dashed var(--line);color:var(--faint)">+</div>
+      </div>
+      <div class="b-main">
+        <div class="b-top">
+          <div><div class="b-title">Sidevoice · main</div><div class="sub">daimon · Claude Code · Fable 5.1</div></div>
+          <span class="b-side-btn"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg> 2 máquinas</span>
+        </div>
+        <div class="b-msgs">
+          <div class="b-inner">
+            <div class="row-msg"><div class="bubble you">Vamos a enseñar un poquito esa parte de la interfaz.</div></div>
+            <div class="row-msg"><div class="bubble them">Listo. Las máquinas y las conversaciones quedan separadas, y cada conversación dice en qué máquina corre.</div></div>
+            <div class="row-msg"><div class="bubble you">Me gusta. ¿Y en el móvil?</div></div>
+            <div class="row-msg"><div class="bubble them">Las dos columnas de abajo bajan a media línea cada una, bajo la isla.</div></div>
+          </div>
+          <div class="b-float"><span class="b-pill">Eco activo · STT OpenAI · LLM Fable 5.1</span></div>
+        </div>
+        <div style="display:flex;justify-content:center;padding:0 0 22px">
+          <div class="island">
+            <button class="circle">⋯</button>
+            <button class="circle"><svg class="icon" viewBox="0 0 24 24" style="width:20px;height:20px"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg></button>
+            <button class="circle call"><svg class="icon" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#fff"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ C ============ -->
+<section class="option">
+  <div class="option-head"><h2>C · Consola</h2><span class="tag">para llevar varios agentes a la vez</span></div>
+  <p>Densidad a propósito, pensada para cuando hay cinco conversaciones y tres máquinas. <b>Qué cambia:</b>
+  las máquinas son una tira de fichas arriba, siempre visible; las conversaciones son una tabla compacta con
+  estado, máquina y sin leer; los datos de la llamada bajan a una línea de pie. <b>Qué arriesga:</b> con una
+  sola conversación parece un panel de control para nada, y se aleja de "una llamada con alguien".</p>
+  <div class="frame">
+    <div class="c-strip">
+      <span class="chip"><span class="dot"></span> daimon <small>Linux · 0.5.0</small></span>
+      <span class="chip"><span class="dot"></span> macbook-pro <small>macOS · 0.5.0</small></span>
+      <span class="chip" style="border-style:dashed;color:var(--muted)">+ Emparejar máquina</span>
+      <div style="flex:1"></div>
+      <span class="brand" style="font-size:13px"><span class="mark"><i></i><i></i><i></i><i></i><i></i></span> Sidevoice</span>
+    </div>
+    <div class="c-body">
+      <div class="c-list">
+        <div class="c-row on"><span class="dot think"></span><span style="min-width:0"><span class="ellip" style="display:block;font-weight:550">Sidevoice · main</span><span class="sub ellip">daimon · Claude Code</span></span><span></span></div>
+        <div class="c-row"><span class="dot"></span><span style="min-width:0"><span class="ellip" style="display:block;font-weight:550">Astra · refactor del catálogo</span><span class="sub ellip">macbook · Codex</span></span><span class="c-count">2</span></div>
+        <div class="c-row"><span class="dot"></span><span style="min-width:0"><span class="ellip" style="display:block;font-weight:550">Revisión de la 0.5.0</span><span class="sub ellip">macbook · Claude Code</span></span><span></span></div>
+        <div class="c-row"><span class="dot off"></span><span style="min-width:0"><span class="ellip" style="display:block;font-weight:550">Homelab · flux</span><span class="sub ellip">Desconectada · hace 2 h</span></span><span></span></div>
+      </div>
+      <div class="c-main">
+        <div class="c-main-head">
+          <div><div style="font-weight:600">Sidevoice · main</div><div class="sub">daimon · Claude Code · Fable 5.1</div></div>
+          <div class="island" style="padding:6px 8px;gap:9px">
+            <button class="circle" style="width:34px;height:34px">⋯</button>
+            <button class="circle" style="width:34px;height:34px"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg></button>
+            <button class="circle call" style="width:46px;height:34px;border-radius:17px"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#fff"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg></button>
+          </div>
+        </div>
+        <div class="c-msgs">
+          <div class="row-msg"><div class="bubble you">Vamos a enseñar un poquito esa parte de la interfaz.</div></div>
+          <div class="row-msg"><div class="bubble them">Listo. Las máquinas y las conversaciones quedan separadas, y cada conversación dice en qué máquina corre.</div></div>
+        </div>
+        <div class="c-foot">
+          <dl class="status" style="grid-auto-flow:column;gap:18px"><div><span class="dot"></span><dt>Eco</dt></div><div><span class="dot"></span><dt>Pantalla</dt></div><div><span class="dot"></span><dt>Audio</dt></div></dl>
+          <dl class="status" style="grid-auto-flow:column;gap:18px"><div><dt>STT</dt><dd>OpenAI</dd></div><div><dt>TTS</dt><dd>ElevenLabs</dd></div><div><dt>LLM</dt><dd>Fable 5.1</dd></div></dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ D ============ -->
+<section class="option">
+  <div class="option-head"><h2>D · Tarjetas</h2><span class="tag">se parece a hablar con alguien</span></div>
+  <p>Cada conversación es una tarjeta que enseña su última línea, y el mensaje lleva quién lo dijo.
+  <b>Qué cambia:</b> la lista deja de ser una lista y pasa a contar algo; la transcripción gana inicial y
+  nombre por bloque; escribir vuelve a la barra de abajo, junto a la llamada. <b>Qué arriesga:</b> ocupa
+  bastante más por conversación, así que con seis abiertas hay que hacer scroll en la barra lateral.</p>
+  <div class="frame">
+    <div class="a-head" style="height:56px">
+      <span class="brand"><span class="mark"><i></i><i></i><i></i><i></i><i></i></span> Sidevoice</span>
+      <span class="b-side-btn">Emparejar máquina</span>
+    </div>
+    <div class="d-body">
+      <div class="d-side">
+        <p class="sec">Conversaciones</p>
+        <div class="d-card on">
+          <div style="display:flex;align-items:center;gap:8px"><span class="dot think"></span><span class="ellip" style="font-weight:600">Sidevoice · main</span></div>
+          <div class="line ellip">Listo. Las máquinas y las conversaciones…</div>
+          <div class="sub" style="margin-top:8px">daimon · Claude Code</div>
+        </div>
+        <div class="d-card">
+          <div style="display:flex;align-items:center;gap:8px"><span class="dot"></span><span class="ellip" style="font-weight:600">Astra · refactor</span><span class="c-count" style="margin-left:auto">2</span></div>
+          <div class="line ellip">He dejado el catálogo en una sola tabla…</div>
+          <div class="sub" style="margin-top:8px">macbook · Codex</div>
+        </div>
+        <p class="sec" style="margin-top:22px">Máquinas</p>
+        <div class="d-mach"><span class="dot"></span><span style="min-width:0"><span class="ellip" style="display:block;font-size:13px;font-weight:550">daimon</span><span class="sub">Linux x64 · 0.5.0</span></span></div>
+        <div class="d-mach"><span class="dot"></span><span style="min-width:0"><span class="ellip" style="display:block;font-size:13px;font-weight:550">macbook-pro</span><span class="sub">macOS arm64 · 0.5.0</span></span></div>
+      </div>
+      <div class="d-main">
+        <div class="d-main-head"><h3>Sidevoice · main</h3><div class="sub" style="margin-top:4px">daimon · Claude Code · Fable 5.1</div></div>
+        <div class="d-msgs">
+          <div style="display:flex;gap:11px;margin-bottom:16px;justify-content:flex-end">
+            <div class="bubble you" style="margin:0">Vamos a enseñar un poquito esa parte de la interfaz.</div>
+            <div class="d-av" style="background:#2f5a4b;color:#cfeadd">TÚ</div>
+          </div>
+          <div style="display:flex;gap:11px;margin-bottom:16px">
+            <div class="d-av">SV</div>
+            <div class="bubble them" style="margin:0">Listo. Las máquinas y las conversaciones quedan separadas, y cada conversación dice en qué máquina corre.</div>
+          </div>
+        </div>
+        <div class="d-bar">
+          <div class="d-input">Escribe un mensaje…</div>
+          <div class="island" style="padding:6px 8px;gap:9px">
+            <button class="circle" style="width:36px;height:36px"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg></button>
+            <button class="circle call" style="width:50px;height:36px;border-radius:18px"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px;stroke:#fff"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="option">
+  <div class="option-head"><h2>Lo que yo haría</h2></div>
+  <p><b>A para salir, y de B lo que se pueda robar.</b> A es lo que ya hay, así que cuesta una tarde y no
+  arriesga la versión. De B vale la pena quedarse con dos cosas concretas: la columna de lectura acotada,
+  porque una transcripción a todo lo ancho de una pantalla grande se lee mal, y el estado de la llamada como
+  una línea discreta en vez de dos columnas que compiten con el contenido. C tiene sentido el día que lleves
+  cinco agentes a la vez, no antes. D es bonita y es la que peor escala.</p>
+</div>
+
+</body>
+</html>
