@@ -679,11 +679,13 @@ function browserLatency(d,received){
  }
  return Object.fromEntries(Object.entries(durations).filter(([,v])=>Number.isFinite(v)&&v>=0&&v<=3600000));
 }
-function message(raw){return roomStore.batch(()=>recordMessage(raw))}
+// `socket` is the one the frame came in on: during a transcription swap this page holds two, and an
+// answer belongs to the socket that asked, not to whichever one the call is using.
+function message(raw,socket){return roomStore.batch(()=>recordMessage(raw,socket))}
 function refuseTranscription(d, error) {
  try{state.ws?.send(JSON.stringify({type:'voice-transcript-error',data:{session_id:state.sessionId,request_id:d.request_id,error}}))}catch{}
 }
-function recordMessage(raw) {
+function recordMessage(raw, socket) {
     let m;
     try {
         m = JSON.parse(raw);
@@ -692,6 +694,15 @@ function recordMessage(raw) {
         return;
     }
     const t = m.type, d = m.data || {};
+    // The room asks whether anyone is still here, because a closed tab behind a tunnel leaves its
+    // socket up and its seat taken (#63). The page keeps no clock of its own for this: a background
+    // tab's timers are throttled, but the frame that arrives still wakes this handler, and a muted
+    // browser sends no audio the room could have taken for an answer.
+    if (t === 'voice-ping') {
+        const link = socket || state.ws;
+        try { link?.send(JSON.stringify({ type: 'voice-pong', data: { session_id: d.session_id || state.sessionId } })); } catch { }
+        return;
+    }
     if (['voice-user-turn', 'user-transcription', 'user-started-speaking', 'user-stopped-speaking'].includes(t) && d.session_id && d.session_id !== state.sessionId)
         return;
     observeLatencyEvent(t, d);
@@ -967,7 +978,7 @@ async function joinRoom(epoch,context){
  // What reopens this socket by itself is the call, never the swap that opened it.
  const again={browserStt:context.browserStt,sttRuntime:context.sttRuntime};
  socket.onclose=event=>{if(state.ws===socket)lostConnection(event,epoch,again)};
- socket.onmessage=e=>{if(state.ws===socket)message(e.data)};
+ socket.onmessage=e=>{if(state.ws===socket)message(e.data,socket)};
  state.sessionId=session.session_id;state.roomRevision=0;rememberSession(state.sessionId);
  window.sidevoiceTelemetry?.noteSession?.(state.sessionId);
  if(context.browserStt)window.roomTranscription.start({socket,language:state.voicePreferences.stt_language});

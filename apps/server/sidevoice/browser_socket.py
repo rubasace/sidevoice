@@ -18,6 +18,9 @@ class BrowserFrameSerializer(FrameSerializer):
         # RTVI events (transcriptions, speaking state) are exactly what the page listens for.
         super().__init__(FrameSerializer.InputParams(ignore_rtvi_messages=False))
         self.sample_rate, self.channels = sample_rate, channels
+        # When this socket last carried anything at all, audio or message: one browser's whole
+        # evidence of being alive, and what the call's keepalive reads (`browser_heartbeat.py`).
+        self.last_frame_at = time.monotonic()
         # What the microphone actually delivered, so a silent call can be told from a broken one.
         self.audio_frames = self.audio_bytes = 0
         self.last_audio_at = None
@@ -30,8 +33,9 @@ class BrowserFrameSerializer(FrameSerializer):
         return None  # Nothing else crosses to the browser: no audio, no pipeline control.
 
     async def deserialize(self, data):
+        self.last_frame_at = time.monotonic()
         if isinstance(data, (bytes, bytearray)):
-            now = time.monotonic()
+            now = self.last_frame_at
             if self.last_audio_at is not None:
                 gap_ms = max(0, round((now - self.last_audio_at) * 1000))
                 self.last_audio_gap_ms = gap_ms

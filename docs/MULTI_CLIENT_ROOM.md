@@ -93,6 +93,10 @@ socket accepted (origin checked)
        │  its own pipecat pipeline when this connection resolved to OpenAI
        └─ it receives voice-speech / voice-speech-audio / voice-cancel /
           voice-input-receipt, each addressed to its own session id
+socket quiet for the keepalive's budget
+  └─ the same close, asked for by the room: it asks a socket that has said nothing for an
+     interval, and closes the call when the budget of misses runs out. Anything the browser
+     sends is an answer, microphone audio included
 socket closed
   └─ Room.leave(client)
        ├─ the client's entries in live utterances become `disconnected`

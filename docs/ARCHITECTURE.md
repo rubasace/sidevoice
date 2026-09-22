@@ -83,6 +83,13 @@ the tab's chosen conversation cross unchanged; a refusal leaves the call exactly
 as it was and says why. For as long as the swap takes, one device counts as two
 browsers against `Room.MAX_CLIENTS`.
 
+A seat belongs to a browser that answers. Closing a tab behind a tunnel does not reach
+the room as a socket close — the connection stays up and the call never ends — so the room
+asks a socket that has gone quiet whether anyone is still there, and a browser that misses
+its budget of answers is disconnected exactly as if its socket had closed. Anything the
+browser sends is an answer, microphone audio included, and the question is the room's rather
+than the page's because a background tab's own timers stop while its socket handler does not.
+
 A socket that drops does not end the call, and no longer loses what was said while
 it was down. The microphone is never paused, so the page keeps the last 30 seconds
 it could not stream and hands them to the session that comes back as one catch-up:

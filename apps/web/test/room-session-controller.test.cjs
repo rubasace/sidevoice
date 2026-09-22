@@ -1350,6 +1350,21 @@ test('A step that fails leaves its reason, and what to do, where the step was',a
  assert.equal(room.published.at(-1),'La sala ya tiene el máximo de navegadores conectados. Espera a que salga alguien y vuelve a entrar.');
 });
 
+test('The page answers when the room asks whether anybody is still there',()=>{
+ // The room asks because a closed tab behind a tunnel leaves its socket up and its seat taken (#63).
+ const s=setup();const answered=[],other=[];
+ s.context.sentFrame=value=>answered.push(JSON.parse(value));
+ s.context.otherFrame=value=>other.push(JSON.parse(value));
+ s.run("sessionId='call-1';ws={readyState:1,send(value){sentFrame(value)}}");
+ s.run("message(JSON.stringify({type:'voice-ping',data:{session_id:'call-1'}}))");
+ assert.equal(answered.at(-1).type,'voice-pong');
+ assert.equal(answered.at(-1).data.session_id,'call-1');
+ // A transcription swap leaves this page holding two sockets; the answer goes back on the one that asked.
+ s.run("message(JSON.stringify({type:'voice-ping',data:{session_id:'call-2'}}),{readyState:1,send(value){otherFrame(value)}})");
+ assert.equal(other.at(-1).data.session_id,'call-2');
+ assert.equal(answered.length,1,'the call\'s socket was not made to answer for the other one');
+});
+
 // ----- the ambient bed while the conversation works on this browser's turn (#42) -----
 function presenceSetup(preferences="{presence_sound:'on'}"){
  const s=setup(),calls=[],timers=new Map();let serial=0;

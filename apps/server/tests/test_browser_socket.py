@@ -29,6 +29,19 @@ class BrowserSocketTest(IsolatedAsyncioTestCase):
         self.assertEqual(serializer.max_audio_gap_ms, 370)
         self.assertEqual(serializer.audio_gap_count, 1)
 
+    async def test_anything_the_browser_sends_says_that_it_is_still_there(self):
+        # The keepalive asks a quiet socket, not a muted one: PCM, an answer and even a frame the
+        # room cannot read are all this browser being alive (#63).
+        with patch('sidevoice.browser_socket.time.monotonic', side_effect=[10.0, 20.0, 30.0, 40.0]):
+            serializer = BrowserFrameSerializer()
+            self.assertEqual(serializer.last_frame_at, 10.0, 'the hello that opened the call counts')
+            await serializer.deserialize(b'\x00\x01' * 320)
+            self.assertEqual(serializer.last_frame_at, 20.0)
+            await serializer.deserialize(json.dumps({'type': 'voice-pong', 'data': {'session_id': 'call'}}))
+            self.assertEqual(serializer.last_frame_at, 30.0)
+            await serializer.deserialize('{not json')
+            self.assertEqual(serializer.last_frame_at, 40.0)
+
     async def test_text_frames_are_app_messages(self):
         ready = {'label': 'rtvi-ai', 'type': 'client-ready', 'id': '1', 'data': {}}
         frame = await BrowserFrameSerializer().deserialize(json.dumps(ready))
