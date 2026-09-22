@@ -42,7 +42,12 @@ export type RoomServerEvent =
   | { type: "voice-user-turn"; data: Record<string, unknown> }
   | { type: "voice-input-receipt"; data: Record<string, unknown> }
   | { type: "voice-preparation"; data: Record<string, unknown> }
-  | { type: "error"; data: { message?: string; error?: string } }
+  /* Is anybody still there? The browser answers `{type:"voice-pong",data:{session_id}}`, and a
+   * browser that stops answering loses its seat: behind a tunnel a closed tab leaves its socket up. */
+  | { type: "voice-ping"; data: { session_id: Identifier } }
+  /* `reason` names what the sentence says, so a page refused can say it in its own language even
+   * when nothing else about the refusal survived the trip. */
+  | { type: "error"; data: { message?: string; error?: string; reason?: string } }
   | { type: string; data?: Record<string, unknown> };
 
 export const PRESENTATION_API = "/api/presentation" as const;

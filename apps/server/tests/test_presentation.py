@@ -571,3 +571,24 @@ class ParticipantEngineTests(IsolatedAsyncioTestCase):
         self.addCleanup(journal.deactivate_binding, 'c-1', silent['id'])
         answer = TestClient(app).get('/api/presentation/participants').json()['participants']
         self.assertIsNone(next(p for p in answer if p['thread_id'] == 'sess-silent')['engine'])
+
+
+class AdmissionEndpointTests(IsolatedAsyncioTestCase):
+    """The third way a refusal reaches the person, and the only one a proxy cannot spoil (#63)."""
+
+    async def test_the_room_says_over_http_whether_it_would_take_one_more_browser(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        import sidevoice.presentation as presentation
+        app = FastAPI()
+        presentation.mount_presentation(app)
+        answer = TestClient(app).get('/api/presentation/admission')
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(answer.json(), presentation.hub.admission())
+        self.assertTrue(answer.json()['admitted'], 'an empty room takes one more')
+        # The page reads this exactly when its socket closed saying nothing: the answer has to name
+        # the reason, not only describe the room.
+        with patch.object(presentation.hub, 'max_clients', 0):
+            refused = TestClient(app).get('/api/presentation/admission').json()
+        self.assertEqual((refused['admitted'], refused['reason']), (False, 'room_is_full'))
+        self.assertEqual(refused['message'], presentation.hub.FULL_MESSAGE)

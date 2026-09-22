@@ -81,7 +81,14 @@ goes on, opens a second socket with the new hello, and lets the first go only on
 the room has answered the second. The microphone stream, the unlocked output and
 the tab's chosen conversation cross unchanged; a refusal leaves the call exactly
 as it was and says why. For as long as the swap takes, one device counts as two
-browsers against `Room.MAX_CLIENTS`.
+browsers against `Room.max_clients`.
+
+A seat belongs to a browser that answers. Closing a tab behind a tunnel does not reach
+the room as a socket close — the connection stays up and the call never ends — so the room
+asks a socket that has gone quiet whether anyone is still there, and a browser that misses
+its budget of answers is disconnected exactly as if its socket had closed. Anything the
+browser sends is an answer, microphone audio included, and the question is the room's rather
+than the page's because a background tab's own timers stop while its socket handler does not.
 
 A socket that drops does not end the call, and no longer loses what was said while
 it was down. The microphone is never paused, so the page keeps the last 30 seconds
@@ -179,8 +186,11 @@ unnecessary and it is kept only as the fallback reference.
 
 ## Known limitations
 
-- One room, bounded to `Room.MAX_CLIENTS` browsers at a time; a browser over the
-  limit is refused with a stated reason and disturbs nothing already connected.
+- One room, bounded to `Room.max_clients` browsers at a time (8 by default,
+  `VOICE_MAX_BROWSERS`); a browser over the limit is refused with a stated reason
+  and disturbs nothing already connected. The reason is said three ways — a frame,
+  the close code, and `/api/presentation/admission` for a page that received
+  neither through its proxy — because a tunnel loses the first two.
   Claude Code delivery is verified end to end; Codex delivery through
   `codex queue` is verified for the CLI path only until checked against Codex
   Desktop.

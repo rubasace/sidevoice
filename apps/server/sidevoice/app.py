@@ -27,6 +27,7 @@ from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAn
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
+from .browser_heartbeat import heartbeat_settings, watch as watch_heartbeat
 from .browser_socket import BrowserFrameSerializer, session_message
 from .presentation import (hub, RoomClient, NoInference, mount_presentation,
                           PresentationGate, PresentationPlayback, require_same_origin)
@@ -61,11 +62,18 @@ def prior_sessions(value):
 
 
 async def room_is_full(websocket):
-    """Refusing one browser is not tearing the room down for the ones already in it."""
-    if len(hub.clients) < hub.MAX_CLIENTS:
+    """Refusing one browser is not tearing the room down for the ones already in it.
+
+    The reason is said twice — a frame, then the close code — and a tunnel can lose both: a phone
+    read only the page's own "la sala rechazó la conexión" while this sentence was written for it
+    (2026-09-22). The page asks `/api/presentation/admission` when neither arrived; the sentence and
+    the name of the reason are the room's, in one place, so all three say the same thing.
+    """
+    admission = hub.admission()
+    if admission['admitted']:
         return False
     await websocket.send_text(json.dumps({'type': 'error', 'data': {
-        'message': 'The room already has the maximum number of browsers connected.'}}))
+        'message': admission['message'], 'reason': admission['reason']}}))
     await websocket.close(code=1013)  # Try again later.
     return True
 
@@ -548,9 +556,30 @@ async def voice_call(websocket, settings, config, choice, hello, settings_proble
         call.disconnect()
         await runner.cancel()
 
+    # A browser that stopped answering leaves by the door above, and this is what knocks on it: a
+    # socket nobody is at the other end of never closes by itself behind a proxy, so the room asks,
+    # and a browser that has missed its budget of answers is disconnected exactly as if its socket
+    # had closed. Nothing downstream is told it was a timeout, because nothing downstream differs.
+    interval, misses = heartbeat_settings(config)
+
+    def ask():
+        send({'type': 'voice-ping', 'data': {'session_id': call.id}})
+
+    async def drop(silence):
+        logger.warning('Call {}: nothing from this browser for {:.0f}s; its seat goes back to the room',
+                       call.id[:8], silence)
+        call.disconnect()   # the seat is free now, not whenever the socket admits it is gone
+        await runner.cancel()
+
+    heartbeat = asyncio.create_task(watch_heartbeat(
+        lambda: time.monotonic() - serializer.last_frame_at, ask, drop,
+        interval=interval, misses=misses)) if interval else None
+
     try:
         await runner.run()
     finally:
+        if heartbeat:
+            heartbeat.cancel()
         voice.close()
         call.disconnect()
         sender.cancel()

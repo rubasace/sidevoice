@@ -87,12 +87,16 @@ reply.
 
 ```
 socket accepted (origin checked)
-  └─ Room.join(client)        refused over MAX_CLIENTS; nothing else is torn down
+  └─ Room.join(client)        refused over max_clients; nothing else is torn down
        ├─ the room announces the client's own id as the first text frame
        ├─ the client runs its own transcription: in-page WebGPU/WASM Whisper, or
        │  its own pipecat pipeline when this connection resolved to OpenAI
        └─ it receives voice-speech / voice-speech-audio / voice-cancel /
           voice-input-receipt, each addressed to its own session id
+socket quiet for the keepalive's budget
+  └─ the same close, asked for by the room: it asks a socket that has said nothing for an
+     interval, and closes the call when the budget of misses runs out. Anything the browser
+     sends is an answer, microphone audio included
 socket closed
   └─ Room.leave(client)
        ├─ the client's entries in live utterances become `disconnected`
@@ -181,7 +185,8 @@ never ships playback state.
 
 | Limit | Where | Why |
 | --- | --- | --- |
-| `Room.MAX_CLIENTS` (8) | `Room.join`, checked again before the socket is accepted | an unbounded room is an unbounded fan-out of every utterance |
+| `Room.max_clients` (8, `VOICE_MAX_BROWSERS`) | `Room.join`, checked again before the socket is accepted | one Pipecat pipeline per browser, each with its own voice detection and turn-end analyser: the bound is this process, not the people |
+| 15 s between keepalive questions, 2 misses (`VOICE_BROWSER_HEARTBEAT_SECONDS`, `VOICE_BROWSER_HEARTBEAT_MISSES`) | `browser_heartbeat.watch`, one per call | behind a tunnel a closed tab never closes its socket, and a seat held for ever is a seat nobody can have (#63) |
 | 16 pending utterances per client | `Room.speak` | a stalled browser must not queue the room's audio forever |
 | 2048 live utterances | `Room.speak` | the in-memory registry; the journal keeps the text regardless |
 | 32 queued inputs per client | `RoomClient.input_queue` | only used when no journal is attached |

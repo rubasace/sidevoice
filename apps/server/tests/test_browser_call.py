@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import time
 import tempfile
 from pathlib import Path
@@ -521,7 +522,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
     async def test_a_swap_that_would_overflow_the_room_is_refused_and_the_call_it_came_from_survives(self):
         from sidevoice.app import browser_call
         joined = []
-        for _ in range(self.hub.MAX_CLIENTS):
+        for _ in range(self.hub.max_clients):
             socket = FakeWebSocket()
             joined.append((socket, *await self.join(socket)))
         # The room filled up after the check that precedes the hello: the join itself must refuse.
@@ -532,7 +533,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         error = await self.received(refused, 'error')
         self.assertIn('maximum number of browsers', error['data']['message'])
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
-        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertEqual(len(self.hub.clients), self.hub.max_clients)
         self.assertTrue(all(client.connected for _, _, client in joined))
         for socket, task, _ in joined:
             await self.leave(socket, task)
@@ -655,18 +656,51 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
     async def test_a_browser_over_the_limit_is_refused_without_disturbing_the_room(self):
         from sidevoice.app import browser_call
         joined = []
-        for _ in range(self.hub.MAX_CLIENTS):
+        for _ in range(self.hub.max_clients):
             socket = FakeWebSocket()
             joined.append((socket, *await self.join(socket)))
         refused = FakeWebSocket()
         await browser_call(refused)
         error = await self.received(refused, 'error')
         self.assertIn('maximum number of browsers', error['data']['message'])
+        # The frame names the reason as well as saying it, so a page whose proxy kept the sentence
+        # but lost the close code still knows which sentence of its own to show (#63).
+        self.assertEqual(error['data']['reason'], 'room_is_full')
         self.assertEqual(refused.application_state, WebSocketState.DISCONNECTED)
-        self.assertEqual(len(self.hub.clients), self.hub.MAX_CLIENTS)
+        self.assertEqual(len(self.hub.clients), self.hub.max_clients)
         self.assertTrue(all(client.connected for _, _, client in joined))
         for socket, task, _ in joined:
             await self.leave(socket, task)
+
+    # ----- a seat is held by a browser that answers, and by nobody else (#63) -----
+
+    async def test_a_browser_that_stops_answering_loses_its_seat(self):
+        # Behind a tunnel a closed tab never closes its socket: this is the room noticing on its own.
+        with patch.dict(os.environ, {'VOICE_BROWSER_HEARTBEAT_SECONDS': '0.4'}):
+            socket = FakeWebSocket()
+            task, client = await self.join(socket)
+            self.assertIn(client.id, self.hub.clients)
+            asked = await self.received(socket, 'voice-ping')
+            self.assertEqual(asked['data']['session_id'], client.id, 'the room asks this browser by name')
+            await asyncio.wait_for(task, 5)   # nothing answers, and the call ends by itself
+        self.assertEqual(self.hub.clients, {}, 'the seat went back to the room')
+        self.assertFalse(client.connected)
+        self.assertTrue(client.closed, 'it left by the door an ordinary disconnect uses')
+
+    async def test_a_browser_that_answers_keeps_its_seat_and_still_leaves_when_it_says_so(self):
+        with patch.dict(os.environ, {'VOICE_BROWSER_HEARTBEAT_SECONDS': '0.2'}):
+            socket = FakeWebSocket()
+            task, client = await self.join(socket)
+            for _ in range(4):   # four answers over twice the budget this room allows
+                await asyncio.sleep(0.1)
+                socket.incoming.put_nowait({'type': 'websocket.receive', 'text': json.dumps(
+                    {'type': 'voice-pong', 'data': {'session_id': client.id}})})
+            self.assertIn(client.id, self.hub.clients, 'a browser that answers is nobody to evict')
+            self.assertFalse(task.done())
+            # And the ordinary way out is untouched: the socket closes, the seat is free at once.
+            await self.leave(socket, task)
+        self.assertEqual(self.hub.clients, {})
+        self.assertFalse(client.connected)
 
     # ----- what this browser never heard, when it comes back (#52) -----
 
