@@ -13,8 +13,15 @@ The web app is componentized by product concern (room, conversation, call, setti
 ## Transport and identity
 
 The room is the control plane. Each agent machine runs one connector with an
-outbound WebSocket to `/api/connectors/ws`, authenticated with a credential it
-obtained once by redeeming a pairing code shown in the room UI. The stdio MCP
+outbound Socket.IO link to `/api/connectors/socket.io`, namespace `/connectors`,
+authenticated in the connect handshake with a credential it obtained once by
+redeeming a pairing code shown in the room UI — so a credential the room does
+not know never reaches an event, and one it refuses is not retried.
+Acknowledgements, keepalive and reconnection with backoff come from the library
+on both ends (`python-socketio` in the room, `socket.io-client` in the
+connector); the room maintains no protocol of its own (see
+[SOCKETIO_MIGRATION.md](SOCKETIO_MIGRATION.md)). The path is the one an
+authenticating proxy in front of the room must exempt, exactly. The stdio MCP
 server that a harness starts (`packages/connector/mcp.mjs`) is a thin façade over that
 connector: it registers one binding per conversation, identified by what the
 harness itself put in the façade's environment or tool-call metadata — never by
@@ -182,8 +189,9 @@ unnecessary and it is kept only as the fallback reference.
 - The last-mile interfaces are private to each harness and may change across
   versions; the connector pins the ranges it was verified against.
 - Connector credentials are per machine. The browser side of the room still
-  binds to loopback; its link is a plain WebSocket, so remote exposure needs only
-  a TLS reverse proxy, which is separate work.
+  binds to loopback and still speaks a plain WebSocket of its own; moving it onto
+  Socket.IO is a separate decision. Remote exposure needs only a TLS reverse
+  proxy, which is separate work.
 - WebGPU initialization fallback exists; full device-loss recovery needs work.
 - Responses may wait while the working agent is busy. There is no independent
   instant-response interlocutor.

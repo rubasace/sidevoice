@@ -1,26 +1,51 @@
 import asyncio
-import json
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 from sidevoice.room_history import RoomHistory
-from sidevoice.connector_control import ConnectorControl, PROTOCOL
+from sidevoice.connector_control import ConnectorControl, ConnectorPeer, PROTOCOL
 
 
-class FakeSocket:
-    def __init__(self, incoming=()):
-        self.sent = []; self.incoming = list(incoming); self.closed = None; self.accepted = False
-    async def accept(self): self.accepted = True
-    async def send_json(self, frame): self.sent.append(frame)
-    async def receive_json(self):
-        if not self.incoming:
-            await asyncio.sleep(3600)
-        item = self.incoming.pop(0)
-        if isinstance(item, Exception): raise item
-        return item
-    async def close(self, code=1000): self.closed = code
+class FakePeer(ConnectorPeer):
+    """A connector at the other end of nothing: what the room said to it, and what it answers.
+
+    `answers` are handed back to the deliveries in order — an exception is raised instead, which
+    is how the room learns one went nowhere. Asked for a delivery with no answer queued, it stays
+    silent for ever, which is exactly what a harness that is thinking looks like: the delivery
+    hangs in flight until the test settles it or takes it away.
+    """
+
+    def __init__(self, answers=()):
+        self.sent, self.asked, self.answers, self.disconnected = [], [], list(answers), False
+
+    async def send(self, event, data):
+        self.sent.append((event, data))
+
+    async def request(self, event, data, *, timeout):
+        self.asked.append((event, data))
+        if not self.answers:
+            await asyncio.Event().wait()
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    async def disconnect(self):
+        self.disconnected = True
+
+    def deliveries(self, field):
+        return [data[field] for event, data in self.asked if event == 'input.deliver']
+
+    async def until_asked(self, count):
+        """Wait until the room has actually put that many questions to this connector. A tick
+        chooses what to deliver and hands the asking to the task that will wait for the answer;
+        the pump's own interval is what gives that task room to run."""
+        for _ in range(100):
+            if len(self.asked) >= count:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError(f'only {len(self.asked)} of {count} deliveries were ever asked')
 
 
 class FakeHub:
@@ -34,6 +59,9 @@ class FakeHub:
 
 
 class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
+    """The control plane on its own: what each event means, with a peer that carries nothing.
+    What carries them is `test_connector_socketio`."""
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.journal = RoomHistory(Path(self.temp.name) / 'room.sqlite3')
@@ -42,29 +70,36 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.connector_id, self.token = self.journal.redeem_pairing_code(self.journal.create_pairing_code())
 
     async def asyncTearDown(self):
+        for binding_id in list(self.control.inflight):
+            self.control.drop_inflight(binding_id)
         self.temp.cleanup()
 
     def queue_input(self, thread, text, message_id='m1'):
         return self.journal.put(id='call:user-turn:' + message_id, thread=thread, role='user', text=text, name='Tú', session='call', revision=1,
                                 status='pending', payload={'thread_id': thread, 'text': text, 'message_id': message_id, 'session_id': 'call', 'revision': 1})
 
-    async def run_connection(self, frames):
-        socket = FakeSocket(frames)
-        task = asyncio.create_task(self.control.connect(socket))
-        await asyncio.sleep(.05)
-        return socket, task
+    async def attach(self, answers=()):
+        peer = FakePeer(answers)
+        await self.control.attach(self.connector_id, peer)
+        return peer
+
+    async def join(self, thread, **extra):
+        """A conversation registered by a connector that is connected, as the wire would do it."""
+        if self.connector_id not in self.control.peers:
+            await self.attach()
+        return await self.control.register(self.connector_id, {'client_ref': thread, 'harness': 'claude',
+                                                               'thread': thread, 'title': 'Trabajo', **extra})
 
     async def test_a_binding_carries_which_model_answers_it(self):
         # Read by the harness from its own launch line, never asked of the model itself.
-        socket = FakeSocket([])
-        await self.control.register(self.connector_id, socket, {'type': 'binding.register', 'client_ref': 'thread-a',
+        await self.control.register(self.connector_id, {'client_ref': 'thread-a',
             'thread': 'thread-a', 'harness': 'claude', 'title': 'A',
             'engine': {'model': 'claude-opus-5', 'effort': 'high', 'thinking': 'adaptive', 'junk': 'x'}})
         binding = self.control.participants()[0]
         self.assertEqual(binding['engine'], {'model': 'claude-opus-5', 'effort': 'high', 'thinking': 'adaptive'},
                          'only the three fields, and nothing invented')
         # A harness that cannot tell says nothing, and nothing is stored.
-        await self.control.register(self.connector_id, socket, {'type': 'binding.register', 'client_ref': 'thread-b',
+        await self.control.register(self.connector_id, {'client_ref': 'thread-b',
             'thread': 'thread-b', 'harness': 'codex', 'title': 'B', 'engine': 'gpt'})
         self.assertIsNone(self.control.participants()[1]['engine'])
 
@@ -107,83 +142,59 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((root / 'room-history.sqlite3').exists(), 'the old database is left for the operator to delete')
 
     async def test_closing_from_the_room_tells_the_connector_and_forgets_the_binding(self):
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
-        ])
-        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        peer = await self.attach()
+        registered = await self.join('sess-1')
         await self.control.close_binding(self.journal.binding(registered['binding_id']))
-        closing = [f for f in socket.sent if f['type'] == 'binding.close']
-        self.assertEqual((closing[0]['binding_id'], closing[0]['thread'], closing[0]['reason']), (registered['binding_id'], 'sess-1', 'closed_from_room'))
+        self.assertEqual(peer.sent, [('binding.close', {'binding_id': registered['binding_id'], 'thread': 'sess-1',
+                                                        'reason': 'closed_from_room'})])
         self.assertFalse(self.control.is_live(registered['binding_id']))
         self.assertIsNone(self.journal.binding_for_thread('sess-1'))
         # Speech from a binding the room closed is refused, so nothing is stored for it.
-        socket.incoming.append({'type': 'speech.publish', 'event_id': 'sp', 'binding_id': registered['binding_id'], 'session_id': 's', 'revision': 1, 'text': 'tarde'})
-        await asyncio.sleep(.1)
-        rejected = [f for f in socket.sent if f['type'] == 'speech.published' and f.get('event_id') == 'sp']
-        self.assertEqual(rejected[0]['status'], 'rejected')
-        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+        late = await self.control.speech(self.connector_id, {'event_id': 'sp', 'binding_id': registered['binding_id'],
+                                                             'session_id': 's', 'revision': 1, 'text': 'tarde'})
+        self.assertEqual(late['status'], 'rejected')
+        self.assertEqual(self.hub.published, [])
 
     async def test_a_read_receipt_marks_the_row_read_only_for_its_own_binding_and_thread(self):
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
-        ])
-        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        registered = await self.join('sess-1')
         row = self.queue_input('sess-1', 'hola', message_id='m-read')
         self.journal.update(row['id'], 'unconfirmed')
         other = self.queue_input('sess-2', 'ajeno', message_id='m-other')
-        socket.incoming.append({'type': 'input.read', 'binding_id': registered['binding_id'], 'message_id': 'm-other', 'session_id': 'call', 'revision': 1})
-        socket.incoming.append({'type': 'input.read', 'binding_id': registered['binding_id'], 'message_id': 'm-read', 'session_id': 'call', 'revision': 1})
-        socket.incoming.append({'type': 'input.read', 'binding_id': registered['binding_id'], 'message_id': 'm-read', 'session_id': 'call', 'revision': 1})
-        await asyncio.sleep(.1)
+        for message_id in ('m-other', 'm-read', 'm-read'):
+            await self.control.read(self.connector_id, {'binding_id': registered['binding_id'], 'message_id': message_id,
+                                                        'session_id': 'call', 'revision': 1})
         self.assertEqual(self.journal.get(row['id'])['status'], 'read')
         self.assertEqual(self.journal.get(other['id'])['status'], 'pending')
         self.assertEqual(self.hub.receipts.count((row['id'], 'read')), 1)
-        task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_a_read_receipt_that_arrives_before_the_delivery_acknowledgement_is_not_downgraded(self):
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
-        ])
-        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
+        peer = await self.attach()
+        registered = await self.join('sess-1')
         row = self.queue_input('sess-1', 'hola', message_id='m-fast')
-        await self.control.tick()   # delivered: the row is in flight, waiting for the harness's answer
-        delivered = [f for f in socket.sent if f['type'] == 'input.deliver' and f['message_id'] == 'm-fast'][0]
+        await self.control.tick(); await peer.until_asked(1)   # in flight, waiting for the harness's answer
+        self.assertEqual(peer.deliveries('message_id'), ['m-fast'])
         self.assertEqual(self.journal.get(row['id'])['status'], 'sending')
         await self.control.read(self.connector_id, {'binding_id': registered['binding_id'], 'message_id': 'm-fast', 'session_id': 'call', 'revision': 1})
         self.assertEqual(self.journal.get(row['id'])['status'], 'read')
-        await self.control.acknowledge(self.connector_id, {'event_id': delivered['event_id'], 'status': 'unknown', 'detail': 'inbox'})
+        await self.control.acknowledge(self.connector_id, row['id'], {'status': 'unknown', 'detail': 'inbox'})
         self.assertEqual(self.journal.get(row['id'])['status'], 'read', 'a late acknowledgement never takes the second tick away')
-        self.assertEqual([status for (_, status) in self.hub.receipts if _ == row['id']][-1], 'read')
-        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+        self.assertEqual([status for (identifier, status) in self.hub.receipts if identifier == row['id']][-1], 'read')
 
     async def test_the_harness_saying_it_is_working_reaches_the_browsers_on_that_conversation(self):
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
-        ])
-        registered = [f for f in socket.sent if f['type'] == 'binding.registered'][0]
-        socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id'], 'working': True,
-                                'turn_id': 'turn-1', 'turn_phase': 'start', 'session_id': 'call', 'revision': 4})
-        socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id'], 'working': False,
-                                'turn_id': 'turn-1', 'turn_phase': 'end', 'session_id': 'call', 'revision': 4})
-        socket.incoming.append({'type': 'input.working', 'binding_id': registered['binding_id']})
+        registered = await self.join('sess-1')
+        for said in ({'working': True, 'turn_id': 'turn-1', 'turn_phase': 'start', 'session_id': 'call', 'revision': 4},
+                     {'working': False, 'turn_id': 'turn-1', 'turn_phase': 'end', 'session_id': 'call', 'revision': 4},
+                     {}):
+            await self.control.working(self.connector_id, {'binding_id': registered['binding_id'], **said})
         # A binding this connector does not hold says nothing about anyone.
-        socket.incoming.append({'type': 'input.working', 'binding_id': 'someone-elses', 'working': True})
-        await asyncio.sleep(.1)
+        await self.control.working(self.connector_id, {'binding_id': 'someone-elses', 'working': True})
         self.assertEqual(self.hub.working, [
             ('sess-1', True, {'turn_id': 'turn-1', 'turn_phase': 'start', 'session_id': 'call', 'revision': 4}),
             ('sess-1', False, {'turn_id': 'turn-1', 'turn_phase': 'end', 'session_id': 'call', 'revision': 4})])
-        task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_binding_keeps_declared_capabilities_and_missing_ones_are_unknown(self):
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'codex', 'thread': 'thread-1',
-             'capabilities': {'deliver': 'supported', 'working': 'unsupported', 'inspectInbound': False}},
-        ])
+        await self.join('thread-1', harness='codex',
+                        capabilities={'deliver': 'supported', 'working': 'unsupported', 'inspectInbound': False})
         participant = self.control.participants()[0]
         self.assertEqual(participant['capabilities'], {
             'deliver': 'supported',
@@ -193,7 +204,6 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
             'sessionIdentity': 'unknown',
         })
         self.assertIsNone(self.journal.binding(participant['id']).get('inbound'))
-        task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_an_unknown_binding_id_from_its_connector_is_a_fresh_registration(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id='gone-after-restart')
@@ -201,97 +211,104 @@ class ControlPlaneTests(unittest.IsolatedAsyncioTestCase):
         again = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1', binding_id=binding['id'])
         self.assertEqual(again['id'], binding['id'])
 
-    async def test_hello_must_authenticate_and_match_protocol(self):
-        bad, task = await self.run_connection([{'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': 'wrong'}])
-        await task
-        self.assertEqual(bad.closed, 1008); self.assertEqual(bad.sent, [])
-        old, task = await self.run_connection([{'type': 'connector.hello', 'protocol': 99, 'connector_id': self.connector_id, 'token': self.token}])
-        await task
-        self.assertEqual(old.closed, 1008); self.assertEqual(old.sent[0]['type'], 'connector.error')
-
     async def test_register_mints_id_focuses_nobody_and_an_unknown_id_is_a_fresh_registration(self):
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'title': 'Trabajo'},
-            {'type': 'binding.register', 'client_ref': 'r2', 'harness': 'claude', 'thread': 'sess-1', 'binding_id': 'not-mine'},
-            {'type': 'binding.register', 'client_ref': 'r3', 'harness': 'claude', 'thread': 'bad thread!'},
-        ])
-        kinds = [f['type'] for f in socket.sent]
-        self.assertEqual(kinds[:2], ['connector.welcome', 'binding.registered'])
-        registered = socket.sent[1]
-        self.assertEqual(registered['client_ref'], 'r1'); self.assertEqual(registered['thread'], 'sess-1')
+        await self.attach()
+        registered = await self.join('sess-1')
+        self.assertEqual((registered['client_ref'], registered['thread']), ('sess-1', 'sess-1'))
         self.assertTrue(self.control.is_live(registered['binding_id']))
         self.assertEqual(self.hub.activated, [], 'a conversation joining selects itself for no browser')
         # An id the room does not know (it restarted) is not foreign: the same connector gets its binding back.
-        reused = [f for f in socket.sent if f['type'] == 'binding.registered' and f['client_ref'] == 'r2']
-        self.assertEqual(reused[0]['binding_id'], registered['binding_id'])
-        self.assertEqual([f['client_ref'] for f in socket.sent if f['type'] == 'binding.rejected'], ['r3'])
+        reused = await self.control.register(self.connector_id, {'client_ref': 'r2', 'harness': 'claude',
+                                                                 'thread': 'sess-1', 'binding_id': 'not-mine'})
+        self.assertEqual(reused['binding_id'], registered['binding_id'])
+        with self.assertRaises(ValueError):
+            await self.control.register(self.connector_id, {'client_ref': 'r3', 'harness': 'claude', 'thread': 'bad thread!'})
         self.assertEqual(self.journal.binding_for_thread('sess-1')['id'], registered['binding_id'])
-        task.cancel(); await asyncio.gather(task, return_exceptions=True)
 
     async def test_delivery_is_one_at_a_time_acknowledged_by_owner_and_retried_on_failure(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
-        socket = FakeSocket(); self.control.sockets[self.connector_id] = socket; self.control.live[binding['id']] = self.connector_id
-        self.queue_input('sess-1', 'primero', 'm1'); self.queue_input('sess-1', 'segundo', 'm2')
+        peer = await self.attach()
+        self.control.live[binding['id']] = self.connector_id
+        first = self.queue_input('sess-1', 'primero', 'm1'); self.queue_input('sess-1', 'segundo', 'm2')
+        await self.control.tick(); await peer.until_asked(1)
+        self.assertEqual(peer.deliveries('text'), ['primero'])
+        self.assertEqual(peer.deliveries('message_id'), ['m1'])
         await self.control.tick()
-        self.assertEqual([f['text'] for f in socket.sent], ['primero'])
-        self.assertEqual(socket.sent[0]['message_id'], 'm1')
-        await self.control.tick()
-        self.assertEqual(len(socket.sent), 1)
-        event = socket.sent[0]['event_id']
-        await self.control.acknowledge('someone-else', {'event_id': event, 'status': 'accepted'})
-        self.assertEqual(self.journal.get(event)['status'], 'sending')
-        await self.control.acknowledge(self.connector_id, {'event_id': event, 'status': 'failed'})
-        row = self.journal.get(event)
+        self.assertEqual(len(peer.asked), 1, 'one at a time keeps the user\'s turns in order')
+        await self.control.acknowledge('someone-else', first['id'], {'status': 'accepted'})
+        self.assertEqual(self.journal.get(first['id'])['status'], 'sending')
+        await self.control.acknowledge(self.connector_id, first['id'], {'status': 'failed'})
+        row = self.journal.get(first['id'])
         self.assertEqual((row['status'], row['attempts']), ('pending', 1))
         self.assertGreater(row['next_attempt'], int(time.time()))  # backed off, not hammered
-        await self.control.tick(now=time.time() + 100)
-        self.assertEqual([f['text'] for f in socket.sent], ['primero', 'primero'])
-        await self.control.acknowledge(self.connector_id, {'event_id': socket.sent[1]['event_id'], 'status': 'accepted'})
-        self.assertEqual(self.journal.get(event)['status'], 'delivered')
-        self.assertIn((event, 'delivered'), self.hub.receipts)
-        await self.control.tick(now=time.time() + 100)
-        self.assertEqual([f['text'] for f in socket.sent][-1], 'segundo')
+        await self.control.tick(now=time.time() + 100); await peer.until_asked(2)
+        self.assertEqual(peer.deliveries('text'), ['primero', 'primero'])
+        await self.control.acknowledge(self.connector_id, first['id'], {'status': 'accepted'})
+        self.assertEqual(self.journal.get(first['id'])['status'], 'delivered')
+        self.assertIn((first['id'], 'delivered'), self.hub.receipts)
+        await self.control.tick(now=time.time() + 100); await peer.until_asked(3)
+        self.assertEqual(peer.deliveries('text')[-1], 'segundo')
 
-    async def test_ack_timeout_and_disconnect_return_deliveries_to_the_queue(self):
+    async def test_an_unanswered_delivery_is_backed_off_and_an_unasked_one_goes_straight_back(self):
+        # The two ways a delivery fails are not the same: a harness that is thinking has to be
+        # given room, while a connection that died must not make the next one wait for it.
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
-        socket = FakeSocket(); self.control.sockets[self.connector_id] = socket; self.control.live[binding['id']] = self.connector_id
-        self.control.ack_timeout = 1
-        self.queue_input('sess-1', 'hola')
-        await self.control.tick(now=1000)
-        await self.control.tick(now=1002)  # ack never came
-        self.assertEqual(self.journal.get(socket.sent[0]['event_id'])['status'], 'pending')
+        peer = await self.attach([TimeoutError('input.deliver went unacknowledged for 1s')])
+        self.control.live[binding['id']] = self.connector_id
+        row = self.queue_input('sess-1', 'hola')
+        await self.control.tick()
+        await self.settled()
+        timed_out = self.journal.get(row['id'])
+        self.assertEqual((timed_out['status'], timed_out['attempts']), ('pending', 1))
+        self.assertGreater(timed_out['next_attempt'], int(time.time()), 'a harness that is thinking is given room')
         self.assertEqual(self.control.inflight, {})
+
+        peer.answers.append(RuntimeError('the socket went'))
+        await self.control.tick(now=time.time() + 100)
+        await self.settled()
+        dropped = self.journal.get(row['id'])
+        self.assertEqual(dropped['status'], 'pending')
+        self.assertLessEqual(dropped['next_attempt'], int(time.time()), 'what was never asked waits for nothing')
+        self.assertEqual(self.control.inflight, {})
+
+    async def test_a_connection_that_goes_puts_what_it_held_back_in_the_outbox(self):
+        binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
+        peer = await self.attach()
+        self.control.live[binding['id']] = self.connector_id
+        row = self.queue_input('sess-1', 'hola')
+        await self.control.tick()
+        self.assertEqual(self.journal.get(row['id'])['status'], 'sending')
+        self.control.detach(self.connector_id, peer)
+        self.assertEqual(self.journal.get(row['id'])['status'], 'pending')
+        self.assertEqual(self.control.inflight, {})
+        self.assertFalse(self.control.is_live(binding['id']))
 
     async def test_speech_lands_in_room_only_from_owning_connector(self):
         binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
-        socket = FakeSocket(); self.control.live[binding['id']] = self.connector_id
-        await self.control.speech(self.connector_id, socket, {'event_id': 'e1', 'binding_id': binding['id'], 'session_id': 'call', 'revision': 3, 'text': 'Hola', 'language': 'es'})
-        self.assertEqual(socket.sent[-1]['status'], 'queued'); self.assertEqual(socket.sent[-1]['event_id'], 'e1')
+        self.control.live[binding['id']] = self.connector_id
+        published = await self.control.speech(self.connector_id, {'event_id': 'e1', 'binding_id': binding['id'], 'session_id': 'call', 'revision': 3, 'text': 'Hola', 'language': 'es'})
+        self.assertEqual(published['status'], 'queued'); self.assertEqual(published['event_id'], 'e1')
         self.assertEqual((self.hub.published[0].thread_id, self.hub.published[0].revision), ('sess-1', 3))
-        await self.control.speech('intruder', socket, {'event_id': 'e2', 'binding_id': binding['id'], 'session_id': 'call', 'revision': 3, 'text': 'Hola'})
-        self.assertEqual(socket.sent[-1]['status'], 'rejected'); self.assertEqual(len(self.hub.published), 1)
-
-    async def test_heartbeat_detects_a_dead_connector_and_frees_its_bindings(self):
-        binding = self.journal.register_binding(self.connector_id, harness='claude', thread='sess-1')
-        socket, task = await self.run_connection([
-            {'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token},
-            {'type': 'binding.register', 'client_ref': 'r1', 'harness': 'claude', 'thread': 'sess-1', 'binding_id': binding['id']},
-        ])
-        self.assertTrue(self.control.is_live(binding['id']))
-        await asyncio.wait_for(task, timeout=2)
-        self.assertEqual(socket.closed, 1001)
-        self.assertEqual([f['type'] for f in socket.sent if f['type'] == 'heartbeat'][:1], ['heartbeat'])
-        self.assertFalse(self.control.is_live(binding['id']))
-        self.assertNotIn(self.connector_id, self.control.sockets)
+        refused = await self.control.speech('intruder', {'event_id': 'e2', 'binding_id': binding['id'], 'session_id': 'call', 'revision': 3, 'text': 'Hola'})
+        self.assertEqual(refused['status'], 'rejected'); self.assertEqual(len(self.hub.published), 1)
 
     async def test_newer_connection_from_same_connector_wins(self):
-        first, t1 = await self.run_connection([{'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token}])
-        second, t2 = await self.run_connection([{'type': 'connector.hello', 'protocol': PROTOCOL, 'connector_id': self.connector_id, 'token': self.token}])
-        self.assertIs(self.control.sockets[self.connector_id], second)
-        self.assertEqual(first.closed, 1000)
-        for t in (t1, t2): t.cancel()
-        await asyncio.gather(t1, t2, return_exceptions=True)
+        first = await self.attach()
+        second = await self.attach()
+        self.assertIs(self.control.peers[self.connector_id], second)
+        self.assertTrue(first.disconnected)
+        self.assertFalse(second.disconnected)
+        # The loser's own teardown arrives afterwards and takes nothing from the winner.
+        self.control.detach(self.connector_id, first)
+        self.assertIs(self.control.peers[self.connector_id], second)
+
+    async def settled(self):
+        """Let the tasks that are waiting for acknowledgements reach their conclusion."""
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if not any(entry[2] and not entry[2].done() for entry in self.control.inflight.values()):
+                return
+        raise AssertionError('a delivery never settled')
 
 
 class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
@@ -311,12 +328,35 @@ class PairingCodeSurfaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(from_elsewhere.status_code, 403)
             from_the_room = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://testserver'})
             self.assertEqual(from_the_room.status_code, 200)
-            self.assertRegex(from_the_room.json()['code'], r'^[0-9A-F]{8}$')
+            # Sixty bits in an alphabet that survives being read aloud: no I, L, O or U, three groups of four.
+            self.assertRegex(from_the_room.json()['code'], r'^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$')
             # Redeeming needs no browser: that step is the machine's, with the code the person carried to it.
-            redeemed = client.post('/api/connectors/pair', json={'code': from_the_room.json()['code'], 'host': 'laptop'})
+            # Redeemed as a person would type or dictate it: lower case, no dashes, a look-alike letter.
+            spoken = from_the_room.json()['code'].replace('-', ' ').lower().replace('0', 'o', 1)
+            redeemed = client.post('/api/connectors/pair', json={'code': spoken, 'host': 'laptop'})
             self.assertEqual(redeemed.status_code, 200)
             self.assertIn('token', redeemed.json())
+            self.assertEqual(redeemed.json()['protocol'], PROTOCOL)
             # The room's own page can list what is paired, and see that this one is not connected yet.
             listed = client.get('/api/connectors', headers={'Origin': 'http://testserver'})
             self.assertEqual(listed.status_code, 200, listed.text)
             self.assertEqual([(c['host'], c['connected']) for c in listed.json()['connectors']], [('laptop', False)])
+
+    async def test_guessing_codes_locks_redemption_for_the_whole_room(self):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from sidevoice.connector_control import mount_connector_control
+        app = FastAPI()
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        journal = RoomHistory(Path(temp.name) / 'room.sqlite3')
+        mount_connector_control(app, FakeHub(journal), heartbeat_seconds=5, redemption_limit={'failures': 3, 'window': 600})
+        with TestClient(app) as client:
+            real = client.post('/api/connectors/pairing-code', headers={'Origin': 'http://testserver'}).json()['code']
+            for _ in range(3):
+                self.assertEqual(client.post('/api/connectors/pair', json={'code': 'NOPE-NOPE-NOPE'}).status_code, 403)
+            # The fourth wrong one, and even the right one, are refused for the window: a guesser learns nothing.
+            locked = client.post('/api/connectors/pair', json={'code': 'NOPE-NOPE-NOPE'})
+            self.assertEqual(locked.status_code, 429)
+            self.assertTrue(int(locked.headers['Retry-After']) > 0)
+            self.assertEqual(client.post('/api/connectors/pair', json={'code': real}).status_code, 429)
+            self.assertIsNotNone(journal.pairing_codes.get(RoomHistory.normalise_pairing_code(real)), 'the real code was not spent by the lockout')

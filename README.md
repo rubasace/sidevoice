@@ -132,7 +132,7 @@ Other things you may want, each a single command:
 
 ```sh
 npx -y @sidevoice/uplink@0.4.3 install           # again after an upgrade: re-points the harness, removes the old copy
-npx -y @sidevoice/uplink@0.4.3 pair https://voice.example ABCD1234   # pair by hand instead of from a conversation
+npx -y @sidevoice/uplink@0.4.3 pair https://voice.example ABCD-EFGH-JKMN   # pair by hand instead of from a conversation
 npx -y @sidevoice/uplink@0.4.3 uninstall         # unregister, stop the connector, remove copies and credential
 ```
 
@@ -159,7 +159,7 @@ renders is paid for once and shared with everyone listening. See
 ## Architecture
 
 ```text
-Browser mic -> STT -> durable outbox (room) -> WebSocket -> connector (one per host)
+Browser mic -> STT -> durable outbox (room) -> Socket.IO -> connector (one per host)
                                                   -> Claude Code: the session's own inbox socket
                                                   -> Codex: `codex queue --thread <id>`
 

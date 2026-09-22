@@ -1,6 +1,10 @@
 pipecat-ai[websocket,silero,whisper]==1.10.0
 uvicorn==0.53.0
 
+# The connector link: `/api/connectors/socket.io`, mounted on the room's own app.
+# See sidevoice/connector_socketio.py and docs/SOCKETIO_MIGRATION.md.
+python-socketio==5.17.0
+
 scipy==1.18.1
 
 # Observability. The room starts none of this unless OTEL_EXPORTER_OTLP_ENDPOINT names a collector;

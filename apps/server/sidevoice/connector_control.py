@@ -5,19 +5,22 @@ authenticates each connection, registers a binding per conversation it serves,
 receives the room's queued input for those bindings and returns exact-event
 acknowledgements; speech it publishes lands in the room like any other.
 The room's journal is the only delivery state; nothing here is a second outbox.
+
+What carries the events is not this module's business: it talks to a *peer* — one
+connector, reachable — and `connector_socketio` is what implements it.
 """
 import asyncio
 import json
 import re
 import time
 import uuid
-from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from .telemetry import redelivered
 
-PROTOCOL = 1
+PROTOCOL = 2
 HEARTBEAT_SECONDS = 15.0
 HEARTBEAT_MISSES = 2
 ACK_TIMEOUT_SECONDS = 60.0
@@ -42,17 +45,62 @@ def harness_capabilities(value):
             for name in HARNESS_CAPABILITIES}
 
 
+class ConnectorPeer:
+    """One connector, reachable — whatever carries the events.
+
+    `send` says something and moves on. `request` asks, and answers with that connector's
+    acknowledgement of *this* event; it raises `TimeoutError` when the answer never came inside
+    the budget it was given, and anything else when the question could not be put at all. The
+    room acts on that difference — an unanswered delivery is backed off, an unasked one goes
+    straight back into the outbox — which is why the difference is in the interface.
+    """
+
+    async def send(self, event, data):
+        raise NotImplementedError
+
+    async def request(self, event, data, *, timeout):
+        raise NotImplementedError
+
+    async def disconnect(self):
+        """A newer connection from the same connector won: let this one go."""
+
+
 class PairingRequest(BaseModel):
     code: str = Field(min_length=4, max_length=32)
     host: str = Field(default='', max_length=200)
 
 
+class RedemptionLimit:
+    """How many wrong codes the room will hear before it stops listening for a while.
+
+    A pairing code is 60 bits and lives three minutes; what makes that a wall rather than a budget is
+    that guessing is cut off. The count is for the whole room, not per caller: behind a proxy a source
+    address is whatever the last hop says, and this room has one user, for whom a lockout means
+    waiting out the window rather than losing anything. A correct code is refused during the lockout
+    too — silently accepting it would tell a guesser which attempts were the right ones."""
+
+    def __init__(self, failures=10, window=600):
+        self.failures, self.window, self.recent = failures, window, []
+
+    def blocked(self, now=None):
+        now = now if now is not None else time.time()
+        self.recent = [at for at in self.recent if at > now - self.window]
+        return len(self.recent) >= self.failures
+
+    def failed(self, now=None):
+        self.recent.append(now if now is not None else time.time())
+
+    def retry_after(self, now=None):
+        now = now if now is not None else time.time()
+        return max(1, int(self.recent[0] + self.window - now)) if self.recent else 0
+
+
 class ConnectorControl:
     def __init__(self, journal, hub, *, heartbeat_seconds=HEARTBEAT_SECONDS, ack_timeout=ACK_TIMEOUT_SECONDS):
         self.journal, self.hub = journal, hub
-        self.sockets = {}    # connector_id -> live WebSocket
+        self.peers = {}      # connector_id -> ConnectorPeer, one per live connection
         self.live = {}       # binding_id -> connector_id, only while that connector is connected
-        self.inflight = {}   # binding_id -> (event_id, started_at): one delivery at a time per binding
+        self.inflight = {}   # binding_id -> (event_id, started_at, task): one delivery at a time per binding
         self.heartbeat_seconds, self.ack_timeout = heartbeat_seconds, ack_timeout
         self.pump_task = None
 
@@ -67,7 +115,34 @@ class ConnectorControl:
     # ----- presence -----
 
     def is_live(self, binding_id):
-        return self.live.get(binding_id) in self.sockets
+        return self.live.get(binding_id) in self.peers
+
+    async def attach(self, connector_id, peer):
+        """This connection now speaks for that connector; a newer one from the same connector wins."""
+        previous = self.peers.get(connector_id)
+        self.peers[connector_id] = peer
+        if previous is not None and previous is not peer:
+            await previous.disconnect()
+
+    def detach(self, connector_id, peer):
+        """That connection is gone. Its bindings stop being live and whatever was in flight goes back
+        into the room's outbox, to be delivered again when the connector returns."""
+        if not connector_id or self.peers.get(connector_id) is not peer:
+            return
+        del self.peers[connector_id]
+        for binding_id in [b for b, c in self.live.items() if c == connector_id]:
+            del self.live[binding_id]
+            inflight = self.drop_inflight(binding_id)
+            if inflight:
+                self.journal.defer(inflight[0], immediate=True)
+
+    def drop_inflight(self, binding_id):
+        """Forget the delivery in flight for this binding and stop waiting for its acknowledgement —
+        unless it is that very wait asking, which would be cancelling the ground under itself."""
+        entry = self.inflight.pop(binding_id, None)
+        if entry and entry[2] is not None and entry[2] is not asyncio.current_task():
+            entry[2].cancel()
+        return entry
 
     def participants(self):
         return [{**binding, 'capabilities': harness_capabilities(binding.get('capabilities')),
@@ -104,39 +179,64 @@ class ConnectorControl:
             await asyncio.sleep(.25)
 
     async def tick(self, now=None):
+        # Nothing here watches the clock on a delivery already asked: the acknowledgement's budget
+        # is the peer's to keep, and `settle` is what hears it run out. One clock, one owner.
         now = now if now is not None else time.time()
-        for binding_id, (event_id, started) in list(self.inflight.items()):
-            if now - started > self.ack_timeout:
-                del self.inflight[binding_id]
-                self.journal.defer(event_id)
         for row in self.journal.pending(now):
             binding = self.journal.binding_for_thread(row['thread'])
             if not binding or binding['id'] in self.inflight:
                 continue
-            socket = self.sockets.get(self.live.get(binding['id']) or '')
-            if socket is None:
+            connector_id = self.live.get(binding['id']) or ''
+            peer = self.peers.get(connector_id)
+            if peer is None:
                 continue
             payload = json.loads(row['payload'] or '{}')
+            data = {'event_id': row['id'], 'binding_id': binding['id'],
+                    'thread': row['thread'], 'text': row['text'],
+                    'channel': payload.get('channel', 'voice'), 'session_id': payload.get('session_id'),
+                    'revision': payload.get('revision'), 'message_id': payload.get('message_id')}
             self.journal.update(row['id'], 'sending')
-            self.inflight[binding['id']] = (row['id'], now)
-            try:
-                await socket.send_json({'type': 'input.deliver', 'event_id': row['id'], 'binding_id': binding['id'],
-                                        'thread': row['thread'], 'text': row['text'],
-                                        'channel': payload.get('channel', 'voice'), 'session_id': payload.get('session_id'),
-                                        'revision': payload.get('revision'), 'message_id': payload.get('message_id')})
-            except Exception:
-                self.inflight.pop(binding['id'], None)
-                self.journal.defer(row['id'], immediate=True)
-                redelivered(row['thread'], binding.get('harness'))
+            self.inflight[binding['id']] = (row['id'], now, asyncio.create_task(
+                self.settle(connector_id, binding, peer, data)))
 
-    async def acknowledge(self, connector_id, message):
-        event_id, status = message.get('event_id'), message.get('status')
-        for binding_id, (inflight_event, _) in list(self.inflight.items()):
+    async def settle(self, connector_id, binding, peer, data):
+        """Puts one delivery to a connector and waits for its acknowledgement. How it is carried is
+        the peer's business; what the answer means is read in one place.
+
+        The asking lives here, and not in the tick that chose it, so that a connection lost in
+        between takes the whole question away with it rather than leaving one nobody will ask. A
+        harness that never answered is backed off like one that refused — it may well be busy —
+        while a delivery that could not be put at all goes straight back, because the next
+        connector to hold this binding can have it now."""
+        event_id = data['event_id']
+        try:
+            acknowledgement = await peer.request('input.deliver', data, timeout=self.ack_timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            entry = self.inflight.get(binding['id'])
+            if entry and entry[0] == event_id:
+                self.inflight.pop(binding['id'], None)
+                if isinstance(error, TimeoutError):
+                    self.journal.defer(event_id)
+                else:
+                    self.journal.defer(event_id, immediate=True)
+                    redelivered(binding['thread'], binding.get('harness'))
+            return
+        if acknowledgement:
+            await self.acknowledge(connector_id, event_id, acknowledgement)
+
+    async def acknowledge(self, connector_id, event_id, message):
+        """What one delivery's acknowledgement means. Which delivery it answers is the transport's
+        to know — it carries the answer on the question — so the event id is passed in rather than
+        read back out of what the connector said."""
+        status = message.get('status')
+        for binding_id, (inflight_event, _, _) in list(self.inflight.items()):
             if inflight_event != event_id:
                 continue
             if self.live.get(binding_id) != connector_id:
                 return  # Not this connector's delivery: ignore, never let a stranger settle it.
-            del self.inflight[binding_id]
+            self.drop_inflight(binding_id)
             row = self.journal.get(event_id)
             if row and row['status'] == 'read':
                 # The conversation already admitted it (a hook said so, faster than this acknowledgement
@@ -186,39 +286,36 @@ class ConnectorControl:
 
     # ----- bindings and speech -----
 
-    async def register(self, connector_id, socket, message):
+    async def register(self, connector_id, message):
+        """Returns what acknowledges `binding.register`, or raises ValueError with the reason it was
+        refused — a rejection the transport says in its own words."""
         client_ref = message.get('client_ref')
         thread = message.get('thread')
         if not isinstance(thread, str) or not THREAD_PATTERN.match(thread):
-            await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': 'Invalid conversation identifier'})
-            return
-        try:
-            inbound = message.get('inbound') if isinstance(message.get('inbound'), dict) else None
-            binding = self.journal.register_binding(connector_id, harness=str(message.get('harness') or 'unknown')[:40],
-                                                    thread=thread, title=(message.get('title') or None) and str(message['title'])[:200],
-                                                    binding_id=message.get('binding_id'), inbound=inbound,
-                                                    capabilities=harness_capabilities(message.get('capabilities')),
-                                                    engine=engine_of(message.get('engine')))
-        except ValueError as error:
-            await socket.send_json({'type': 'binding.rejected', 'client_ref': client_ref, 'error': str(error)})
-            return
+            raise ValueError('Invalid conversation identifier')
+        inbound = message.get('inbound') if isinstance(message.get('inbound'), dict) else None
+        binding = self.journal.register_binding(connector_id, harness=str(message.get('harness') or 'unknown')[:40],
+                                                thread=thread, title=(message.get('title') or None) and str(message['title'])[:200],
+                                                binding_id=message.get('binding_id'), inbound=inbound,
+                                                capabilities=harness_capabilities(message.get('capabilities')),
+                                                engine=engine_of(message.get('engine')))
         self.live[binding['id']] = connector_id
         self.hub.clear_conversation_working(binding['thread'])
         # A conversation joining the room selects itself for nobody: which conversation a browser
         # talks to is that browser's choice (and the reason a call must never jump on a connect).
-        await socket.send_json({'type': 'binding.registered', 'client_ref': client_ref, 'binding_id': binding['id'], 'thread': binding['thread']})
+        return {'client_ref': client_ref, 'binding_id': binding['id'], 'thread': binding['thread']}
 
     async def close_binding(self, record):
         """The user closed this conversation's voice from the room: its connector forgets the binding."""
         connector_id = self.live.pop(record['id'], None)
         self.journal.deactivate_binding(record['connector'], record['id'])
-        self.inflight.pop(record['id'], None)
+        self.drop_inflight(record['id'])
         self.hub.clear_conversation_working(record['thread'])
-        socket = self.sockets.get(connector_id or '')
-        if socket is not None:
+        peer = self.peers.get(connector_id or '')
+        if peer is not None:
             try:
-                await socket.send_json({'type': 'binding.close', 'binding_id': record['id'], 'thread': record['thread'],
-                                        'reason': 'closed_from_room'})
+                await peer.send('binding.close', {'binding_id': record['id'], 'thread': record['thread'],
+                                                  'reason': 'closed_from_room'})
             except Exception:
                 pass
 
@@ -230,92 +327,31 @@ class ConnectorControl:
             self.journal.deactivate_binding(connector_id, binding_id)
             if record:
                 self.hub.clear_conversation_working(record['thread'])
-            inflight = self.inflight.pop(binding_id, None)
+            inflight = self.drop_inflight(binding_id)
             if inflight:
                 self.journal.defer(inflight[0], immediate=True)
 
-    async def speech(self, connector_id, socket, message):
+    async def speech(self, connector_id, message):
+        """Returns what acknowledges `speech.publish`. A refusal is that same answer with a status,
+        not an error: the connector's outbox must be able to stop holding what the room will never
+        take."""
         from .presentation import Speech
-        reply = {'type': 'speech.published', 'event_id': message.get('event_id')}
+        reply = {'event_id': message.get('event_id')}
         binding = self.journal.binding(message.get('binding_id'))
         if not binding or self.live.get(binding['id']) != connector_id:
-            await socket.send_json({**reply, 'status': 'rejected', 'error': 'Unknown binding'})
-            return
+            return {**reply, 'status': 'rejected', 'error': 'Unknown binding'}
         try:
             speech = Speech(thread_id=binding['thread'], session_id=str(message.get('session_id') or ''),
                             revision=int(message.get('revision') or 0), text=str(message.get('text') or ''),
                             utterance_id=str(message.get('utterance_id') or uuid.uuid4()), language=message.get('language'))
-            result = await self.hub.publish(speech)
-            await socket.send_json({**reply, **result})
+            return {**reply, **await self.hub.publish(speech)}
         except HTTPException as error:
-            await socket.send_json({**reply, 'status': 'rejected', 'error': str(error.detail)})
+            return {**reply, 'status': 'rejected', 'error': str(error.detail)}
         except Exception as error:
-            await socket.send_json({**reply, 'status': 'rejected', 'error': str(error) or type(error).__name__})
-
-    # ----- one connection -----
-
-    async def connect(self, socket: WebSocket):
-        await socket.accept()
-        connector_id = None
-        try:
-            hello = await asyncio.wait_for(socket.receive_json(), timeout=10)
-            if hello.get('type') != 'connector.hello' or not self.journal.authenticate_connector(hello.get('connector_id'), hello.get('token')):
-                await socket.close(code=1008); return
-            if hello.get('protocol') != PROTOCOL:
-                await socket.send_json({'type': 'connector.error', 'error': f'Unsupported protocol; server speaks {PROTOCOL}'})
-                await socket.close(code=1008); return
-            connector_id = hello['connector_id']
-            previous = self.sockets.get(connector_id)
-            self.sockets[connector_id] = socket
-            if previous is not None:
-                try:
-                    await previous.close(code=1000)  # A newer connection from the same connector wins.
-                except Exception:
-                    pass
-            await socket.send_json({'type': 'connector.welcome', 'protocol': PROTOCOL, 'heartbeat_seconds': self.heartbeat_seconds})
-            missed, nonce = 0, None
-            while True:
-                try:
-                    message = await asyncio.wait_for(socket.receive_json(), timeout=self.heartbeat_seconds)
-                except asyncio.TimeoutError:
-                    if nonce is not None:
-                        missed += 1
-                    if missed >= HEARTBEAT_MISSES:
-                        await socket.close(code=1001); return
-                    nonce = uuid.uuid4().hex
-                    await socket.send_json({'type': 'heartbeat', 'nonce': nonce})
-                    continue
-                kind = message.get('type')
-                if kind == 'heartbeat.ack':
-                    if message.get('nonce') == nonce:
-                        nonce, missed = None, 0
-                elif kind == 'heartbeat':
-                    await socket.send_json({'type': 'heartbeat.ack', 'nonce': message.get('nonce')})
-                elif kind == 'binding.register':
-                    await self.register(connector_id, socket, message)
-                elif kind == 'binding.unregister':
-                    await self.unregister(connector_id, message)
-                elif kind == 'speech.publish':
-                    await self.speech(connector_id, socket, message)
-                elif kind == 'input.ack':
-                    await self.acknowledge(connector_id, message)
-                elif kind == 'input.working':
-                    await self.working(connector_id, message)
-                elif kind == 'input.read':
-                    await self.read(connector_id, message)
-        except (WebSocketDisconnect, asyncio.TimeoutError, ValueError, RuntimeError):
-            pass
-        finally:
-            if connector_id and self.sockets.get(connector_id) is socket:
-                del self.sockets[connector_id]
-                for binding_id in [b for b, c in self.live.items() if c == connector_id]:
-                    del self.live[binding_id]
-                    inflight = self.inflight.pop(binding_id, None)
-                    if inflight:
-                        self.journal.defer(inflight[0], immediate=True)
-
+            return {**reply, 'status': 'rejected', 'error': str(error) or type(error).__name__}
 
 def mount_connector_control(app, hub, **options):
+    redemption = options.pop('redemption_limit', {})
     control = ConnectorControl(hub.journal, hub, **options)
     hub.control = control
     from contextlib import asynccontextmanager
@@ -332,28 +368,33 @@ def mount_connector_control(app, hub, **options):
     app.router.lifespan_context = control_lifespan
 
     from .presentation import require_same_origin as browser_only, require_room_page
+    from .connector_socketio import mount_connector_socketio
 
-    @app.websocket('/api/connectors/ws')
-    async def connector_socket(websocket: WebSocket):
-        await control.connect(websocket)
+    mount_connector_socketio(app, control)
 
     @app.post('/api/connectors/pairing-code')
     async def pairing_code(request: Request):
         # Only the page in the room asks for a code, and it shows it to the person: never a client.
         require_room_page(request)
-        return {'code': hub.journal.create_pairing_code(), 'expires_in': 600}
+        return {'code': hub.journal.create_pairing_code(), 'expires_in': hub.journal.PAIRING_TTL}
+
+    limit = RedemptionLimit(**redemption)
 
     @app.post('/api/connectors/pair')
     async def pair(payload: PairingRequest):
+        if limit.blocked():
+            raise HTTPException(429, 'Demasiados códigos incorrectos; la sala no acepta emparejamientos durante unos minutos.',
+                                headers={'Retry-After': str(limit.retry_after())})
         credential = hub.journal.redeem_pairing_code(payload.code, payload.host)
         if credential is None:
+            limit.failed()
             raise HTTPException(403, 'Código de emparejamiento inválido o caducado.')
         return {'connector_id': credential[0], 'token': credential[1], 'protocol': PROTOCOL}
 
     @app.get('/api/connectors')
     async def connectors(request: Request):
         browser_only(request)
-        return {'connectors': [{**c, 'connected': c['id'] in control.sockets} for c in hub.journal.paired_connectors()],
+        return {'connectors': [{**c, 'connected': c['id'] in control.peers} for c in hub.journal.paired_connectors()],
                 'bindings': control.participants()}
 
     return control
