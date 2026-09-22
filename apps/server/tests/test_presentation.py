@@ -246,26 +246,27 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertNotEqual(rows[0]['id'], rows[1]['id'])
 
     async def test_outbox_delivers_original_target_without_a_connected_call(self):
-        from sidevoice.connector_control import ConnectorControl, WebSocketPeer
+        from sidevoice.connector_control import ConnectorControl
+        from test_connector_control import FakePeer
         control = ConnectorControl(self.hub.journal, self.hub)
-        sent = []
-        class FakeSocket:
-            async def send_json(self, frame): sent.append(frame)
+        self.addCleanup(lambda: [control.drop_inflight(b) for b in list(control.inflight)])
+        peer = FakePeer()
         binding = self.hub.journal.register_binding('conn-1', harness='test', thread='a')
-        control.peers['conn-1'] = WebSocketPeer(FakeSocket()); control.live[binding['id']] = 'conn-1'
+        control.peers['conn-1'] = peer; control.live[binding['id']] = 'conn-1'
         await self.hub.select(self.c.id, 'a')
         self.c.user_started(); self.c.enqueue_input('Para A')
         await self.hub.select(self.c.id, 'b')
         self.c.disconnect()
-        await control.tick()
-        self.assertEqual(len(sent), 1)
-        self.assertEqual((sent[0]['type'], sent[0]['thread'], sent[0]['text']), ('input.deliver', 'a', 'Para A'))
+        await control.tick(); await peer.until_asked(1)
+        self.assertEqual([event for event, _ in peer.asked], ['input.deliver'])
+        self.assertEqual((peer.asked[0][1]['thread'], peer.asked[0][1]['text']), ('a', 'Para A'))
         self.assertEqual(self.hub.journal.history()[0]['status'], 'sending')
         await control.tick()
-        self.assertEqual(len(sent), 1)  # one delivery in flight per binding
-        await control.acknowledge('conn-2', {'event_id': sent[0]['event_id'], 'status': 'accepted'})
+        self.assertEqual(len(peer.asked), 1)  # one delivery in flight per binding
+        event_id = peer.asked[0][1]['event_id']
+        await control.acknowledge('conn-2', event_id, {'status': 'accepted'})
         self.assertEqual(self.hub.journal.history()[0]['status'], 'sending')  # a stranger cannot settle it
-        await control.acknowledge('conn-1', {'event_id': sent[0]['event_id'], 'status': 'accepted'})
+        await control.acknowledge('conn-1', event_id, {'status': 'accepted'})
         self.assertEqual(self.hub.journal.history()[0]['status'], 'delivered')
 
     async def test_app_lifespan_starts_and_stops_durable_delivery(self):

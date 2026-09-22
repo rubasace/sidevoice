@@ -174,24 +174,24 @@ class MultiClientRoomTests(RoomFixture):
         self.assertEqual(len({row['id'] for row in rows}), 2)
 
     async def test_the_outbox_delivers_each_participant_exactly_once_in_order(self):
-        from sidevoice.connector_control import ConnectorControl, WebSocketPeer
+        from sidevoice.connector_control import ConnectorControl
+        from test_connector_control import FakePeer
         control = ConnectorControl(self.hub.journal, self.hub)
-        sent = []
-        class FakeSocket:
-            async def send_json(self, frame): sent.append(frame)
+        self.addCleanup(lambda: [control.drop_inflight(b) for b in list(control.inflight)])
+        peer = FakePeer()
         binding = self.hub.journal.register_binding('conn-1', harness='test', thread='task')
-        control.peers['conn-1'] = WebSocketPeer(FakeSocket()); control.live[binding['id']] = 'conn-1'
+        control.peers['conn-1'] = peer; control.live[binding['id']] = 'conn-1'
         first, second = self.browser('one'), self.browser('two')
         for client, text in ((first, 'De la primera'), (second, 'De la segunda')):
             client.user_started(); client.speaking = False
             client.enqueue_input(text)
-        for _ in range(2):
-            await control.tick()
-            await control.acknowledge('conn-1', {'event_id': sent[-1]['event_id'], 'status': 'accepted'})
+        for turn in (1, 2):
+            await control.tick(); await peer.until_asked(turn)
+            await control.acknowledge('conn-1', peer.asked[-1][1]['event_id'], {'status': 'accepted'})
         await control.tick()
-        self.assertEqual([frame['text'] for frame in sent], ['De la primera', 'De la segunda'])
-        self.assertEqual(len({frame['event_id'] for frame in sent}), 2)
-        self.assertEqual([frame['session_id'] for frame in sent], ['one', 'two'])
+        self.assertEqual(peer.deliveries('text'), ['De la primera', 'De la segunda'])
+        self.assertEqual(len(set(peer.deliveries('event_id'))), 2)
+        self.assertEqual(peer.deliveries('session_id'), ['one', 'two'])
 
     async def test_a_receipt_reaches_the_browser_that_spoke_and_no_other(self):
         first, second = self.browser('one'), self.browser('two')
