@@ -2,15 +2,20 @@ import { expect, test, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { act } from "react";
 import { TranscriptPanel } from "./TranscriptPanel";
+import { CallToolbar } from "../call/CallToolbar";
 import { RoomProvider } from "../../app/RoomProvider";
 import { createRoomStore } from "../../state/room-store";
 
 vi.mock("../../services/room-session-controller.js", () => ({}));
 
-test("the transcript header carries the lights on the left and the models on the right, and no live line", () => {
+test("the call bar carries the lights at its left edge and the models at its right; the transcript header only the title", () => {
   const store = createRoomStore();
-  render(<RoomProvider store={store}><TranscriptPanel /></RoomProvider>);
+  render(<RoomProvider store={store}><TranscriptPanel /><CallToolbar /></RoomProvider>);
   expect(document.getElementById("live")).toBeNull();
+  expect(document.querySelector(".transcript-head .status-column")).toBeNull();
+  const bar = document.querySelector("footer.call-bar")!;
+  expect(bar.firstElementChild!.id).toBe("capability-column");
+  expect(bar.lastElementChild!.id).toBe("engine-column");
   act(() => {
     store.patch({ ws: {}, stream: {}, echoFacts: { aec: false }, screenLock: { state: "on", note: "" },
       roomBinding: { thread_id: "t-1", binding_id: "b-1", title: "Sidevoice" },

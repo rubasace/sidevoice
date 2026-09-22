@@ -50,12 +50,15 @@ export interface ParticipantView {
   /** Honest activity support: unsupported and unknown are different messages. */
   activityNote?: string | null;
   detail?: string;
-  /** The line under the title: machine, thinking, unread, and a reach that is not normal — never "listening". */
+  /** The line under the title: unread, and a reach that is not normal — never "listening" or "thinking",
+   *  the dot says both. */
   subtitle: string;
   working: boolean;
   /** The machine this conversation runs on, by the name it gave when it paired; null when unknown. */
   machine?: string | null;
   machineId?: string | null;
+  /** The harness the conversation runs in ("claude", "codex"), shown as its icon; null when unknown. */
+  harness?: string | null;
 }
 
 /** One machine paired with this room, as its row reads. A revoked machine is still a row: it stays
@@ -63,9 +66,8 @@ export interface ParticipantView {
 export interface MachineView {
   id: string;
   host: string;
-  /** Operating system, connector version and harnesses, in one line — whatever of it the machine said. */
+  /** Operating system and connector version in one line — whatever of it the machine said. */
   description: string;
-  harnesses: string[];
   connected: boolean;
   revoked: boolean;
   state: "connected" | "offline" | "revoked";

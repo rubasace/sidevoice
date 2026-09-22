@@ -41,7 +41,7 @@ export function MachineList() {
           </button>
           {open[machine.id] && (
             <div className="machine-details">
-              <span className="machine-detail">{[machine.stateLabel, machine.conversationsLabel, ...machine.harnesses].filter(Boolean).join(" · ")}</span>
+              <span className="machine-detail">{[machine.stateLabel, machine.conversationsLabel].filter(Boolean).join(" · ")}</span>
               <span className="machine-detail muted">{[machine.pairedLabel, machine.seenLabel].filter(Boolean).join(" · ")}</span>
               {asking === machine.id ? (
                 <div className="machine-confirm" role="group" aria-label={`Confirmar para ${machine.host}`}>

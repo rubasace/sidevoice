@@ -60,3 +60,20 @@ export function SpeakerIcon({ size = 24 }: IconProps) {
 export function HangupIcon({ size = 30 }: IconProps) {
   return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 15v-4c4-4 12-4 16 0v4l-5-1v-3a12 12 0 0 0-6 0v3z"/></svg>;
 }
+
+/** The harness a conversation runs in, as a mark: Claude's starburst, Codex's prompt. */
+export function ClaudeIcon({ className, size = 12 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true"><path d="M11 2h2v6.2l3.9-4.8 1.5 1.3-3.9 4.8 5.9-1.9.6 1.9-5.9 1.9 5.9 1.9-.6 1.9-5.9-1.9 3.9 4.8-1.5 1.3-3.9-4.8V22h-2v-6.2l-3.9 4.8-1.5-1.3 3.9-4.8-5.9 1.9-.6-1.9L9.4 12 3.5 10.1l.6-1.9 5.9 1.9-3.9-4.8 1.5-1.3L11 8.2V2Z" /></svg>;
+}
+
+export function CodexIcon({ className, size = 12 }: IconProps) {
+  return <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m8 9 3 3-3 3M13 15h3" /></svg>;
+}
+
+export const HARNESS_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
+
+export function HarnessIcon({ harness, size = 12 }: { harness: string; size?: number }) {
+  if (harness === "claude") return <ClaudeIcon size={size} />;
+  if (harness === "codex") return <CodexIcon size={size} />;
+  return null;
+}

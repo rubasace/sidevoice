@@ -8,7 +8,7 @@ import { createRoomStore } from "../../state/room-store";
 vi.mock("../../services/room-session-controller.js", () => ({}));
 
 const paired = (extra: Record<string, unknown> = {}) => ({
-  id: "c-1", host: "macbook-pro", platform: "macOS arm64", version: "0.5.0", harnesses: ["claude"],
+  id: "c-1", host: "macbook-pro", platform: "macOS arm64", version: "0.5.0",
   created: 1_700_000_000, last_seen: 1_700_086_000, connected: true, revoked: 0, ...extra,
 });
 
@@ -31,7 +31,8 @@ test("a machine reads as a machine, and revoking asks first — in the row, neve
   expect(row.textContent).toMatch(/0\.5\.0/);
   expect(row.textContent).not.toMatch(/Conectada|c-1/);   // the dot says connected; the rest waits to be asked
   await act(async () => { screen.getByRole("button", { name: "Mostrar detalles de macbook-pro" }).click(); });
-  expect(row.textContent).toMatch(/Conectada · claude/);
+  expect(row.textContent).toMatch(/Conectada/);
+  expect(row.textContent).not.toMatch(/claude/);
   expect(row.textContent).toMatch(/Emparejada hace 1 día/);
 
   // Asking does not revoke; confirming does, and nothing was left to `window.confirm`.

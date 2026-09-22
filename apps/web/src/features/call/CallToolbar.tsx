@@ -2,10 +2,14 @@ import { MicrophoneIcon, SettingsIcon } from "../../components/ui/Icons";
 import { Button } from "../../components/ui/Button";
 import { JoinStatus } from "./JoinStatus";
 import { AudioDeviceSelects, CallButton, DeviceNotes, MicControl, MuteButton } from "./CallIndicators";
+import { CapabilityColumn, EngineColumn } from "../conversation/StatusColumns";
 
+/* The bar's three parts: what this call has switched on at the left edge, the controls island in the
+ * middle, what listens, speaks and thinks at the right edge. Facts at the sides, actions in the middle. */
 export function CallToolbar() {
   return (
     <footer className="call-bar">
+      <CapabilityColumn />
       <div className="controls" id="call-controls">
         <JoinStatus />
         <div id="audio-device-panel" className="audio-devices-panel" hidden>
@@ -23,6 +27,7 @@ export function CallToolbar() {
           <CallButton />
         </div>
       </div>
+      <EngineColumn />
     </footer>
   );
 }

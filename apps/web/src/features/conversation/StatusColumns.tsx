@@ -1,8 +1,8 @@
 import { useRoomStore } from "../../state/room-store";
 
-/* Two columns in the transcript header, one at each edge, each a single column of rows aligned left.
- * Left: what this call has switched on, with a light per row. Right: what listens, what speaks, what
- * thinks — names, no lights, because a model is not a state. Nothing to open: it is all on screen. */
+/* Two columns at the edges of the call bar, each a single column of rows aligned left. Left: what this
+ * call has switched on, with a light per row. Right: what listens, what speaks, what thinks — names, no
+ * lights, because a model is not a state. Nothing to open: it is all on screen. */
 type StatusRow = { id: string; label: string; value: string; state: "ok" | "warn" | "fail"; note: string };
 
 function StatusColumn({ id, rows, lights, label }: { id: string; rows: StatusRow[]; lights: boolean; label: string }) {

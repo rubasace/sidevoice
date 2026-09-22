@@ -186,12 +186,12 @@ export function participantsView(s) {
         const busy = working(s, p.thread_id);
         // The dot already says "listening"; the line under the title says only what the dot cannot: where the
         // conversation runs, that it is thinking, what is waiting to be read, and a reach that is not normal.
-        const subtitle = [busy ? 'Pensando…' : null, unread ? unread + ' nuevas' : null,
+        const subtitle = [unread ? unread + ' nuevas' : null,
             reach === 'holding' ? 'No puede recibir' : reach === 'offline' && !p.available ? 'Desconectada' : reach === 'offline' ? 'Sin poder recibir' : null]
             .filter(Boolean).join(' · ');
         return { threadId: p.thread_id, title: p.title, selected: p.thread_id === selected, available: !!p.available, switching: s.switching,
             unread, reach, stateLabel: unread && reach !== 'listening' ? base + ' · ' + unread + ' nuevas' : base, subtitle, working: busy,
-            machine: p.machine?.host || null, machineId: p.machine?.id || null,
+            machine: p.machine?.host || null, machineId: p.machine?.id || null, harness: p.harness || null,
             activityNote: workingCapabilityNote(p), detail: p.reach?.detail ? (p.reach.detail + (p.reach.remedy ? '\n\n' + p.reach.remedy : '')) : undefined };
     });
 }
@@ -218,12 +218,11 @@ export function sinceText(seconds, now) {
 export function machinesView(s) {
     return (s.machines || []).map(m => {
         const revoked = !!m.revoked;
-        const harnesses = Array.isArray(m.harnesses) ? m.harnesses : [];
         const conversations = (s.people || []).filter(p => p.machine?.id === m.id).length;
         return { id: m.id, host: m.host || 'Máquina sin nombre', platform: m.platform || '', version: m.version || '', conversations,
             conversationsLabel: conversations === 0 ? '' : conversations === 1 ? '1 conversación' : conversations + ' conversaciones',
-            description: [m.platform, m.version, harnesses.join(' · ')].filter(Boolean).join(' · '),
-            harnesses, connected: !revoked && !!m.connected, revoked,
+            description: [m.platform, m.version].filter(Boolean).join(' · '),
+            connected: !revoked && !!m.connected, revoked,
             state: revoked ? 'revoked' : m.connected ? 'connected' : 'offline',
             stateLabel: revoked ? 'Revocada' : m.connected ? 'Conectada' : 'Desconectada',
             pairedLabel: sinceText(m.created, s.machinesAt) && 'Emparejada ' + sinceText(m.created, s.machinesAt),

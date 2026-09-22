@@ -34,7 +34,10 @@ Checked on Claude Code 2.1.278 and Codex CLI 0.153.2 on 2026-09-21, with a live 
   `~/.claude/projects/<project>/<session id>.jsonl`. A message posted to the session's
   inbox is recorded as `queue-operation` enqueue/dequeue and then as a `user` entry
   (`"Another Claude session sent a message:\n"` + the envelope) the moment the session
-  admits it; the entry's `promptId` names the turn. Measured: the `user` entry appeared
+  admits it; the entry's `promptId` names the turn. A message that arrives while the session
+  is busy is admitted into the running turn instead, recorded as an `attachment` entry of type
+  `queued_command` whose `prompt` is the whole message: the observer reads both shapes, or the
+  read receipt is missed for every message delivered mid-turn. Measured: the `user` entry appeared
   9 ms after the socket write for an idle session, and the connector reported it read
   300 ms later at its 400 ms poll.
 - Codex appends `sessions/YYYY/MM/DD/rollout-<stamp>-<thread id>.jsonl`: `event_msg`
