@@ -795,6 +795,8 @@ function recordMessage(raw, socket) {
         return;
     }
     if (t === 'voice-input-receipt') {
+        if ((d.session_id || state.sessionId) === state.sessionId && ['delivered', 'read', 'unconfirmed', 'not_sent'].includes(d.status))
+            confirmSpokenTurn(d.revision);
         const receiptId = d.history_id || (d.session_id || state.sessionId) + ':user-turn:' + d.revision;
         const row = state.history.find(r => r.thread === d.thread_id && r.segment === receiptId);
         if (row) {
@@ -810,12 +812,15 @@ function recordMessage(raw, socket) {
     if (t === 'voice-user-turn') {
         const key = 'user-turn:' + d.revision, receiptId = (d.session_id || state.sessionId) + ':' + key;
         if (d.phase === 'started') {
+            openSpokenTurn(d.revision);
             state.cancelledInput = false;
             state.userTurn = { key, text: '', thread: d.thread_id };
             state.pendingPhase = 'listening';
             partial('');
         }
         else if (d.phase === 'cancelled') {
+            // Nothing to deliver, or its text now rides the turn that is open: either way this one is done.
+            confirmSpokenTurn(d.revision);
             state.inputReceipts = Object.fromEntries(Object.entries(state.inputReceipts).filter(([id]) => id !== receiptId));
             if (d.merged) { /* the room held this text for the turn now open: same bubble, nothing to remove */
                 state.history = state.history.filter(r => r.segment !== state.sessionId + ':user-turn:' + d.revision);
@@ -976,12 +981,13 @@ async function startCapture(socket,session){if(!micSource)throw Error('No se pud
  const node=new AudioWorkletNode(context,'mic-capture',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit',processorOptions:{sampleRate:session.sample_rate}});captureNode=node;node.port.onmessage=e=>{
   if(captureNode!==node||!micTrack()?.enabled)return;
   // The socket is gone but the call is not: this is what the gap buffer exists for.
-  if(state.ws===socket&&socket.readyState===WebSocket.OPEN)socket.send(e.data);else bufferGapAudio(e.data);
+  if(state.ws===socket&&socket.readyState===WebSocket.OPEN){socket.send(e.data);holdSpokenAudio(e.data)}else bufferGapAudio(e.data);
  };source.connect(node);node.connect(context.destination)/* reachable from the destination so it keeps running; its output stays silent */}
 function disconnect() {
     latencyTurns.clear();
     latencyActiveTurn = null;
     window.sidevoiceTelemetry?.endCall?.('left');
+    forgetSpokenAudio();
     ++connectEpoch;
     state.connecting = false;
     releaseScreenWakeLock();
@@ -1109,7 +1115,34 @@ async function lostConnection(event,epoch,context){
  * dropped and the bubble says so rather than the page quietly shortening what was said. */
 const GAP_FRAME_MS=20,GAP_VOICE_PEAK=.02,GAP_MARGIN_MS=250,GAP_SLICE_SAMPLES=32768;
 const gap={armed:false,rate:16000,chunks:[],samples:0,dropped:false,startedAt:0};
-function armGapBuffer(rate){Object.assign(gap,{armed:true,rate:rate||16000,chunks:[],samples:0,dropped:false,startedAt:0})}
+function armGapBuffer(rate){
+ Object.assign(gap,{armed:true,rate:rate||16000,chunks:[],samples:0,dropped:false,startedAt:0});
+ // What was being said when the socket went is the start of the gap, not something already delivered (#102).
+ if(unconfirmed.samples){Object.assign(gap,{chunks:[...unconfirmed.chunks],samples:unconfirmed.samples,dropped:unconfirmed.dropped,startedAt:unconfirmed.startedAt})}
+ forgetSpokenAudio();
+}
+/* ----- what was said and not yet confirmed (#102) -----
+ * A room that restarts mid-sentence loses the turn it was holding: the audio lived in its memory only. So
+ * the page keeps its own copy of what it streamed from the moment a turn opens until the room confirms
+ * the message reached the conversation (delivered or read), or the turn ends with nothing to deliver. If
+ * the socket goes first, that copy becomes the head of the gap and is sent again as one catch-up message,
+ * joined to whatever was said while the room was away. Bounded like the gap. */
+const unconfirmed={open:new Set(),chunks:[],samples:0,dropped:false,startedAt:0};
+function holdSpokenAudio(data){
+ if(!unconfirmed.open.size)return;
+ const chunk=new Int16Array(data.slice?data.slice(0):data);if(!chunk.length)return;
+ if(!unconfirmed.chunks.length)unconfirmed.startedAt=Date.now()-Math.round(chunk.length/(captureRate||16000)*1000);
+ unconfirmed.chunks.push(chunk);unconfirmed.samples+=chunk.length;
+ const limit=(captureRate||16000)*GAP_BUFFER_SECONDS;
+ while(unconfirmed.samples>limit){const oldest=unconfirmed.chunks.shift();unconfirmed.samples-=oldest.length;unconfirmed.dropped=true;
+  unconfirmed.startedAt+=Math.round(oldest.length/(captureRate||16000)*1000)}
+}
+function forgetSpokenAudio(){unconfirmed.open.clear();Object.assign(unconfirmed,{chunks:[],samples:0,dropped:false,startedAt:0})}
+function openSpokenTurn(revision){unconfirmed.open.add(revision)}
+function confirmSpokenTurn(revision){
+ unconfirmed.open.delete(revision);
+ if(!unconfirmed.open.size)Object.assign(unconfirmed,{chunks:[],samples:0,dropped:false,startedAt:0});
+}
 function disarmGapBuffer(){Object.assign(gap,{armed:false,chunks:[],samples:0,dropped:false,startedAt:0})}
 function bufferGapAudio(data){
  if(!gap.armed)return;

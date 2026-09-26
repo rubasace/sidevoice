@@ -1048,6 +1048,21 @@ test('A late or session-less refresh does not cancel the reply the room is repla
  assert.equal(s.run("activeSpeech"),null);
 });
 
+test('What was being said when the room went away is sent again with the gap, and what was confirmed is not (#102)',()=>{
+ const s=setup();
+ s.run("captureRate=16000;openSpokenTurn(3);holdSpokenAudio(new Int16Array([1200,-1500,900]).buffer)");
+ assert.equal(s.run('unconfirmed.samples'),3);
+ s.run('armGapBuffer(16000)');
+ assert.equal(s.run('gap.samples'),3,'the open turn is the head of the gap');
+ assert.equal(s.run('unconfirmed.samples'),0);
+ s.run('disarmGapBuffer()');
+ // Confirmed before the drop: nothing to send again.
+ s.run("openSpokenTurn(4);holdSpokenAudio(new Int16Array([1200,1300]).buffer);confirmSpokenTurn(4);armGapBuffer(16000)");
+ assert.equal(s.run('gap.samples'),0);
+ // Nothing is held while no turn is open.
+ s.run("disarmGapBuffer();holdSpokenAudio(new Int16Array([5,6]).buffer)");
+ assert.equal(s.run('unconfirmed.samples'),0);
+});
 test('A reply this page already played to the end is not played again when the room offers it after a drop (#59)',async()=>{
  const s=setup(),posted=[];
  s.context.fetch=async(path,options)=>{posted.push([path,options?.body&&JSON.parse(options.body)]);return {ok:true,json:async()=>({})}};
