@@ -524,6 +524,14 @@ async function copyLatencyAggregates(){
 // the store derives whether the silence between voices can carry the ambient breath.
 // The sound itself, its level and why it cannot open a microphone turn are in RoomVoice.startPresence.
 let presenceTimer=null;
+function bedQuietReason(session){
+ const harness=state.harness[targetId()];
+ if(!session.working)return 'not_working'+(typeof harness==='boolean'?' · harness '+harness:' · no harness');
+ if(session.speaker!=='nobody')return 'speaker '+session.speaker;
+ if(state.activeSpeech)return 'reply queued';
+ if(state.voicePreferences?.presence_sound==='off')return 'turned off';
+ return 'not_quiet';
+}
 function presenceReceipt(id,status){
  roomStore.batch(()=>{state.now=Date.now();state.turns=recordReceipt(state,id,status,state.now)});
 }
@@ -541,7 +549,10 @@ function reconcileSession(view){
  }
  if(view.session.bed!==bedPlaying){
   if(view.session.bed){bedPlaying=true;bedPlaying=!!window.roomVoice?.startPresence?.({volume:PRESENCE_LEVEL,reason:'working_quiet'})}
-  else {bedPlaying=false;window.roomVoice?.stopPresence?.('not_quiet_or_working')}
+  else {bedPlaying=false;window.roomVoice?.stopPresence?.(bedQuietReason(view.session))}
+  // The room hears about every change of the bed at once, with its reason: "no breath while it worked"
+  // is otherwise a question nobody can answer afterwards (2026-09-26).
+  reportAudioHealth(view.session.bed?'bed-on':'bed-off');
  }
  publishSessionView(view);
 }
@@ -883,6 +894,10 @@ function recordMessage(raw, socket) {
     }
     if (t === 'voice-conversation' && d.thread_id) {
         if (typeof d.working === 'boolean') {
+            // Only changes are written down (the connector repeats itself every two seconds): what the harness
+            // said, next to what the bed did, is what tells a silent breath from a lost signal.
+            if (state.harness[d.thread_id] !== d.working)
+                window.roomVoice?.note?.('harness', (d.working ? 'working' : 'idle') + (d.turn_phase ? ' · ' + d.turn_phase : '') + (d.thread_id === targetId() ? '' : ' · other'));
             state.harness = { ...state.harness, [d.thread_id]: d.working };
             if (d.turn_phase === 'end' && d.session_id === state.sessionId && d.thread_id === targetId()
                     && Number.isInteger(d.revision)) {
