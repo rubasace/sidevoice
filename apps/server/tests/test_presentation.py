@@ -410,7 +410,7 @@ class RoomTests(IsolatedAsyncioTestCase):
         rows=self.hub.journal.pending()
         self.assertEqual(len(rows),2)
         self.assertEqual(rows[0]['text'],'Texto escrito\ncon dos líneas')
-        self.assertNotEqual(rows[0]['revision'],rows[1]['revision'])
+        self.assertNotEqual(rows[0]['id'],rows[1]['id'])
         self.assertEqual(json.loads(rows[0]['payload'])['thread_id'],'a')
 
     async def test_text_rejects_changed_destination_and_conflicting_retry(self):

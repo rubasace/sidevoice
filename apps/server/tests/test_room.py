@@ -248,6 +248,22 @@ class MultiClientRoomTests(RoomFixture):
         self.assertIn(('task', first.turn_revision), first.latency.turns)
         self.assertEqual(second.latency.turns, {})
 
+    async def test_a_typed_message_does_not_cut_the_reply_that_is_playing(self):
+        # Asked for on 2026-09-21: pasting a text while a reply plays must not stop it (#67).
+        client = self.browser('one')
+        await self.reply(client, 'sounding', text='Te estoy contando algo')
+        client.transition('sounding', 'playing')
+        before = client.revision
+        await self.hub.send_text('Te paso esto mientras', client.id, 'task', client.target['binding_id'], 'typed-1')
+        self.assertEqual(client.revision, before)
+        self.assertEqual(self.hub.utterances['sounding'].clients['one']['status'], 'playing')
+        self.assertNotIn('voice-cancel', [event['type'] for event in client.heard])
+        await client.playback_finished('sounding', before)
+        self.assertEqual(self.hub.utterances['sounding'].clients['one']['status'], 'playback_finished',
+                         'its ending still counts: the reply was never made stale')
+        # A reply to the typed text is as current as any other.
+        await self.hub.speak('Recibido', 'answer', client.id, before)
+
     async def test_typed_input_opens_a_room_turn_without_taking_over_another_microphone(self):
         first, second = self.browser('one'), self.browser('two')
         second.user_started()
@@ -255,7 +271,7 @@ class MultiClientRoomTests(RoomFixture):
         result = await self.hub.send_text('Escribo yo', first.id, 'task',
                                           first.target['binding_id'], 'msg-1')
         self.assertEqual(result['revision'], first.revision)
-        self.assertEqual(first.revision, 1)
+        self.assertEqual(first.revision, 0, 'typing is not a new epoch: it interrupts nothing (#67)')
         self.assertEqual(second.turn_revision, microphone_turn)
         self.assertTrue(second.speaking)
         row = self.hub.journal.get(result['id'])

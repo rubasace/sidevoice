@@ -839,14 +839,11 @@ class Room:
             raise HTTPException(409, 'The connection or conversation changed. The text was not sent.')
         if not text.strip():
             raise HTTPException(422, 'Write a message.')
-        # A typed submission is this browser's own turn: it interrupts this browser's playback only.
-        client.revision += 1
-        client.halt('interrupted', 'user_interrupted', preserve_waiting=True)
+        # Typing is not barging in (#67): a text handed over while a reply plays leaves it playing, and the
+        # replies already on their way stay current. Only a voice interrupts. The text rides this browser's
+        # current epoch, so whatever answers it is as current as everything else.
         client.enqueue_input(text, target=dict(client.target), revision=client.revision,
                              message_id=message_id, history_id=row_id)
-        if not client.speaking:
-            self.quiet(client)
-        await self.fan_out([client])
         return {'accepted': True, 'id': row_id, 'revision': client.revision}
 
     def delivery_status(self, row_id, status):
