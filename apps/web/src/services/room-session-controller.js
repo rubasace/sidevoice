@@ -1093,6 +1093,7 @@ async function lostConnection(event,epoch,context){
  try{
   for(let attempt=0;attempt<RECONNECT_DELAYS_MS.length;attempt++){
    joinStatus('reconnect',{detail:attempt?String(attempt+1):''});
+   if(attempt)window.roomVoice?.signal?.('retry');
    await new Promise(resolve=>setTimeout(resolve,RECONNECT_DELAYS_MS[attempt]));
    if(epoch!==connectEpoch)return;
    try{
