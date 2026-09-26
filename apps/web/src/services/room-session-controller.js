@@ -1744,9 +1744,12 @@ function applyLockScreen(on){
  if(session){
   // A click arrives as play or pause, whichever the platform thinks is next. "Play" always means open the
   // microphone; "pause" toggles it, because a click may reach us as pause even while muted.
-  const handlers={play:()=>setMic(true),pause:()=>setMic(!micLive())};
+  // "togglemicrophone" is where an AirPods press would arrive while the microphone is open, once Safari turns
+  // on the mute API it already has behind a flag (WebKit 54a7d6e278); Safari's own mute control uses it too.
+  const handlers={play:()=>setMic(true),pause:()=>setMic(!micLive()),
+   togglemicrophone:details=>setMic(typeof details?.isActivating==='boolean'?details.isActivating:!micLive())};
   for(const [action,run] of Object.entries(handlers)){
-   try{session.setActionHandler(action,on?()=>{window.roomVoice?.note?.('media-session',action+' · '+(micLive()?'live':'muted'));run()}:null)}catch{}
+   try{session.setActionHandler(action,on?details=>{window.roomVoice?.note?.('media-session',action+' · '+(micLive()?'live':'muted'));run(details)}:null)}catch{}
   }
   try{session.metadata=on?new MediaMetadata({title:'Sidevoice',artist:conversationTitle(targetId())||'Llamada'}):null}catch{}
  }
