@@ -268,3 +268,11 @@ body,
 /* Listen again: a small play mark on the bubble's own line, beside the time (#100). */
 .chat-meta .listen-again { order:-1;margin-right:auto;width:1.6rem;height:1.6rem;padding:0;display:inline-grid;place-items:center;border-radius:50%;color:var(--sv-muted) }
 .chat-meta .listen-again:hover { color:#e8edf1;background:#ffffff14 }
+
+/* On a phone the text box waits behind a keyboard button at the conversation's lower right. */
+.compose-toggle { display:none }
+@media (max-width:750px) {
+  .transcript { position:relative }
+  .compose-toggle:not([hidden]) { display:grid;place-items:center;position:absolute;right:.75rem;bottom:.75rem;z-index:5;width:2.6rem;height:2.6rem;padding:0;border-radius:50%;border:1px solid #303742;background:#252b33;color:#c9d2db;box-shadow:0 6px 18px #0007 }
+  .text-composer:not([data-open]) { display:none }
+}
