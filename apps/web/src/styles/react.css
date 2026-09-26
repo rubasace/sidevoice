@@ -262,7 +262,7 @@ body,
    mark on the conversation's, both after the time and the same size. */
 .chat-meta time,.chat-meta .receipt { display:inline-flex;align-items:center;height:.9rem }
 .chat-meta .listen-again { width:.9rem;height:.9rem;min-height:0;padding:0;border:0;display:inline-grid;place-items:center;border-radius:50%;background:transparent;color:var(--sv-muted) }
-.chat-meta .listen-again svg { width:.75rem;height:.75rem }
+.chat-meta .listen-again svg,.chat-meta .receipt svg { width:12px;height:12px;display:block }
 .chat-meta .listen-again:hover { color:#e8edf1;background:#ffffff14 }
 
 /* On a phone the text box waits behind a keyboard button in the conversation head's right corner. */

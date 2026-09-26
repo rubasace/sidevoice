@@ -6,7 +6,7 @@
  * The exceptions are below: a product's own mark and the logos of other people's products are not
  * generic icons and are drawn here. */
 import {
-  AudioLines, Captions, ChevronDown, Copy, Cpu, Ear, Keyboard, MessagesSquare, Mic, Monitor, MoreHorizontal,
+  AudioLines, Captions, Check, CheckCheck, ChevronDown, CircleAlert, Clock3, Copy, Cpu, Ear, Keyboard, MessagesSquare, Mic, Monitor, MoreHorizontal,
   Phone, PhoneOff, Play, Plug, RefreshCw, Settings, SkipForward, SlidersHorizontal, Speech, Volume2, Wrench, X,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -40,6 +40,12 @@ export const HangupIcon = mark(PhoneOff, 22);
 export const SkipIcon = mark(SkipForward, 22);
 export const ListenAgainIcon = mark(Play, 14);
 export const KeyboardIcon = mark(Keyboard, 20);
+
+// ----- a message's delivery, drawn like the play mark beside it so both sit on the time's line at one size
+export const SentIcon = mark(Check, 12);
+export const ReadIcon = mark(CheckCheck, 12);
+export const PendingIcon = mark(Clock3, 12);
+export const UncertainIcon = mark(CircleAlert, 12);
 
 // ----- what answers, when a row names it
 export const ModelsIcon = mark(Cpu, 16);
