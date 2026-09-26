@@ -157,8 +157,14 @@ def mount_presentation(app):
         return client if client and client.connected else None
 
     @app.get('/api/presentation/history')
-    async def history(thread_id: str | None = None):
-        return {'messages': hub.journal.history(thread_id)}
+    async def history(thread_id: str | None = None, session_id: str | None = None):
+        messages = hub.journal.history(thread_id)
+        # Asked by a browser in the call, each reply also says whether that browser can hear it again (#100).
+        client = client_for(session_id) if session_id else None
+        if client is not None:
+            again = hub.replayable_rows(client)
+            messages = [{**row, 'replayable': True} if row.get('id') in again else row for row in messages]
+        return {'messages': messages}
 
     @app.get('/api/presentation/voice-catalog')
     async def voice_catalog(request: Request):
@@ -400,6 +406,10 @@ def mount_presentation(app):
         uid, rev = payload.get('utterance_id'), payload.get('revision')
         if not client:
             raise HTTPException(409, 'Stale utterance.')
+        if payload.get('status') == 'skipped':
+            if not isinstance(rev, int) or not await client.skipped(uid, rev):
+                raise HTTPException(409, 'Stale utterance.')
+            return {'status': 'skipped'}
         if payload.get('status') in {'cancelled_unplayed', 'cancelled_playing'}:
             if (not isinstance(rev, int)
                     or not client.browser_cancelled(uid, rev, payload['status'] == 'cancelled_playing')):
@@ -420,6 +430,18 @@ def mount_presentation(app):
         else:
             raise HTTPException(400, 'Invalid state.')
         return {'status': status}
+
+    @app.post('/api/presentation/replay')
+    async def replay_reply(payload: dict, request: Request):
+        """Play a reply again from its bubble, for the browser asking (#100)."""
+        require_same_origin(request)
+        client = client_for(payload.get('session_id'))
+        if not client or not client.connected:
+            raise HTTPException(409, 'Entra en la llamada para escucharla.')
+        history_id = payload.get('history_id')
+        if not isinstance(history_id, str) or not history_id:
+            raise HTTPException(422, 'Falta la respuesta.')
+        return await hub.replay_one(client, history_id)
 
     @app.post('/api/presentation/speak')
     async def speak(payload: Speech, request: Request):

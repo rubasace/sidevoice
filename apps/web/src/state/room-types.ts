@@ -16,6 +16,8 @@ export interface ChatMessage {
   draft?: boolean;
   cancellable?: boolean;
   interrupted?: boolean;
+  /** The room can play this reply again for this browser right now (#100). */
+  replayable?: boolean;
   delivery?: string;
   audio?: string;
   audioNote?: string;
@@ -119,6 +121,8 @@ export interface LanguageModelView {
 
 export interface SidevoiceActions {
   cancelInput(): Promise<void>;
+  skipReply(): Promise<void>;
+  replayReply(historyId: string | null): Promise<void>;
   toggleMic(): void;
   selectAudioDevice(kind: "input" | "output", id: string): Promise<void>;
   toggleCall(): Promise<void>;

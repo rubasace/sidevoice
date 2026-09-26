@@ -355,6 +355,24 @@ class RoomClient:
         # An older unplayed cancellation cannot roll back a newer dispatch.
         return True
 
+    async def skipped(self, uid, revision):
+        """This listener skipped the reply on purpose: it is done for this browser, and the next one plays.
+
+        Unlike an interruption there is no turn behind it, so nothing else stops and nothing waits: the
+        reply is marked heard-enough (`interrupted`, `user_skipped`), never offered again, and the queue
+        moves on at once instead of waiting for the person's next turn."""
+        utterance = self.utterances.get(uid)
+        entry = utterance.clients.get(self.id) if utterance else None
+        if not utterance or not entry or revision > utterance.revision:
+            return False
+        if entry['status'] not in CLIENT_TERMINAL:
+            self.transition(uid, 'interrupted', 'user_skipped')
+        self.pending = deque(item for item in self.pending if item != uid)
+        if self.active == uid:
+            self.active = None
+        await self.dispatch()
+        return True
+
     async def playback_finished(self, uid, revision):
         if not self.is_current(uid, revision):
             return
@@ -728,6 +746,52 @@ class Room:
         if queued:
             await self.fan_out([client])
         return {'replayed': queued, 'skipped': skipped}
+
+    def replayable_rows(self, client):
+        """Which replies this browser could hear again right now: the ones whose audio the room holds.
+        Nothing is rendered for a repetition — not a paid render twice, not a browser render the room never
+        saw (that changes when the browser is one more provider, #94). A bubble offers it only for these."""
+        from .language_settings import load_settings, resolve_voice
+        rows = set()
+        for utterance in self.utterances.values():
+            if utterance.replay_of or not utterance.row_id:
+                continue
+            try:
+                choice = resolve_voice(client.settings or load_settings(), utterance.language)
+            except ValueError:
+                continue
+            if choice['provider'] != 'kokoro' and self.stored_audio(utterance, choice) is not None:
+                rows.add(utterance.row_id)
+        return rows
+
+    async def replay_one(self, client, row_id):
+        """Play one reply again, on request, for this browser only (#100).
+
+        Only from the audio the room holds: nothing is rendered or bought again. It goes to the head of this
+        browser's queue, after what is playing."""
+        from .language_settings import load_settings, resolve_voice
+        original = next((u for u in reversed(list(self.utterances.values()))
+                         if u.row_id == row_id and not u.replay_of), None)
+        if original is None or original.thread_id != client.target.get('thread_id'):
+            raise HTTPException(404, 'La sala ya no tiene esa respuesta.')
+        try:
+            choice = resolve_voice(client.settings or load_settings(), original.language)
+        except ValueError:
+            choice = {'provider': 'kokoro'}
+        if choice['provider'] == 'kokoro' or self.stored_audio(original, choice) is None:
+            raise HTTPException(410, 'La sala ya no tiene el audio de esa respuesta.')
+        echo = Utterance(original.id + ':again:' + uuid.uuid4().hex[:8], original.text, language=original.language,
+                         thread_id=original.thread_id, revision=client.revision, row_id=original.row_id, at=original.at)
+        echo.replay_of = original.id
+        echo.clients[client.id] = {'status': 'queued', 'reason': 'replay'}
+        self.utterances[echo.id] = echo
+        client.pending.appendleft(echo.id)
+        if client.on_browser_event:
+            client.on_browser_event({'type': 'voice-replay', 'data': {
+                'session_id': client.id, 'thread_id': original.thread_id,
+                'replies': [{'utterance_id': echo.id, 'history_id': original.row_id}], 'skipped': []}})
+        await self.fan_out([client])
+        return {'utterance_id': echo.id, 'history_id': original.row_id}
 
     # ----- what the agent publishes -----
 

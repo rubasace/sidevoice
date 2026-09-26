@@ -1,6 +1,6 @@
 import { useRoomStore } from "../../state/room-store";
 import { Button } from "../../components/ui/Button";
-import { CallIcon, HangupIcon, MicrophoneIcon, SpeakerIcon } from "../../components/ui/Icons";
+import { CallIcon, HangupIcon, MicrophoneIcon, SkipIcon, SpeakerIcon } from "../../components/ui/Icons";
 import { NativeSelect } from "../../components/ui/NativeSelect";
 import { cn } from "../../lib/cn";
 
@@ -28,6 +28,19 @@ export function EchoCover() {
   );
 }
 
+
+/* Skip what is playing without saying anything: speaking over a reply to stop it also sends a message,
+ * and cancelling that was the only way out. Only this browser skips; the reply stays written. */
+export function SkipButton() {
+  const playing = useRoomStore((state) => !!state.facts.activeSpeech);
+  if (!playing) return null;
+  return (
+    <Button id="skip-reply" variant="ghost" aria-label="Saltar lo que está sonando" title="Saltar lo que está sonando"
+      onClick={() => void window.sidevoiceActions?.skipReply()}>
+      <SkipIcon size={24} />
+    </Button>
+  );
+}
 
 export function MuteButton() {
   const mic = useRoomStore((state) => state.mic);

@@ -35,6 +35,8 @@ test("keeps the active transcribed draft cancellable after listening text disapp
   const cancelInput = vi.fn().mockResolvedValue(undefined);
   window.sidevoiceActions = {
     cancelInput,
+    skipReply: vi.fn().mockResolvedValue(undefined),
+    replayReply: vi.fn().mockResolvedValue(undefined),
     toggleMic: vi.fn(),
     selectAudioDevice: vi.fn().mockResolvedValue(undefined),
     toggleCall: vi.fn().mockResolvedValue(undefined),
@@ -90,4 +92,16 @@ test("says under the bubble that a reply is being repeated because this browser 
   ])} />);
   expect(screen.getByText("Repitiendo lo que no oíste")).toBeInTheDocument();
   expect(screen.getByText("No se pudo repetir · la sala ya no tiene ese audio")).toBeInTheDocument();
+});
+
+test("offers listening again only for a reply whose audio the room still holds", () => {
+  const replayReply = vi.fn().mockResolvedValue(undefined);
+  window.sidevoiceActions = { ...window.sidevoiceActions!, replayReply };
+  const { container, rerender } = render(<MessageList conversation={view([message({ segment: "a:voice:1", role: "assistant", text: "Con audio", replayable: true })])} />);
+  const button = container.querySelector<HTMLButtonElement>(".listen-again");
+  expect(button).not.toBeNull();
+  button!.click();
+  expect(replayReply).toHaveBeenCalledWith("a:voice:1");
+  rerender(<MessageList conversation={view([message({ segment: "a:voice:1", role: "assistant", text: "Sin audio" })])} />);
+  expect(container.querySelector(".listen-again")).toBeNull();
 });

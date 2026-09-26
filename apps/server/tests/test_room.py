@@ -145,6 +145,36 @@ class MultiClientRoomTests(RoomFixture):
         self.assertEqual(self.row('stuck', 'one')['audio_reason'], 'unconfirmed')
         self.assertEqual(client.active, 'next', 'the queue moved on')
 
+    async def test_skipping_a_reply_plays_the_next_at_once_and_it_is_never_offered_again(self):
+        client = self.browser('one')
+        client.audio_grace_seconds = 0
+        await self.reply(client, 'long', text='Una respuesta que no quiero oír')
+        await self.reply(client, 'next', text='La siguiente')
+        client.transition('long', 'playing')
+        self.assertTrue(await client.skipped('long', client.revision))
+        self.assertEqual(self.hub.utterances['long'].clients['one'], {'status': 'interrupted', 'reason': 'user_skipped'})
+        self.assertEqual(client.active, 'next', 'no turn is needed for the queue to move on')
+        self.assertEqual(self.hub.missed_replies(client, seconds=120), [], 'skipped is heard enough')
+
+    async def test_listening_again_uses_only_the_audio_the_room_holds(self):
+        self.voice = ELEVEN
+        client = self.browser('one')
+        client.audio_grace_seconds = 0
+        await self.reply(client, 'said', text='Esto ya sonó')
+        await client.playback_finished('said', client.revision)
+        self.assertIn('one:voice:said', self.hub.replayable_rows(client))
+        again = await self.hub.replay_one(client, 'one:voice:said')
+        self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Esto ya sonó')], 'nothing bought twice')
+        self.assertEqual(client.active, again['utterance_id'])
+        # Once the room no longer has the audio, there is no button and no repetition.
+        self.hub.assets.entries.clear()
+        self.assertNotIn('one:voice:said', self.hub.replayable_rows(client))
+        with self.assertRaises(HTTPException):
+            await self.hub.replay_one(client, 'one:voice:said')
+        # A reply rendered in the browser never reached the room: nothing to repeat from.
+        self.voice = KOKORO
+        self.assertEqual(self.hub.replayable_rows(client), set())
+
     async def test_a_reply_that_ends_in_time_is_not_touched_by_its_bound(self):
         client = self.browser('one')
         client.audio_grace_seconds = 0

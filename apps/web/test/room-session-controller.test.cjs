@@ -1107,7 +1107,7 @@ test('A reply the room addressed to another browser is not played by this one',a
 test('A shared reply keeps one bubble when live delivery and history name different browsers',async()=>{
  const s=setup();
  s.context.window.roomVoice={speak(){return new Promise(()=>{})},cancel(){}};
- s.context.fetch=async path=>({ok:true,json:async()=>path==='/api/presentation/history'?{messages:[{
+ s.context.fetch=async path=>({ok:true,json:async()=>path.startsWith('/api/presentation/history')?{messages:[{
   id:'mobile:voice:shared',thread:'a',role:'assistant',text:'Respuesta compartida',name:'A',
   session:'mobile',revision:1,time:1,seq:1,status:'playing'
  }]}:{}});

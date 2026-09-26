@@ -344,7 +344,7 @@ export function audioNote(r, ahead = 0, replay = null) {
     // that is still true — past the window it says what happened and nothing more.
     const repeats = !replay || (replay.seconds > 0 && (!r.time || replay.now - r.time < replay.seconds * 1000));
     const away = where => where + (repeats ? ' · Se repite al volver' : '');
-    const reasons = { newer_turn: 'Empezaste otra intervención', user_speaking: 'Estabas hablando', focus_changed: away('No estabas en esta conversación'), call_ended: away('No estabas en la llamada'), session_changed: away('No estabas en la llamada'), expired_audio_turn: 'El turno de audio había caducado', queue_full: 'Cola de audio llena', user_interrupted: 'Interrumpiste el audio', playback_failed: 'Falló la reproducción', service_restarted: 'Se reinició el servicio', channel_closed: 'Canal de voz cerrado' };
+    const reasons = { newer_turn: 'Empezaste otra intervención', user_speaking: 'Estabas hablando', focus_changed: away('No estabas en esta conversación'), call_ended: away('No estabas en la llamada'), session_changed: away('No estabas en la llamada'), expired_audio_turn: 'El turno de audio había caducado', queue_full: 'Cola de audio llena', user_interrupted: 'Interrumpiste el audio', user_skipped: 'Lo saltaste', playback_failed: 'Falló la reproducción', service_restarted: 'Se reinició el servicio', channel_closed: 'Canal de voz cerrado' };
     const reason = reasons[r.audio_reason];
     if (r.audio === 'waiting_for_pause')
         return 'Audio pendiente · Breve pausa antes de hablar';

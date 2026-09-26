@@ -324,7 +324,7 @@ async function refresh(){const asked=++refreshAsked,session=state.sessionId;try{
  const call=d.call?.id===state.sessionId?d.call:null;if(call?.error)setRoomError(call.error);});
 }catch{state.liveNote='Servidor no disponible'}}
 async function refreshHistory() { try {
-    const data = await api('/api/presentation/history');
+    const data = await api(roomQuery('/api/presentation/history'));
     let changed = false;
     for (const r of data.messages) {
         const marker = ':voice:', suffix = r.role === 'assistant' && r.id.includes(marker) ? r.id.slice(r.id.lastIndexOf(marker)) : null;
@@ -338,7 +338,7 @@ async function refreshHistory() { try {
             state.history = state.history.filter(h => !aliases.includes(h));
             changed = true;
         }
-        const patch = { segment: r.id, thread: r.thread, role: r.role, text: r.text, name: r.role === 'user' ? 'Tú' : state.people.find(p => p.thread_id === r.thread)?.title || r.name, time: r.time, seq: r.seq, session: r.session, revision: r.revision, audio_reason: r.audio_reason, offline: r.offline, interrupted: ['interrupted', 'disconnected'].includes(r.status), draft: false, delivery: r.role === 'user' ? r.status : undefined, audio: r.role === 'assistant' ? r.status : undefined };
+        const patch = { segment: r.id, thread: r.thread, role: r.role, text: r.text, name: r.role === 'user' ? 'Tú' : state.people.find(p => p.thread_id === r.thread)?.title || r.name, time: r.time, seq: r.seq, session: r.session, revision: r.revision, audio_reason: r.audio_reason, offline: r.offline, interrupted: ['interrupted', 'disconnected'].includes(r.status), replayable: !!r.replayable, draft: false, delivery: r.role === 'user' ? r.status : undefined, audio: r.role === 'assistant' ? r.status : undefined };
         if (!row) {
             state.history = [...state.history, patch];
             changed = true;
@@ -1352,7 +1352,7 @@ $('reset-languages').onclick=()=>{stopPreview();voiceDraft={};renderLanguageRows
 $('prepare-model').onclick=async()=>{if(state.activeSpeech||state.previewJob){$('model-status').textContent='Espera a que termine la voz.';return}const button=$('prepare-model');button.disabled=true;try{await window.roomVoice.unlock();await window.roomVoice.prepare({device:$('tts-device').value},text=>$('model-status').textContent=text)}catch(e){$('model-status').textContent=e.message}finally{button.disabled=false}};
 // The job identity belongs to the async adapter; the store holds its observable facts.
 let speechJob=null;
-function cancelBrowserSpeech(){
+function cancelBrowserSpeech(skip=false){
  if(!state.activeSpeech)return;
  const speech=state.activeSpeech;speechJob=null;
  roomStore.batch(()=>{
@@ -1363,7 +1363,15 @@ function cancelBrowserSpeech(){
  });
  save();
  post('/api/presentation/browser-receipt',{session_id:speech.session_id,revision:speech.revision,
-  utterance_id:speech.utterance_id,status:speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});
+  utterance_id:speech.utterance_id,status:skip?'skipped':speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});
+}
+// Skipping is this browser saying it does not want this reply spoken: it stops here, the room marks it
+// done for this browser and plays whatever comes next — no turn, nothing sent to the conversation.
+function skipReply(){cancelBrowserSpeech(true)}
+async function replayReply(historyId){
+ if(!historyId||!state.sessionId)return;
+ try{await post('/api/presentation/replay',{session_id:state.sessionId,history_id:historyId})}
+ catch(error){setRoomError(error.message||'No se pudo volver a reproducir.')}
 }
 // What this page played to the end, by the reply's row. A socket that dropped before the room heard the
 // receipt makes the room offer it again on the way back; the page knows better, and says so (#59).
@@ -1720,6 +1728,8 @@ for(const key of ['stt_language','stt_device','default_tts_language','tts_speed'
 $('language-form').onsubmit=async e=>{e.preventDefault();try{await saveSettings()}catch(error){$('settings-error').textContent=error?.message||String(error)}};
 window.sidevoiceActions={
  cancelInput:cancelCurrentInput,
+ skipReply:async()=>skipReply(),
+ replayReply,
  toggleMic,
  toggleCall,
  selectAudioDevice,
