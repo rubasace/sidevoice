@@ -38,10 +38,10 @@ export function TranscriptPanel() {
     <section className="transcript">
       <div className="transcript-head">
         <div className="transcript-heading"><ConversationsToggle /><strong id="transcript-title">{title}</strong></div>
+        <button type="button" className="compose-toggle" hidden={composing} aria-label="Escribir un mensaje" title="Escribir un mensaje"
+          onClick={compose}><KeyboardIcon /></button>
       </div>
       <MessageList conversation={conversation} />
-      <button type="button" className="compose-toggle" hidden={composing} aria-label="Escribir un mensaje" title="Escribir un mensaje"
-        onClick={compose}><KeyboardIcon /></button>
       <form id="text-composer" className="text-composer" ref={composer} data-open={composing || undefined}
         onSubmitCapture={() => setComposing(false)}
         onBlurCapture={(event) => { const next = event.relatedTarget as Node | null; if (next && composer.current?.contains(next)) return; if (!composer.current?.querySelector<HTMLTextAreaElement>("textarea")?.value.trim()) setComposing(false); }}><textarea id="text-message" rows={2} maxLength={12000} aria-label="Mensaje escrito" placeholder="Escribe un mensaje…" disabled /><Button id="text-send" type="submit" variant="primary" disabled aria-label="Enviar mensaje">Enviar</Button></form>

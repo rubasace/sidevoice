@@ -261,11 +261,12 @@ body,
 .chat-meta .listen-again { order:-1;margin-right:auto;width:1.6rem;height:1.6rem;padding:0;display:inline-grid;place-items:center;border-radius:50%;color:var(--sv-muted) }
 .chat-meta .listen-again:hover { color:#e8edf1;background:#ffffff14 }
 
-/* On a phone the text box waits behind a keyboard button at the conversation's lower right. */
+/* On a phone the text box waits behind a keyboard button in the conversation head's right corner. */
 .compose-toggle { display:none }
 @media (max-width:750px) {
   .transcript { position:relative }
-  .compose-toggle:not([hidden]) { display:grid;place-items:center;position:absolute;right:.75rem;bottom:.75rem;z-index:5;width:2.6rem;height:2.6rem;padding:0;border-radius:50%;border:1px solid #303742;background:#252b33;color:#c9d2db;box-shadow:0 6px 18px #0007 }
+  /* In the head's right corner, opposite the conversations button: it never covers the transcript. */
+  .compose-toggle:not([hidden]) { display:grid;place-items:center;position:absolute;right:.75rem;top:50%;transform:translateY(-50%);z-index:5;width:2.1rem;height:2.1rem;padding:0;border-radius:999px;border:1px solid #303742;background:transparent;color:#c9d2db }
   .text-composer:not([data-open]) { display:none }
 }
 
@@ -278,12 +279,16 @@ body,
   .call-bar .status-summary:not([hidden]) { display:block;position:relative;grid-column:1;grid-row:1;align-self:center }
   .call-bar .controls { grid-column:2;grid-row:1;justify-self:center }
   .call-bar .engine-slot { grid-column:3;grid-row:1;align-self:center }
-  .status-summary-toggle { display:grid;place-items:center;width:2.3rem;height:2.3rem;padding:0;border-radius:50%;border:1px solid #303742;background:transparent }
-  .status-summary-toggle .engine-dot { width:10px;height:10px }
+  .status-summary-toggle { display:grid;place-items:center;width:2.3rem;height:2.3rem;padding:0;border:0;border-radius:50%;background:transparent }
+  .status-summary-toggle .engine-dot { width:9px;height:9px;box-shadow:none }
   .status-summary-panel { position:absolute;left:0;bottom:calc(100% + 10px);z-index:25;margin:0;display:grid;gap:.45rem;width:max-content;max-width:calc(100vw - 2rem);padding:.75rem .9rem;background:#202124;border:1px solid #3a3d41;border-radius:14px;box-shadow:0 14px 34px #0008;font-size:.8rem }
   .status-summary-panel .status-line { display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:.5rem;align-items:center }
   .status-summary-panel dt { color:#e3e8ee;font-weight:550 }
   .status-summary-panel dd { margin:0;color:#9aa6b3;overflow-wrap:anywhere }
-  /* The keyboard button floats at the lower right: the list ends above it, so no bubble sits under it. */
-  #messages { padding-bottom:3.8rem }
+}
+
+/* A phone zooms into any field whose text is under 16px when it takes focus, and the page stayed zoomed:
+   fields are 16px on a phone (2026-09-26). Pinch zoom stays, for whoever needs it. */
+@media (max-width:750px) {
+  textarea,input,select { font-size:16px }
 }
