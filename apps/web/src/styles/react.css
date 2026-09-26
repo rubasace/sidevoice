@@ -243,8 +243,9 @@ body,
    sidebar itself, opened over the transcript, with its names, machines and harnesses. */
 .conversations-toggle { display:none }
 @media (max-width:750px) {
-  .transcript-heading { display:flex;align-items:center;gap:.6rem;min-width:0 }
-  .conversations-toggle { display:inline-flex;align-items:center;gap:.3rem;flex:none;padding:.35rem .55rem;border-radius:999px;border:1px solid #303742;background:transparent;color:#c9d2db;line-height:1 }
+  .transcript-head { position:relative }
+  /* In the head's top-left corner, on the title's line: the head keeps its height. */
+  .conversations-toggle { position:absolute;left:.75rem;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;gap:.3rem;padding:.3rem .5rem;border-radius:999px;border:1px solid #303742;background:transparent;color:#c9d2db;line-height:1 }
   .conversations-count { min-width:1.1rem;padding:.1rem .3rem;border-radius:999px;background:#2f4a6b;color:#dce9fb;font-size:.7rem;font-weight:600;text-align:center }
   main { grid-template-columns:minmax(0,1fr) }
   main > aside:not([data-open]) { display:none }
