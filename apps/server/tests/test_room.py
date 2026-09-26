@@ -166,6 +166,7 @@ class MultiClientRoomTests(RoomFixture):
         again = await self.hub.replay_one(client, 'one:voice:said')
         self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Esto ya sonó')], 'nothing bought twice')
         self.assertEqual(client.active, again['utterance_id'])
+        self.assertTrue(self.spoken(client)[-1].get('requested'), 'the page is told it was asked for, so it plays it again')
         # Once the room no longer has the audio, there is no button and no repetition.
         self.hub.assets.entries.clear()
         self.assertNotIn('one:voice:said', self.hub.replayable_rows(client))

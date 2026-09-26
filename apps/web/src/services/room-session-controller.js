@@ -1379,7 +1379,7 @@ const playedToEnd=new Set();
 async function receiveBrowserSpeech(d,cloud=false){
  const receivedAt=latencyNow();
  if(d.session_id!==state.sessionId)return;
- if(d.replay&&d.history_id&&playedToEnd.has(d.history_id)){
+ if(d.replay&&!d.requested&&d.history_id&&playedToEnd.has(d.history_id)){
   post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status:'playback_finished'}).catch(()=>{});
   if(d.replay)markReplay(d.history_id,'done');
   return;

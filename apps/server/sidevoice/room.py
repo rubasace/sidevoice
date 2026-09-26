@@ -74,6 +74,7 @@ class Utterance:
         self.row_id = row_id
         self.at = time.time() if at is None else at   # when the room published it: what "recent enough" reads
         self.replay_of = None   # the reply this one repeats, when it is a catch-up rather than an answer
+        self.requested = False  # a repetition the person asked for from the bubble, not a catch-up (#100)
         self.parked = False     # published when nobody on its conversation was listening: never rendered, never heard
         self.first_render = False  # a catch-up of a parked reply: its render is a first purchase, not a repeat
         self.rendered = False   # a paid engine was asked for it: repeating it must never buy it again
@@ -465,7 +466,9 @@ class RoomClient:
                   'reply_revision': reply_revision, 'thread_id': self.target.get('thread_id'),
                   'text': utterance.text, 'history_id': utterance.row_id,
                   # The bubble has to say it is being repeated, or it reads as something just said.
-                  **({'replay': True} if utterance.replay_of else {})}
+                  **({'replay': True} if utterance.replay_of else {}),
+                  # Asked for from the bubble: the page plays it even though it has heard it before.
+                  **({'requested': True} if utterance.requested else {})}
         if choice['provider'] == 'kokoro':
             self.latency.mark(uid, 'audio_dispatched')
             self.telemetry.synthesis(uid, provider=choice['provider'], model=choice.get('model'))
@@ -783,6 +786,7 @@ class Room:
         echo = Utterance(original.id + ':again:' + uuid.uuid4().hex[:8], original.text, language=original.language,
                          thread_id=original.thread_id, revision=client.revision, row_id=original.row_id, at=original.at)
         echo.replay_of = original.id
+        echo.requested = True
         echo.clients[client.id] = {'status': 'queued', 'reason': 'replay'}
         self.utterances[echo.id] = echo
         client.pending.appendleft(echo.id)

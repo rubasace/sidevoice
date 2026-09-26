@@ -1088,6 +1088,15 @@ test('A reply this page already played to the end is not played again when the r
  assert.equal(receipt[1].utterance_id,'u1:replay:s');
 });
 
+test('A repetition asked for from the bubble plays even a reply this page already heard (#100)',async()=>{
+ const s=setup();let played=0;
+ s.context.fetch=async()=>({ok:true,json:async()=>({})});
+ s.run("sessionId='s';roomBinding={thread_id:'a',binding_id:'b'};playedToEnd.add('s:voice:u1')");
+ s.context.window.roomVoice={playEncoded:async(d,a,start)=>{played++;start?.()},cancel(){}};
+ await s.run("receiveServerSpeech({session_id:'s',thread_id:'a',utterance_id:'u1:again:x',history_id:'s:voice:u1',revision:1,replay:true,requested:true,text:'Hola'})");
+ assert.equal(played,1);
+});
+
 test('A reply the room addressed to another browser is not played by this one',async()=>{
  const s=setup(),posts=[];
  s.context.fetch=async(path,options)=>{if(options)posts.push(JSON.parse(options.body));return {ok:true,json:async()=>({messages:[]})}};
