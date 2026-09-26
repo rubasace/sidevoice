@@ -25,10 +25,16 @@ function chunkTextRange(text,chunk,from=0){
  return match?{from:from+match.index,to:from+match.index+match[0].length}:null;
 }
 /* Local synthesis and playout. A canceled job can never emit late audio. */
+/* iPhone and iPad (which reports itself as a Mac with a touch screen). Only there does a page that goes away
+ * have to let go of its output: elsewhere a background tab keeps sounding, like any call or music tab (#96). */
+function pausesWhileHidden(){
+ const nav=typeof navigator!=='undefined'?navigator:null;if(!nav)return true;
+ return /iPad|iPhone|iPod/.test(nav.userAgent||'')||(nav.platform==='MacIntel'&&nav.maxTouchPoints>1);
+}
 class RoomVoice {
  constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null;
   // What the output did lately, for the stats dialog: a stuck buzz on a phone is otherwise invisible from here.
-  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.awayLimitMs=30000;this.tailSeconds=1.5;
+  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.awayLimitMs=30000;this.pauseWhileHidden=pausesWhileHidden();this.audible=true;this.tailSeconds=1.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
   this.presence=null;this.presencePulseSeconds=3.6;
@@ -113,17 +119,18 @@ class RoomVoice {
  async ensureOutput(){
   if(this.output||typeof this.context.createMediaStreamDestination!=='function'||typeof Audio==='undefined')return;
   const sink=this.context.createMediaStreamDestination(),element=new Audio();
-  element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;
+  element.srcObject=sink.stream;element.playsInline=true;element.autoplay=true;element.muted=!this.audible;
   try{await element.play()}catch(error){this.note('element-refused',error?.message||'play');return}
   this.output={sink,element};this.note('element-ready');
   // iOS interrupts the page's audio when the user pulls down notifications, switches apps, or the
   // microphone takes the audio route over — which is what an interruption while we speak looks
   // like in a car. An element left playing through that comes back as a stuck buzz, so it is
-  // paused while the page is away, and everything is put back together when it returns.
+  // paused while the page is away, and everything is put back together when it returns. A desktop tab
+  // in the background is not that: it keeps playing (#96).
   const settle=event=>{
    const hidden=typeof document!=='undefined'&&document.hidden;
    this.note(event?.type||'settle',(hidden?'hidden':'visible')+' · '+this.context.state);
-   if(hidden||this.context.state!=='running')element.pause();
+   if((hidden&&this.pauseWhileHidden)||this.context.state!=='running')element.pause();
    if(!hidden)this.resumeOutput();
   };
   if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',settle);
@@ -281,6 +288,15 @@ class RoomVoice {
   return true;
  }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
+ /* Whether this page is the one that sounds, when the same browser has the room open in several tabs (#96).
+  * A tab that is not is muted, never paused: its playback, receipts and karaoke go on exactly as before, so
+  * taking the sound back is instant and nothing it was playing is lost. */
+ setAudible(on){
+  this.audible=!!on;
+  if(this.output?.element)this.output.element.muted=!this.audible;
+  this.note('audible',this.audible?'on':'off');
+  return this.audible;
+ }
  async setOutputDevice(id){
   await this.unlock();
   if(!this.supportsOutputSelection)throw Error('Este navegador no permite elegir la salida de audio.');
@@ -318,7 +334,8 @@ class RoomVoice {
    // A page that went away is not a stuck device: the element is paused on purpose while the page is hidden
    // (see the settle handler), so nothing can advance. Counting it as a stall declared perfectly good replies
    // failed when the phone's screen locked mid-utterance (2026-09-20, read from the room's audio reports).
-   if(typeof document!=='undefined'&&document.hidden){
+   // A background tab whose clock still moves is playing, not away: it is watched like a visible one (#96).
+   if(typeof document!=='undefined'&&document.hidden&&(this.pauseWhileHidden||advanced<.05)){
     if(!job.clock.away){job.clock.away=now;this.note('clock-away',this.context.state)}
     // A page that never comes back must not leave the room waiting for a receipt that will never arrive:
     // the room holds everything else behind this utterance (2026-09-20, two replies stuck in a queue).

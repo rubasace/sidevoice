@@ -1654,6 +1654,30 @@ window.addEventListener('keyup',e=>{if(e.code==='Space'&&spaceDown){e.preventDef
 window.addEventListener('blur',releaseHold);document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseHold()});window.addEventListener('beforeunload',()=>{state.ws?.close();state.stream?.getTracks().forEach(t=>t.stop())});loadPreferences().then(p=>window.roomI18n?.setLanguage(p.ui_language||'es')).catch(()=>{});updateMic();refresh();refreshPeople();refreshHistory();setInterval(refreshHistory,1500);setInterval(refresh,1500);setInterval(refreshPeople,6000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.ws)keepScreenAwake()});
 setupAudioControls();
+setupOutputOwner();
+
+// ----- which of this browser's room tabs sounds (#96) -----
+// A tab in the background keeps sounding, like any call; with the room open in two tabs only one may. The
+// last tab shown or touched claims the output; a claim carries its time, and a tab yields only to a newer
+// one, so two claims crossing each other still leave exactly one owner.
+function setupOutputOwner(){
+ if(typeof BroadcastChannel!=='function')return;
+ const channel=new BroadcastChannel('sidevoice-output'),tab=Math.random().toString(36).slice(2);
+ let claimedAt=0;
+ const claim=()=>{claimedAt=Date.now();window.roomVoice?.setAudible?.(true);channel.postMessage({type:'claim',tab,at:claimedAt})};
+ channel.onmessage=({data})=>{
+  if(!data||data.tab===tab)return;
+  if(data.type==='claim'&&(data.at>claimedAt||(data.at===claimedAt&&data.tab>tab))){claimedAt=data.at;window.roomVoice?.setAudible?.(false)}
+  // The owner went away: whoever is in front takes the sound, and a tab in the background only if none is.
+  if(data.type==='release'&&window.roomVoice?.audible===false){
+   const seen=claimedAt;setTimeout(()=>{if(claimedAt===seen)claim()},document.hidden?150:0);
+  }
+ };
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)claim()});
+ window.addEventListener('pointerdown',()=>{if(window.roomVoice?.audible===false)claim()},true);
+ window.addEventListener('pagehide',()=>{if(window.roomVoice?.audible!==false)channel.postMessage({type:'release',tab})});
+ claim();
+}
 
 let lastBridge=null,lastJoin;
 function publishSessionView(view = roomStore.getState()) {

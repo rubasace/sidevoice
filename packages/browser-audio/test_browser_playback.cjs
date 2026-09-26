@@ -121,6 +121,16 @@ test('Output pauses while the page is hidden or the context is interrupted, and 
  s.context.document.hidden=false;context.state='interrupted';listeners.statechange();assert.equal(paused,2);
  context.state='running';listeners.statechange();assert.equal(played,2);
 });
+test('A desktop tab in the background keeps its output playing; only an interrupted context pauses it (#96)',async()=>{
+ const s=setup();const sink={stream:{}};let paused=0;const listeners={};
+ s.context.Audio=class{async play(){}pause(){paused++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};s.voice.context=context;
+ s.voice.pauseWhileHidden=false;
+ await s.voice.unlock();
+ s.context.document.hidden=true;listeners.visibilitychange();assert.equal(paused,0,'another tab in front is not an interruption');
+ context.state='interrupted';listeners.statechange();assert.equal(paused,1);
+});
 test('An interrupted context is started again and the stream handed back, instead of leaving the room mute',async()=>{
  const s=setup();const sink={stream:{}};let paused=0,played=0,attached=0,resumes=0;const listeners={};
  s.context.Audio=class{async play(){played++}pause(){paused++}set srcObject(value){attached++}};
@@ -219,6 +229,34 @@ test('A page that never comes back stops the room waiting for it',async()=>{
  assert.equal(s.voice.job,null,'the engine is free for what comes next');
 });
 
+test('A tab that is not the one sounding is muted, never paused, and gets its sound back at once (#96)',async()=>{
+ const s=setup();const {context,counters}=mediaOutput(s);
+ s.voice.setAudible(false);await s.voice.unlock();
+ assert.equal(s.voice.output.element.muted,true,'an element created after the decision starts muted');
+ const pausedBefore=counters.paused;
+ s.voice.setAudible(true);assert.equal(s.voice.output.element.muted,false);
+ s.voice.setAudible(false);assert.equal(s.voice.output.element.muted,true);
+ assert.equal(counters.paused,pausedBefore,'muting never pauses the element');
+});
+test('A background tab that is still playing is not given up after the away limit (#96)',async()=>{
+ const s=setup();const {context}=mediaOutput(s);s.voice.pauseWhileHidden=false;await s.voice.unlock();
+ s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;s.voice.awayLimitMs=10;
+ s.context.document={hidden:true,addEventListener(){}};
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});const rejected=assert.rejects(speech,{name:'AbortError'});
+ const ticker=setInterval(()=>{context.currentTime+=.1},1);
+ await settle(40);clearInterval(ticker);
+ assert.equal(s.voice.health().playing,true,'the reply is still sounding in the background');
+ assert.equal(s.voice.health().events.some(e=>e.kind==='clock-away'),false);
+ s.voice.cancel();await rejected;
+});
+test('A background tab whose clock froze is still given up, so the room is not left waiting',async()=>{
+ const s=setup();const {context}=mediaOutput(s);s.voice.pauseWhileHidden=false;await s.voice.unlock();
+ s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;s.voice.awayLimitMs=20;
+ s.context.document={hidden:true,addEventListener(){}};
+ context.state='suspended';
+ const speech=s.voice.playEncoded({audio_base64:'SUQz'});
+ await assert.rejects(speech,/segundo plano/);
+});
 test('A clock that advances raises no alarm, and cancelling while the context is stopped pauses the element',async()=>{
  const s=setup();const {context,counters}=mediaOutput(s);await s.voice.unlock();
  s.voice.stallCheckMs=3;s.voice.stallAfterMs=5;
