@@ -33,9 +33,8 @@ export function EchoCover() {
  * and cancelling that was the only way out. Only this browser skips; the reply stays written. */
 export function SkipButton() {
   const playing = useRoomStore((state) => !!state.facts.activeSpeech);
-  if (!playing) return null;
   return (
-    <Button id="skip-reply" variant="ghost" aria-label="Saltar lo que está sonando" title="Saltar lo que está sonando"
+    <Button id="skip-reply" variant="ghost" disabled={!playing} aria-label="Saltar lo que está sonando" title="Saltar lo que está sonando"
       onClick={() => void window.sidevoiceActions?.skipReply()}>
       <SkipIcon size={24} />
     </Button>

@@ -239,17 +239,27 @@ body,
 @keyframes thinking-dot{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
 @media (prefers-reduced-motion:reduce){.thinking-dots i{animation:none;opacity:.7}}
 
-/* Conversations as header tabs on a phone (2026-09-26): the side rail gave up a column the transcript needs. */
+/* Conversations as a strip under the header on a phone (2026-09-26): the side rail gave up a column the
+   transcript needs. The cards are the sidebar's own, side by side. */
 .conversation-tabs { display:none }
 @media (max-width:750px) {
-  header { gap:.6rem; padding:0 .75rem }
-  .brand .brand-name { display:none }
-  .conversation-tabs { display:flex;flex:1;min-width:0;gap:.35rem;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity;padding:.2rem 0 }
+  .conversation-tabs { display:flex;flex:none;gap:.5rem;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity;padding:.55rem .75rem 0 }
   .conversation-tabs::-webkit-scrollbar { display:none }
-  .conversation-tab { display:inline-flex;align-items:center;gap:.4rem;flex:none;max-width:11rem;padding:.4rem .7rem;border-radius:999px;border:1px solid #303742;background:transparent;color:#c9d2db;font-size:.82rem;scroll-snap-align:start }
-  .conversation-tab[aria-pressed=true] { background:#233348;border-color:#6088b4;color:#e3eefc }
+  .conversation-tab.person { flex:none;width:auto;max-width:15rem;min-width:9.5rem;margin:0;padding:.5rem .7rem;border:1px solid #303742;background:#1c2128;scroll-snap-align:start }
+  .conversation-tab.person[aria-pressed=true] { border-color:#6088b4;background:#233348 }
   .conversation-tab .person-state { position:static;margin:0 }
-  .conversation-tab-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+  .conversation-tab .person-name { display:block }
+  .conversation-tab .person-sub { display:flex;gap:.45rem }
   main { grid-template-columns:minmax(0,1fr) }
   main > aside { display:none }
+}
+/* The skip button is always there; on the narrowest phones the lights at the sides move up a row, so the
+   controls in the middle never cover them. */
+#skip-reply:disabled { opacity:.35 }
+@media (max-width:430px) {
+  .call-bar { grid-template-columns:minmax(0,1fr) auto;row-gap:6px }
+  .call-bar #capability-column { grid-column:1;grid-row:1 }
+  .call-bar .engine-slot { grid-column:2;grid-row:1 }
+  .call-bar .controls { grid-column:1/-1;grid-row:2 }
+  .call-actions { gap:10px }
 }
