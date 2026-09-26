@@ -252,10 +252,8 @@ body,
   main > aside[data-open] { position:fixed;z-index:40;top:4.6rem;left:.5rem;width:min(86vw,20rem);height:auto;max-height:70dvh;overflow:auto }
   main > aside[data-open] .sidebar-toggle { display:none }
 }
-/* The skip button is always there; on a phone the lights at the sides move to a row under the controls,
-   so the island never covers them and the bar closes as one block. */
+/* The skip button is always there, dimmed while nothing plays. */
 #skip-reply:disabled { opacity:.35 }
-}
 
 /* Listen again: a small play mark on the bubble's own line, beside the time (#100). */
 /* The time and what follows it share one line and one height: ticks on the person's messages, the play
