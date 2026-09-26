@@ -486,6 +486,14 @@ test('The UI distinguishes audio suppression reasons without inferring unknown o
  assert.equal(s.run("audioNote({audio:'text_only'})"),'Sin audio · Motivo no registrado');
 });
 
+test('A reply held behind another reply says so, not that the person is talking',()=>{
+ const s=setup();
+ assert.equal(s.run("audioNote({audio:'waiting_for_turn',audio_reason:'user_speaking'})"),'Audio pendiente · Esperando a que termines de hablar');
+ assert.equal(s.run("audioNote({audio:'queued',audio_reason:'previous_reply'},1)"),'Audio pendiente · Esperando a que termine la respuesta anterior');
+ assert.equal(s.run("audioNote({audio:'queued',audio_reason:'previous_reply'},3)"),'Audio pendiente · Hay 3 respuestas antes');
+ assert.equal(s.run("audioNote({audio:'queued'})"),'','a reply about to be dispatched is not described as waiting');
+});
+
 test('Microphone meter measures level and peak independently and clears when muted',()=>{
  const s=setup();
  assert.equal(s.run('measureMic([0,0,0],true).value'),0);

@@ -116,6 +116,20 @@ class MultiClientRoomTests(RoomFixture):
         with self.assertRaises(HTTPException):
             await self.hub.speak('Respuesta de un turno viejo', 'late', second.id, 0)
 
+    async def test_a_reply_held_behind_another_reply_is_not_waiting_for_anybodys_turn(self):
+        client = self.browser('one')
+        client.audio_grace_seconds = 0
+        await self.reply(client, 'ahead')
+        await self.reply(client, 'behind', text='Y otra cosa')
+        client.user_started()
+        self.assertEqual(self.hub.utterances['behind'].clients['one']['status'], 'waiting_for_turn')
+        await client.finish_user_turn()
+        self.assertEqual(client.active, 'ahead')
+        # Nobody is talking any more: the wait is the reply ahead of it, and the transcript must say so.
+        self.assertEqual(self.hub.utterances['behind'].clients['one'],
+                         {'status': 'queued', 'reason': 'previous_reply'})
+        self.assertEqual(self.row('behind', 'one')['audio_reason'], 'previous_reply')
+
     # ----- playback is not -----
 
     async def test_one_browser_stopping_playback_leaves_the_other_playing(self):

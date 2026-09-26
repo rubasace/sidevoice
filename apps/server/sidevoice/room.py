@@ -365,7 +365,19 @@ class RoomClient:
         self.dispatch_timer = None
         await self.dispatch()
 
+    def _queue_behind_active(self):
+        # Nobody is talking: what is still held waits for the reply ahead of it, not for anybody's turn,
+        # and saying otherwise tells the person to stop a voice nobody is using (#61).
+        if not self.active or self.room.speaking:
+            return
+        for uid in self.pending:
+            utterance = self.utterances.get(uid)
+            entry = utterance.clients.get(self.id) if utterance else None
+            if entry and entry['status'] == 'waiting_for_turn':
+                self.transition(uid, 'queued', 'previous_reply')
+
     async def dispatch(self):
+        self._queue_behind_active()
         if self.active or not self.pending or not self.connected or self.room.speaking:
             return
         remaining = self.quiet_until - asyncio.get_running_loop().time()
@@ -376,6 +388,7 @@ class RoomClient:
             return
         uid = self.pending.popleft()
         self.active = uid
+        self._queue_behind_active()
         utterance = self.utterances[uid]
         rev = utterance.revision
         try:
