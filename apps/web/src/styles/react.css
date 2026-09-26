@@ -305,3 +305,6 @@ body,
 /* Small to the eye, not to a finger: the play mark's tap area reaches beyond what it draws. */
 .chat-meta .listen-again { position:relative }
 .chat-meta .listen-again::after { content:"";position:absolute;inset:-.6rem }
+/* The check marks are drawn in the lower half of their box (the play mark is centred in its own), so on the
+   time's line they read low: they are lifted to the line's optical middle. */
+.chat-meta .receipt svg { transform:translateY(-2px) }
