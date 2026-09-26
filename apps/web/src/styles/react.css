@@ -298,5 +298,5 @@ body,
    belong to a pointer that hovers. */
 @media (hover:none) {
   .compose-toggle:hover,.conversations-toggle:hover,.status-summary-toggle:hover,.listen-again:hover,
-  .call-bar .engine-slot:not([data-open]) .engine-toggle:hover { background:transparent }
+  .call-bar .engine-slot:not([data-open]) .engine-toggle:hover { background:transparent;color:#9aa6b3 }
 }
