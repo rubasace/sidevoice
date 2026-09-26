@@ -13,10 +13,17 @@ class PreferencesTest(unittest.TestCase):
         self.assertEqual((en['voice'], en['speed']), ('bf_emma', 1.2))
         self.assertEqual(language_settings.resolve_voice(settings, 'es')['voice'], 'em_alex')
 
-    def test_invalid_device_settings_fall_back_to_defaults_and_say_why(self):
+    def test_an_invalid_device_setting_falls_back_alone_and_says_which(self):
         settings, problem = language_settings.settings_from({'tts_speed': 9, 'stt_provider': 'browser'})
         self.assertEqual(settings, language_settings.LanguageSettings())
         self.assertIn('tts_speed', problem)
+        # One refused value no longer takes the rest with it: an iPhone on OpenAI stayed on OpenAI (#39).
+        settings, problem = language_settings.settings_from(
+            {'tts_speed': 9, 'stt_provider': 'openai', 'stt_model': 'gpt-4o-transcribe', 'spanish_voice': 'em_alex'})
+        self.assertIn('tts_speed', problem)
+        self.assertEqual((settings.stt_provider, settings.stt_model, settings.spanish_voice),
+                         ('openai', 'gpt-4o-transcribe', 'em_alex'))
+        self.assertEqual(settings.tts_speed, language_settings.LanguageSettings().tts_speed)
         self.assertEqual(language_settings.settings_from(None), (language_settings.LanguageSettings(), None))
         self.assertEqual(language_settings.settings_from({}), (language_settings.LanguageSettings(), None))
 

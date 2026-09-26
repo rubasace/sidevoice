@@ -99,8 +99,16 @@ def settings_from(data):
     try:
         return LanguageSettings.model_validate(data), None
     except ValidationError as error:
-        return LanguageSettings(), 'Invalid device settings; the defaults are used: ' + '; '.join(
+        # One value this room cannot read — a device carrying settings from another version — used to throw
+        # every setting away, the transcription provider with them, and an iPhone put back on browser Whisper
+        # never finished a turn (#39). Only what was refused falls back to its default; the rest stands.
+        refused = {item['loc'][0] for item in error.errors() if item.get('loc')}
+        reason = 'Some device settings were not valid and use their defaults: ' + '; '.join(
             '.'.join(str(part) for part in item.get('loc', ('?',))) + ' ' + item.get('msg', '') for item in error.errors()[:3])
+        try:
+            return LanguageSettings.model_validate({k: v for k, v in data.items() if k not in refused}), reason
+        except ValidationError:
+            return LanguageSettings(), reason
 
 
 def resolve_voice(settings, language=None):

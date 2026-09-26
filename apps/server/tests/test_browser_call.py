@@ -184,7 +184,7 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         self.assertEqual((client.settings.spanish_voice, client.audio_grace_seconds), ('ef_dora', 1))
         client.voice.browser_message({'type': 'voice-settings', 'data': {'session_id': client.id, 'settings': {'tts_speed': 9}}})
         self.assertEqual(client.settings.spanish_voice, 'ef_dora')
-        self.assertIn('Invalid device settings', (await self.received(socket, 'error'))['data']['message'])
+        self.assertIn('device settings were not valid', (await self.received(socket, 'error'))['data']['message'])
         # A voice or an engine is resolved per utterance out of these settings, so the change lands on
         # the next reply over this very socket: no second pipeline, and nothing to reconnect.
         from sidevoice.language_settings import resolve_voice
