@@ -31,7 +31,10 @@ class RoomVoice {
   this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.awayLimitMs=30000;this.tailSeconds=1.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
-  this.presence=null;this.presenceSeconds=7.2;this.presencePulseSeconds=3.6;this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
+  this.presence=null;this.presencePulseSeconds=3.6;
+  /* Phrases of breaths with silence between them, as [breaths, seconds of silence after]: a bed that never
+   * stops becomes noise over a long turn (#91). Uneven on purpose, so the loop does not read as a metronome. */
+  this.presencePhrases=[[2,5],[1,7],[2,4]];this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
  note(kind,detail){const event={at:Date.now(),kind,...(detail?{detail}:{})};this.events.push(event);if(this.events.length>24)this.events.shift();
   // The event list is bounded, so what it proves is kept apart from it: a voice has already left this output.
   if(kind==='play-encoded'||kind==='complete')this.rendered=true;
@@ -217,11 +220,17 @@ class RoomVoice {
    * fault, and a bright two-note pulse as a beep. This is one low tone with its fifth a whisper behind it,
    * swelling and fading once every few seconds, with the attack and release long enough that it never
    * sounds like an event — the point is company, not a signal. */
-  const rate=this.context.sampleRate||48000,length=Math.round(rate*this.presenceSeconds);
-  const samples=new Float32Array(length),breath=this.presencePulseSeconds;
+  const rate=this.context.sampleRate||48000,breath=this.presencePulseSeconds;
+  const phrases=this.presencePhrases.map(([breaths,gap])=>({until:breaths*breath,seconds:breaths*breath+gap}));
+  const length=Math.round(rate*phrases.reduce((total,phrase)=>total+phrase.seconds,0));
+  const samples=new Float32Array(length);
   const partials=[[146.83,1],[220,.32],[293.66,.12]];   // D3, its fifth, its octave
-  for(let i=0;i<length;i++){
-   const at=i/rate,phase=(at%breath)/breath;
+  // The silences are zeros inside the same looping source, never a stopped one: the sink keeps rendering.
+  for(let i=0,start=0,p=0;i<length;i++){
+   const at=i/rate;
+   if(at-start>=phrases[p].seconds&&p<phrases.length-1){start+=phrases[p].seconds;p++}
+   const within=at-start;if(within>=phrases[p].until)continue;
+   const phase=(within%breath)/breath;
    // Raised cosine over the whole breath: no attack to speak of, no release either, just a swell.
    const envelope=Math.pow(.5-.5*Math.cos(2*Math.PI*phase),1.6);
    let value=0;for(const [hz,weight] of partials)value+=weight*Math.sin(2*Math.PI*hz*at);
