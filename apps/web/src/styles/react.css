@@ -290,5 +290,13 @@ body,
 /* A phone zooms into any field whose text is under 16px when it takes focus, and the page stayed zoomed:
    fields are 16px on a phone (2026-09-26). Pinch zoom stays, for whoever needs it. */
 @media (max-width:750px) {
-  textarea,input,select { font-size:16px }
+  textarea,input,select,.text-composer textarea { font-size:16px !important }
+  /* Centred, where it covers least. */
+  .new-messages { left:0;right:0;margin-inline:auto;width:max-content }
+}
+/* A touch screen keeps a tapped button in its hover look until something else is touched: those looks
+   belong to a pointer that hovers. */
+@media (hover:none) {
+  .compose-toggle:hover,.conversations-toggle:hover,.status-summary-toggle:hover,.listen-again:hover,
+  .call-bar .engine-slot:not([data-open]) .engine-toggle:hover { background:transparent }
 }

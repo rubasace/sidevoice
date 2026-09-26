@@ -1,4 +1,14 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+
+/** A popover here closes when the page is touched anywhere outside it. */
+function useCloseOutside(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) close(); };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [ref, open, close]);
+}
 import { useRoomStore } from "../../state/room-store";
 import { Button } from "../../components/ui/Button";
 import { ModelsIcon } from "../../components/ui/Icons";
@@ -36,10 +46,12 @@ export function CapabilityColumn() {
 export function LightsSummary() {
   const rows = useRoomStore((state) => state.capabilityPanel);
   const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useCloseOutside(box, open, () => setOpen(false));
   if (!rows.length) return <div className="status-summary" hidden />;
   const worst = rows.some((row) => row.state === "fail") ? "fail" : rows.some((row) => row.state === "warn") ? "warn" : "ok";
   return (
-    <div className="status-summary" data-open={open || undefined}>
+    <div className="status-summary" ref={box} data-open={open || undefined}>
       <button type="button" className="status-summary-toggle" aria-expanded={open} aria-label="Estado de la llamada" title="Estado de la llamada"
         onClick={() => setOpen(!open)}><i className="engine-dot" data-state={worst} aria-hidden="true" /></button>
       {open && (
@@ -54,8 +66,10 @@ export function LightsSummary() {
 export function EngineColumn() {
   const rows = useRoomStore((state) => state.enginePanel);
   const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useCloseOutside(box, open, () => setOpen(false));
   return (
-    <div className="engine-slot" data-open={open || undefined}>
+    <div className="engine-slot" ref={box} data-open={open || undefined}>
       <Button id="engine-open" variant="ghost" size="icon" className="engine-toggle" aria-expanded={open}
         aria-label="Qué modelos responden" title="Qué modelos responden" onClick={() => setOpen(!open)}>
         <ModelsIcon />
