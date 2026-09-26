@@ -7,7 +7,7 @@
  * generic icons and are drawn here. */
 import {
   AudioLines, Captions, ChevronDown, Copy, Cpu, Ear, MessagesSquare, Mic, Monitor, MoreHorizontal,
-  Phone, PhoneOff, Plug, RefreshCw, RotateCcw, Settings, SkipForward, SlidersHorizontal, Speech, Volume2, Wrench, X,
+  Phone, PhoneOff, Play, Plug, RefreshCw, Settings, SkipForward, SlidersHorizontal, Speech, Volume2, Wrench, X,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -38,7 +38,7 @@ export const SpeakerIcon = mark(Volume2, 20);
 export const CallIcon = mark(Phone, 22);
 export const HangupIcon = mark(PhoneOff, 22);
 export const SkipIcon = mark(SkipForward, 22);
-export const ListenAgainIcon = mark(RotateCcw, 14);
+export const ListenAgainIcon = mark(Play, 14);
 
 // ----- what answers, when a row names it
 export const ModelsIcon = mark(Cpu, 16);

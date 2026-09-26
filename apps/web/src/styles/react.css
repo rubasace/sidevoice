@@ -239,19 +239,17 @@ body,
 @keyframes thinking-dot{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
 @media (prefers-reduced-motion:reduce){.thinking-dots i{animation:none;opacity:.7}}
 
-/* Conversations as a strip under the header on a phone (2026-09-26): the side rail gave up a column the
-   transcript needs. The cards are the sidebar's own, side by side. */
-.conversation-tabs { display:none }
+/* On a phone the conversations are behind a button beside the title (2026-09-26): the list is the desktop
+   sidebar itself, opened over the transcript, with its names, machines and harnesses. */
+.conversations-toggle { display:none }
 @media (max-width:750px) {
-  .conversation-tabs { display:flex;flex:none;gap:.5rem;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity;padding:.55rem .75rem 0 }
-  .conversation-tabs::-webkit-scrollbar { display:none }
-  .conversation-tab.person { flex:none;width:auto;max-width:15rem;min-width:9.5rem;margin:0;padding:.5rem .75rem;gap:.55rem;align-items:center;justify-content:flex-start;border:1px solid #303742;background:#1c2128;scroll-snap-align:start }
-  .conversation-tab.person[aria-pressed=true] { border-color:#6088b4;background:#233348 }
-  .conversation-tab .person-state { position:static;left:auto;bottom:auto;margin:0;align-self:center }
-  .conversation-tab .person-name { display:block }
-  .conversation-tab .person-sub { display:flex;gap:.45rem }
+  .transcript-heading { display:flex;align-items:center;gap:.6rem;min-width:0 }
+  .conversations-toggle { display:inline-flex;align-items:center;gap:.3rem;flex:none;padding:.35rem .55rem;border-radius:999px;border:1px solid #303742;background:transparent;color:#c9d2db;line-height:1 }
+  .conversations-count { min-width:1.1rem;padding:.1rem .3rem;border-radius:999px;background:#2f4a6b;color:#dce9fb;font-size:.7rem;font-weight:600;text-align:center }
   main { grid-template-columns:minmax(0,1fr) }
-  main > aside { display:none }
+  main > aside:not([data-open]) { display:none }
+  main > aside[data-open] { position:fixed;z-index:40;top:4.6rem;left:.5rem;width:min(86vw,20rem);height:auto;max-height:70dvh;overflow:auto }
+  main > aside[data-open] .sidebar-toggle { display:none }
 }
 /* The skip button is always there; on a phone the lights at the sides move to a row under the controls,
    so the island never covers them and the bar closes as one block. */
@@ -265,3 +263,7 @@ body,
   .call-bar #capability-column:not([hidden]) { display:flex;gap:.8rem;align-self:center }
   .call-actions { gap:10px }
 }
+
+/* Listen again: a small play mark on the bubble's own line, beside the time (#100). */
+.chat-meta .listen-again { order:-1;margin-right:auto;width:1.6rem;height:1.6rem;padding:0;display:inline-grid;place-items:center;border-radius:50%;color:var(--sv-muted) }
+.chat-meta .listen-again:hover { color:#e8edf1;background:#ffffff14 }

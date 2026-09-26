@@ -11,11 +11,11 @@ export function MessageBubble({ message, position, showName }: { message: ChatMe
     <article className="chat-bubble" data-role={message.role} data-position={position} data-interrupted={message.interrupted || undefined} aria-label={`${message.name}: ${message.text}`}>
       {showName && <span className="chat-sender">{message.name}</span>}
       <KaraokeText text={message.text} range={message.karaoke} playback={message.playback} />
-      {message.replayable && message.role === "assistant" && message.playback !== "playing" && message.playback !== "pending" &&
-        <Button variant="ghost" size="compact" className="listen-again" aria-label="Volver a escuchar" title="Volver a escuchar"
-          onClick={() => void window.sidevoiceActions?.replayReply(message.segment)}><ListenAgainIcon size={14} /></Button>}
       {message.cancellable && <Button variant="ghost" size="compact" className="cancel-input" onClick={() => void window.sidevoiceActions?.cancelInput()}>Cancelar envío</Button>}
       <div className="chat-meta">
+        {message.replayable && message.role === "assistant" && message.playback !== "playing" && message.playback !== "pending" &&
+          <Button variant="ghost" size="compact" className="listen-again" aria-label="Volver a escuchar" title="Volver a escuchar"
+            onClick={() => void window.sidevoiceActions?.replayReply(message.segment)}><ListenAgainIcon size={14} /></Button>}
         {!message.draft && <time dateTime={new Date(message.time).toISOString()}>{new Date(message.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>}
         {delivery && <span className="receipt delivery" data-state={delivery} title={receiptView(delivery).label} aria-label={receiptView(delivery).label}>{receiptView(delivery).symbol}</span>}
       </div>
