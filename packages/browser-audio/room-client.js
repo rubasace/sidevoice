@@ -107,7 +107,10 @@ class RoomVoice {
   try{
    const rate=this.context.sampleRate||48000,seconds=kind==='connect'?(this.greetSeconds||1.8):1.2;
    const length=Math.round(rate*seconds),samples=new Float32Array(length);
-   const notes=kind==='connect'?[[523.25,0,.13],[783.99,.14,.22]]:[[659.25,0,.13],[415.30,.14,.26]];
+   // Joining rises, hanging up falls; losing the room is two low notes that stay low, and getting it back
+   // is the join's rise, quicker — each told apart by ear, with nobody looking at a screen.
+   const notes={connect:[[523.25,0,.13],[783.99,.14,.22]],hangup:[[659.25,0,.13],[415.30,.14,.26]],
+    lost:[[392,0,.12],[392,.2,.12]],back:[[523.25,0,.09],[659.25,.1,.09],[783.99,.2,.16]]}[kind]||[];
    for(const [hz,at,dur] of notes){
     const from=Math.round(at*rate),n=Math.round(dur*rate);
     for(let i=0;i<n&&from+i<length;i++){
@@ -119,7 +122,7 @@ class RoomVoice {
    if(peak>0)for(let i=0;i<length;i++)samples[i]*=.42/peak;
    const buffer=this.context.createBuffer(1,length,rate);buffer.copyToChannel(samples,0);
    const source=this.context.createBufferSource();source.buffer=buffer;source.connect(this.destination);
-   source.start(this.context.currentTime+.2);this.note(kind==='connect'?'chime':'hangup');
+   source.start(this.context.currentTime+.2);this.note(kind==='connect'?'chime':kind==='hangup'?'hangup':'signal',kind==='connect'||kind==='hangup'?undefined:kind);
    return true;
   }catch(error){this.note('chime-failed',error?.message||'chime');return false}
  }

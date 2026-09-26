@@ -1087,6 +1087,8 @@ async function lostConnection(event,epoch,context){
  cancelBrowserSpeech();state.userLive=state.botLive=false;state.pendingUserText='';state.pendingPhase='';markHistorySeen();
  if(!shouldReconnect(event)){disconnect();failJoin('La sala cerró la llamada. Vuelve a pulsar para entrar cuando esté disponible.');return}
  state.reconnecting=true;
+ // Heard, not only shown: a driver cannot see "Reconectando…" (2026-09-26).
+ window.roomVoice?.signal?.('lost');
  armGapBuffer(captureRate);
  try{
   for(let attempt=0;attempt<RECONNECT_DELAYS_MS.length;attempt++){
@@ -1101,6 +1103,7 @@ async function lostConnection(event,epoch,context){
     // Once the room has said which conversation this browser is on, what it missed can go to it. It
     // arrives after any turn already finished here, which is the order the room delivers turns in.
     sendGapAudio(state.ws);
+    window.roomVoice?.signal?.('back');
     setRoomError('');clearJoinStatus();
     return;
    }catch(e){if(epoch!==connectEpoch)return;state.ws=null}

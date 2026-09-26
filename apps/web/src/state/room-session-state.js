@@ -195,7 +195,7 @@ export function conversationView(s) {
         sounding += Number(r.role === 'assistant' && ['queued', 'synthesizing', 'waiting_for_turn', 'waiting_for_pause', 'playing'].includes(r.audio));
     }
     return { messages: records.map(r => ({ ...r, cancellable: !!activeDraft && !s.cancelledInput && r.draft === true && r.segment === activeDraft,
-            audioNote: audioNote(r, ahead.get(r)), offlineNote: offlineNote(r), deliveryNote: deliveryNote(r), replayNote: r.role === 'assistant' ? REPLAY_NOTES[s.replayMarks[r.segment]] || '' : '',
+            audioNote: audioNote(r, ahead.get(r), { seconds: Number(s.voicePreferences?.replay_on_return_seconds ?? 120), now: s.now || Date.now() }), offlineNote: offlineNote(r), deliveryNote: deliveryNote(r), replayNote: r.role === 'assistant' ? REPLAY_NOTES[s.replayMarks[r.segment]] || '' : '',
             playback: playbackState(r, s), karaoke: s.karaokeState?.segment === r.segment ? s.karaokeState : null })),
         pendingText: own ? s.pendingUserText : '', pendingPhase: own && !s.cancelledInput ? s.pendingPhase : '',
         pendingCancellable: own && !s.cancelledInput, working: working(s, id) };
@@ -338,10 +338,13 @@ export function offlineNote(r) {
         ? 'Solo se guardaron los últimos ' + GAP_BUFFER_SECONDS + ' s'
         : '';
 }
-export function audioNote(r, ahead = 0) {
+export function audioNote(r, ahead = 0, replay = null) {
     // Three of these mean nobody was listening when the reply arrived; the room keeps it and repeats it when
-    // someone returns to the conversation, and the note says so instead of describing a socket.
-    const reasons = { newer_turn: 'Empezaste otra intervención', user_speaking: 'Estabas hablando', focus_changed: 'No estabas en esta conversación · Se repite al volver', call_ended: 'No estabas en la llamada · Se repite al volver', session_changed: 'No estabas en la llamada · Se repite al volver', expired_audio_turn: 'El turno de audio había caducado', queue_full: 'Cola de audio llena', user_interrupted: 'Interrumpiste el audio', playback_failed: 'Falló la reproducción', service_restarted: 'Se reinició el servicio', channel_closed: 'Canal de voz cerrado' };
+    // someone returns to the conversation within this device's window, and the note promises it only while
+    // that is still true — past the window it says what happened and nothing more.
+    const repeats = !replay || (replay.seconds > 0 && (!r.time || replay.now - r.time < replay.seconds * 1000));
+    const away = where => where + (repeats ? ' · Se repite al volver' : '');
+    const reasons = { newer_turn: 'Empezaste otra intervención', user_speaking: 'Estabas hablando', focus_changed: away('No estabas en esta conversación'), call_ended: away('No estabas en la llamada'), session_changed: away('No estabas en la llamada'), expired_audio_turn: 'El turno de audio había caducado', queue_full: 'Cola de audio llena', user_interrupted: 'Interrumpiste el audio', playback_failed: 'Falló la reproducción', service_restarted: 'Se reinició el servicio', channel_closed: 'Canal de voz cerrado' };
     const reason = reasons[r.audio_reason];
     if (r.audio === 'waiting_for_pause')
         return 'Audio pendiente · Breve pausa antes de hablar';
