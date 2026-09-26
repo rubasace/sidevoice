@@ -255,14 +255,6 @@ body,
 /* The skip button is always there; on a phone the lights at the sides move to a row under the controls,
    so the island never covers them and the bar closes as one block. */
 #skip-reply:disabled { opacity:.35 }
-/* 430px was too narrow a line: an iPhone Pro Max is 440 wide and the island still covered the lights. */
-@media (max-width:560px) {
-  .call-bar { grid-template-columns:minmax(0,1fr) auto;row-gap:6px }
-  .call-bar #capability-column { grid-column:1;grid-row:2 }
-  .call-bar .engine-slot { grid-column:2;grid-row:2 }
-  .call-bar .controls { grid-column:1/-1;grid-row:1;justify-self:center }
-  .call-bar #capability-column:not([hidden]) { display:flex;gap:.8rem;align-self:center }
-  .call-actions { gap:10px }
 }
 
 /* Listen again: a small play mark on the bubble's own line, beside the time (#100). */
@@ -277,25 +269,21 @@ body,
   .text-composer:not([data-open]) { display:none }
 }
 
-/* On a phone the lights and models are one dot in the head's right corner, their detail a tap away. */
+/* On a phone the lights are one dot at the call bar's left edge and the models their button at the right,
+   each with its detail a tap away; the controls stay one centred row (2026-09-26). */
 .status-summary { display:none }
 @media (max-width:750px) {
-  .status-summary { display:block;position:absolute;right:.75rem;top:50%;transform:translateY(-50%);z-index:20 }
-  .status-summary-toggle { display:grid;place-items:center;width:2rem;height:2rem;padding:0;border-radius:50%;border:1px solid #303742;background:transparent }
+  .call-bar { grid-template-columns:auto minmax(0,1fr) auto;row-gap:0 }
+  .call-bar #capability-column { display:none !important }
+  .call-bar .status-summary:not([hidden]) { display:block;position:relative;grid-column:1;grid-row:1;align-self:center }
+  .call-bar .controls { grid-column:2;grid-row:1;justify-self:center }
+  .call-bar .engine-slot { grid-column:3;grid-row:1;align-self:center }
+  .status-summary-toggle { display:grid;place-items:center;width:2.3rem;height:2.3rem;padding:0;border-radius:50%;border:1px solid #303742;background:transparent }
   .status-summary-toggle .engine-dot { width:10px;height:10px }
-  .status-summary-panel { position:absolute;right:0;top:calc(100% + 8px);margin:0;display:grid;gap:.45rem;width:max-content;max-width:calc(100vw - 2rem);padding:.75rem .9rem;background:#202124;border:1px solid #3a3d41;border-radius:14px;box-shadow:0 14px 34px #0008;font-size:.8rem }
+  .status-summary-panel { position:absolute;left:0;bottom:calc(100% + 10px);z-index:25;margin:0;display:grid;gap:.45rem;width:max-content;max-width:calc(100vw - 2rem);padding:.75rem .9rem;background:#202124;border:1px solid #3a3d41;border-radius:14px;box-shadow:0 14px 34px #0008;font-size:.8rem }
   .status-summary-panel .status-line { display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:.5rem;align-items:center }
   .status-summary-panel dt { color:#e3e8ee;font-weight:550 }
   .status-summary-panel dd { margin:0;color:#9aa6b3;overflow-wrap:anywhere }
-  .call-bar #capability-column,.call-bar .engine-slot { display:none !important }
-  .call-bar { grid-template-columns:minmax(0,1fr) }
-  .call-bar .controls { grid-column:1;grid-row:1;justify-self:center }
-}
-
-/* A phone zooms into any field whose text is under 16px when it takes focus, and the page stayed zoomed:
-   fields are 16px on a phone, and the viewport does not scale (2026-09-26). The "new messages" pill moves to
-   the middle so the keyboard button at the lower right never sits on it. */
-@media (max-width:750px) {
-  textarea,input,select { font-size:16px }
-  .new-messages { right:auto;left:50%;transform:translateX(-50%) }
+  /* The keyboard button floats at the lower right: the list ends above it, so no bubble sits under it. */
+  #messages { padding-bottom:3.8rem }
 }

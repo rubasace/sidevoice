@@ -17,29 +17,6 @@ function ConversationsToggle() {
   );
 }
 
-/* On a phone the call bar's lights and the models behind them are one dot in the head's right corner — the
- * worst of them — and their detail opens from it, so the bar keeps one row of buttons (2026-09-26). */
-function StatusSummary() {
-  const lights = useRoomStore((state) => state.capabilityPanel);
-  const engines = useRoomStore((state) => state.enginePanel);
-  const [open, setOpen] = useState(false);
-  const rows = [...lights, ...engines];
-  if (!rows.length) return null;
-  const worst = rows.some((row) => row.state === "fail") ? "fail" : rows.some((row) => row.state === "warn") ? "warn" : "ok";
-  return (
-    <div className="status-summary" data-open={open || undefined}>
-      <button type="button" className="status-summary-toggle" aria-expanded={open} aria-label="Estado de la llamada" title="Estado de la llamada"
-        onClick={() => setOpen(!open)}><i className="engine-dot" data-state={worst} aria-hidden="true" /></button>
-      {open && (
-        <dl className="status-summary-panel" onClick={() => setOpen(false)}>
-          {lights.map((row) => <div className="status-line" key={row.id} data-state={row.state}><i className="engine-dot" data-state={row.state} aria-hidden="true" /><dt>{row.label}</dt><dd>{row.note || row.value}</dd></div>)}
-          {engines.map((row) => <div className="status-line" key={row.id} data-state={row.state}><i className="engine-dot" data-state={row.state} aria-hidden="true" /><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
-        </dl>
-      )}
-    </div>
-  );
-}
-
 function BootError() {
   const error = useRoomStore((state) => state.bootError);
   return <div id="error" role="alert">{error}</div>;
@@ -61,7 +38,6 @@ export function TranscriptPanel() {
     <section className="transcript">
       <div className="transcript-head">
         <div className="transcript-heading"><ConversationsToggle /><strong id="transcript-title">{title}</strong></div>
-        <StatusSummary />
       </div>
       <MessageList conversation={conversation} />
       <button type="button" className="compose-toggle" hidden={composing} aria-label="Escribir un mensaje" title="Escribir un mensaje"
