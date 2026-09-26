@@ -36,6 +36,7 @@ class FakeTranscriber:
     def __init__(self, results, offline=()):
         self.results, self.calls = list(results), 0
         self.offline, self.offline_audio = list(offline), []
+        self.turn_audio = b''   # what the open turn has heard so far, for a switch to take
 
     async def transcribe_audio(self, pcm, sample_rate=None):
         """The catch-up path: audio the room never heard live, recognised on its own."""
@@ -45,7 +46,11 @@ class FakeTranscriber:
             raise result
         return result
 
-    async def transcribe_turn(self):
+    def take_turn_audio(self):
+        pcm, self.turn_audio = self.turn_audio, b''
+        return pcm
+
+    async def transcribe_turn(self, pcm=None):
         self.calls += 1
         result = self.results.pop(0)
         if callable(result):
@@ -389,6 +394,45 @@ class BrowserCallTest(IsolatedAsyncioTestCase):
         # A turn that starts after delivery is its own message.
         voice.turn_started(); await voice.turn_stopped()
         self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')][-1], 'Y esto va aparte.')
+
+    async def test_switching_conversation_mid_turn_delivers_what_was_said_to_the_one_it_was_said_to(self):
+        # Seen on 2026-09-26: words spoken to one conversation arrived at the next one selected (#93).
+        from unittest.mock import AsyncMock
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript('Esto era para A.'), Transcript('Y esto para B.')])
+        client.worker = AsyncMock()
+        voice.turn_started()
+        voice.transcriber.turn_audio = b'pcm'
+        await self.hub._retarget(client, {'thread_id': 'thread-b', 'title': 'B'})
+        await asyncio.gather(*voice.finishing)
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Esto era para A.'])
+        self.assertTrue(client.speaking, 'the person is still talking: the switch closed a turn, not the microphone')
+        opened = [m['data'] for m in sent if m['type'] == 'voice-user-turn' and m['data']['phase'] == 'started'][-1]
+        self.assertEqual(opened, {'phase': 'started', 'revision': client.turn_revision, 'thread_id': 'thread-b'},
+                         'and the page is told, or it shows a microphone that is not recording')
+        await voice.turn_stopped()
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-b')], ['Y esto para B.'])
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Esto era para A.'])
+        self.assertFalse(client.speaking)
+
+    async def test_a_turn_waiting_for_a_breath_is_not_joined_to_a_turn_spoken_to_another_conversation(self):
+        from sidevoice.transcribers import Transcript
+        voice, client, sent = self.voice([Transcript('Lo de A.'), Transcript('Lo de B.')])
+        voice.merge_window = 0.2
+        voice.turn_started()
+        first = asyncio.ensure_future(voice.turn_stopped())
+        await asyncio.sleep(0.05)
+        await self.hub._retarget(client, {'thread_id': 'thread-b', 'title': 'B'})
+        voice.turn_started()                      # carried on, but to the other conversation
+        second = voice.turn_stopped()
+        await asyncio.gather(first, second)
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-a')], ['Lo de A.'])
+        self.assertEqual([r['text'] for r in self.hub.journal.history('thread-b')], ['Lo de B.'])
+
+    async def test_switching_with_nothing_said_changes_nothing(self):
+        voice, client, sent = self.voice([])
+        await self.hub._retarget(client, {'thread_id': 'thread-b', 'title': 'B'})
+        self.assertEqual((voice.finishing, voice.transcriber.calls), (set(), 0))
 
     async def test_the_bar_to_open_a_turn_rises_while_this_browser_is_playing_a_reply(self):
         # The room answered itself on 2026-09-20: its own voice out of the phone's speaker opened a turn,

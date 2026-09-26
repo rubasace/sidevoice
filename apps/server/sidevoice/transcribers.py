@@ -139,14 +139,19 @@ class TurnTranscriber(SegmentedSTTService):
         self._turn_audio.clear()
         await super().cancel(frame)
 
-    async def transcribe_turn(self):
-        """The whole turn's audio to text, or None when there was nothing to transcribe."""
+    def take_turn_audio(self):
+        """Everything this turn has heard so far, handed over now: what arrives next is another turn's."""
         pcm = bytearray(self._turn_audio)
         self._turn_audio.clear()
         if self._user_speaking:
             # The turn closed without a VAD stop (audio went idle): the speech is still in the live buffer.
             pcm.extend(self._audio_buffer)
             self._audio_buffer.clear()
+        return bytes(pcm)
+
+    async def transcribe_turn(self, pcm=None):
+        """The whole turn's audio to text, or None when there was nothing to transcribe."""
+        pcm = self.take_turn_audio() if pcm is None else pcm
         if not pcm:
             return None
         return await self.recognise(bytes(pcm) + self._trailing_silence(), self.sample_rate)

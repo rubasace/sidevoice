@@ -156,8 +156,10 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.c.id, 'same-webrtc')
         self.assertIsInstance(self.c.worker.queue_frame.call_args.args[0], InterruptionFrame)
         self.assertEqual(self.c.utterances['old'].status, 'interrupted')
-        self.c.enqueue_input('Frase empezada con A')
-        self.assertEqual(self.hub.journal.pending()[0]['thread'], 'a')
+        # What was said before the switch went to A when the switch closed it (#93); the turn still
+        # open is the rest of what the person says, and that is B's.
+        self.c.enqueue_input('Y esto ya para B')
+        self.assertEqual(self.hub.journal.pending()[0]['thread'], 'b')
         with self.assertRaises(HTTPException):
             await self.hub.speak('Respuesta vieja', 'stale', self.c.id, previous)
         self.c.user_started(); self.c.speaking = False
@@ -223,9 +225,10 @@ class RoomTests(IsolatedAsyncioTestCase):
         from sidevoice.room_history import RoomHistory
         await self.hub.select(self.c.id, 'a')
         self.c.user_started()
-        original_revision = self.c.revision
+        original_revision, original_target = self.c.turn_revision, dict(self.c.turn_target)
         await self.hub.select(self.c.id, 'b')
-        self.c.enqueue_input('Todavía para A')
+        # A turn closed by the switch is transcribed afterwards, against the target it was spoken to.
+        self.c.enqueue_input('Todavía para A', target=original_target, revision=original_revision)
         self.c.disconnect()
         row = self.hub.journal.pending()[0]
         payload = json.loads(row['payload'])

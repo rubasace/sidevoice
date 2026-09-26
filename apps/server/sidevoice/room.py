@@ -873,6 +873,9 @@ class Room:
         new = {'thread_id': target.get('thread_id'), 'title': target.get('title'), 'binding_id': str(uuid.uuid4())}
         try:
             client.switching = True
+            # What was already said goes to the conversation it was said to, before anything moves (#93).
+            if client.voice is not None and hasattr(client.voice, 'close_turn'):
+                client.voice.close_turn()
             client.revision += 1
             client.halt('interrupted', 'focus_changed')
             if client.worker is not None:
@@ -880,6 +883,16 @@ class Room:
             else:
                 client.speaking = False
             client.target = new
+            if client.speaking:
+                # The person is still talking: the rest of this turn is the new conversation's.
+                client.turn_target = dict(new)
+                client.turn_revision = client.revision
+                client.turn_binding_id = new['binding_id']
+                # The page shows the turn it is told about: without this the microphone looks idle while the
+                # person goes on talking to the new conversation.
+                if client.on_browser_event:
+                    client.on_browser_event({'type': 'voice-user-turn', 'data': {
+                        'phase': 'started', 'revision': client.turn_revision, 'thread_id': new['thread_id']}})
             client.sent = 0
             client.last_delivery = None
             client.error = None

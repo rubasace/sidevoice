@@ -351,7 +351,24 @@ class VoiceCall:
         task.add_done_callback(self.finishing.discard)
         return task
 
-    async def finish_turn(self, revision, target, stopped_at=None):
+    def close_turn(self):
+        """A conversation switch ends the turn being spoken (#93).
+
+        What was said so far belongs to the conversation it was said to. Its audio is taken now, before
+        the switch, so nothing spoken afterwards can join it, and it is delivered to that conversation
+        whether or not the person is still talking; what comes next is a turn of the new one.
+        """
+        call = self.call
+        pcm = self.transcriber.take_turn_audio()
+        if not pcm and not self.held:
+            return None
+        task = asyncio.create_task(self.finish_turn(call.turn_revision, dict(call.turn_target), time.monotonic(),
+                                                    pcm=pcm, closing=True))
+        self.finishing.add(task)
+        task.add_done_callback(self.finishing.discard)
+        return task
+
+    async def finish_turn(self, revision, target, stopped_at=None, *, pcm=None, closing=False):
         call = self.call
         stopped_at = stopped_at or time.monotonic()
         # The detector reports the pause once it has lasted vad_stop_secs, so speech ended that much earlier.
@@ -361,7 +378,7 @@ class VoiceCall:
         async with self.lock:
             text, failed, metrics = '', None, {}
             try:
-                result = await self.transcriber.transcribe_turn()
+                result = await (self.transcriber.transcribe_turn(pcm) if closing else self.transcriber.transcribe_turn())
                 if result is not None:
                     text, metrics = result.text.strip(), dict(result.metrics or {})
             except asyncio.TimeoutError:
@@ -387,7 +404,7 @@ class VoiceCall:
             # A pause is not always an ending. Before delivering, the turn waits the window this device's
             # patience buys it: if the person carries on inside it, what they said next belongs to this same
             # message and the hold below does the joining (asked for in the room, 2026-09-20).
-            if current and text and not failed and call.cancelled_turn != revision and self.merge_window:
+            if current and not closing and text and not failed and call.cancelled_turn != revision and self.merge_window:
                 deadline = time.monotonic() + self.merge_window
                 while (time.monotonic() < deadline and revision == call.turn_revision
                        and call.cancelled_turn != revision and call.connected):
@@ -397,7 +414,7 @@ class VoiceCall:
             # 2026-09-19 resumed 75 ms after the cut and was still delivered as two).
             logger.info('Call {}: turn {} transcribed in {} ms · open turn {} · {} · held before {}', call.id[:8], revision,
                         round((transcript_at - stopped_at) * 1000), call.turn_revision,
-                        'current' if current else 'user resumed: holding', bool(self.held))
+                        'current' if current else 'conversation switched: delivered on its own' if closing or call.turn_target.get('thread_id') != target.get('thread_id') else 'user resumed: holding', bool(self.held))
             if call.cancelled_turn == revision:
                 # Cancelling the draft cancels what was being held for it too.
                 self.held = None
@@ -405,7 +422,10 @@ class VoiceCall:
                 # The previous turn was cut while the user was still going: it belongs to this message.
                 text, self.held = (self.held + ' ' + text).strip(), None
             cancelled = bool(failed or call.cancelled_turn == revision or not text)
-            if not cancelled and not current:
+            # A turn that was closed by a switch, or whose successor is spoken to another conversation, is
+            # never held: joining it to the next turn would deliver it to a conversation it was not said to.
+            moved = closing or call.turn_target.get('thread_id') != target.get('thread_id')
+            if not cancelled and not current and not moved:
                 # The user started speaking again before this text was delivered: a breath, not a
                 # new message. Hold it for the turn now open instead of sending half a sentence.
                 self.held = text
@@ -431,7 +451,7 @@ class VoiceCall:
             if failed:
                 call.error = failed
                 self.send({'type': 'error', 'data': {'message': failed}})
-            if current:
+            if current and not closing:
                 call.input_stats['pending'] = 0
                 await call.finish_user_turn()
 
