@@ -29,7 +29,10 @@ class PresentationTests(IsolatedAsyncioTestCase):
 
     async def test_speech_enqueues_once_and_does_not_wait_for_playback(self):
         c = self.call()
-        result = await asyncio.wait_for(c.room.speak('Hola', 'u', 'call', 0), .1)
+        # The stand-in worker never plays anything, so a speak that waited for playback would never
+        # return. The timeout only guards against that hang; a tenth of a second also caught a full
+        # garbage collection over the suite's heap (#69).
+        result = await asyncio.wait_for(c.room.speak('Hola', 'u', 'call', 0), 5)
         self.assertEqual(result['status'], 'queued')
         self.assertEqual(await c.room.speak('Hola', 'u', 'call', 0), result)
         c.worker.queue_frames.assert_awaited_once()
