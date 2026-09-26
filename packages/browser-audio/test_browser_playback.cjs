@@ -496,7 +496,7 @@ test('The bed refuses a volume of nothing and bounds one that is too much',async
 test('The bed is a slow breath in phrases: swells, then silence, quietest at the seam, normalized so its gain is its peak',()=>{
  const s=setup();s.voice.context=new s.context.AudioContext();
  const buffer=s.voice.presenceBuffer(),rate=48000,data=buffer.data;
- assert.equal(buffer.duration,34,'phrases of 3.6 s breaths with 5, 7 and 4 s of silence between them');
+ assert.equal(buffer.duration,27.5,'phrases of 3.6 s breaths with 3, 4 and 2.5 s of silence between them');
  let peak=0;for(const value of data)peak=Math.max(peak,Math.abs(value));
  assert.ok(Math.abs(peak-1)<1e-9,'peak 1, so the gain asked for is the peak amplitude in full scale');
  const rms=(from,to)=>{from=Math.round(from);to=Math.round(to);let squares=0;for(let i=from;i<to;i++)squares+=data[i]*data[i];return Math.sqrt(squares/(to-from))};
@@ -504,9 +504,9 @@ test('The bed is a slow breath in phrases: swells, then silence, quietest at the
  assert.ok(swell>8*seam,'it swells and recedes: '+swell+' vs '+seam);
  assert.ok(swell>8*join,'twice per loop, and quiet where the breaths meet');
  assert.ok(Math.abs(data[0])<.01&&Math.abs(data[data.length-1])<.01,'the loop joins itself without a step');
- const gap=Array.from(data.slice(rate*7.3,rate*12.1));
+ const gap=Array.from(data.slice(rate*7.3,rate*10.1));
  assert.ok(gap.every(v=>v===0),'after two breaths, seconds of silence: a long turn is not a continuous hum (#91)');
- assert.ok(rms(rate*14,rate*14.4)>8*seam,'and then the next phrase');
+ assert.ok(rms(rate*11.8,rate*12.2)>8*seam,'and then the next phrase');
 });
 
 test('Hanging up has its own descending pair, and it too leaves the element with something to render',()=>{

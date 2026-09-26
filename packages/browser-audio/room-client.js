@@ -50,7 +50,10 @@ class RoomVoice {
   this.presence=null;this.presencePulseSeconds=3.6;
   /* Phrases of breaths with silence between them, as [breaths, seconds of silence after]: a bed that never
    * stops becomes noise over a long turn (#91). Uneven on purpose, so the loop does not read as a metronome. */
-  this.presencePhrases=[[2,5],[1,7],[2,4]];this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
+  this.presencePhrases=[[2,3],[1,4],[2,2.5]];
+  // Many silences are a second or two long: a breath that starts from nothing is gone before it is heard,
+  // so the bed begins a third of the way into its first swell (2026-09-26, in the car).
+  this.presenceStartOffset=.35;this.presenceFadeSeconds=.6;this.presenceMaxVolume=.2}
  note(kind,detail){const event={at:Date.now(),kind,...(detail?{detail}:{})};this.events.push(event);if(this.events.length>24)this.events.shift();
   // The event list is bounded, so what it proves is kept apart from it: a voice has already left this output.
   if(kind==='play-encoded'||kind==='complete')this.rendered=true;
@@ -294,7 +297,7 @@ class RoomVoice {
    source.buffer=this.presenceBuffer();source.loop=true;source.connect(gain);gain.connect(this.destination);
    const now=this.context.currentTime,fade=this.presenceFadeSeconds;
    gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(level,now+fade);
-   source.start(now);
+   source.start(now,this.presencePulseSeconds*this.presenceStartOffset);
    this.presence={source,gain,volume:level};this.note('presence-start',reason+' · '+level.toFixed(3));
    return true;
   }catch(error){this.note('presence-failed',error?.message||'presence');return false}
