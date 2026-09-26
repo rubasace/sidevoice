@@ -270,7 +270,7 @@ function updateComposer(){const ready=!!state.ws&&!!state.sessionId&&!!targetId(
 $('text-composer').onsubmit=async event=>{event.preventDefault();const input=$('text-message'),text=input.value;if(state.textSending||!text.trim()||!state.sessionId||!targetId())return;const destination=targetId(),key=JSON.stringify([state.sessionId,destination,text]);if(textAttempt?.key!==key)textAttempt={key,id:crypto.randomUUID()};const attempt=textAttempt;state.textSending=true;updateComposer();setRoomError('');try{await post('/api/presentation/text',{text,thread_id:destination,session_id:state.sessionId,binding_id:state.roomBinding.binding_id,message_id:attempt.id});if(input.value===text)input.value='';if(textAttempt===attempt)textAttempt=null;await refreshHistory()}catch(e){setRoomError(e.message||'No se pudo confirmar el envío. El texto se conserva.')}finally{state.textSending=false;updateComposer()}};
 $('text-message').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();$('text-composer').requestSubmit()}});
 function updateMic(){state.micEnabled=micTrack()?.enabled??state.micEnabled;updateComposer()}
-function setMic(enabled){stopPreview();state.micEnabled=enabled;applyMicState();updateMic()}
+function setMic(enabled){stopPreview();state.micEnabled=enabled;applyMicState();updateMic();syncNowPlaying()}
 function releaseHold(){spaceDown=false;state.holding=false;if(holding){holding=false;setMic(false)}}
 
 document.addEventListener('click',event=>{if(!$('call-controls').contains(event.target))setDevicesOpen(false);for(const menu of document.querySelectorAll('.participant-menu[open],.call-menu[open]'))if(!menu.contains(event.target))menu.open=false});
@@ -974,7 +974,7 @@ function disconnect() {
     applyLockedCall();
 }
 // Joining and leaving are the same button, and it belongs to React: this is what it calls (#53).
-async function toggleCall(){if(state.ws||state.connecting){disconnect();return}state.connecting=true;const epoch=++connectEpoch;keepScreenAwake();setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;state.voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(state.voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(state.voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(state.voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:state.voicePreferences.tts_device},text=>{state.liveNote=text})}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}state.stream=acquiredStream;state.stream.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);keepScreenAwake();refreshAudioDevices();roomStore.patch({engineReady:true,enginePreferences:state.voicePreferences,sttRuntime});applyLockedCall();joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;updateMic();showEchoCover();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=state.joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch)state.connecting=false}}
+async function toggleCall(){if(state.ws||state.connecting){disconnect();return}primeNowPlaying();state.connecting=true;const epoch=++connectEpoch;keepScreenAwake();setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;state.voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(state.voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(state.voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(state.voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:state.voicePreferences.tts_device},text=>{state.liveNote=text})}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}state.stream=acquiredStream;state.stream.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);keepScreenAwake();refreshAudioDevices();roomStore.patch({engineReady:true,enginePreferences:state.voicePreferences,sttRuntime});applyLockedCall();joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;updateMic();showEchoCover();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=state.joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch)state.connecting=false}}
 // ----- the socket: opened on join, reopened by itself when the room goes away -----
 // A room restart or a network blip must not end the call: the microphone permission, the media stream
 // and the unlocked output all survive it; only the socket needs reopening, with the same hello.
@@ -1671,6 +1671,55 @@ window.sidevoiceActions={
 function applyLockedCall(){
  const on=state.voicePreferences?.locked_call!=='off'&&!!(state.ws||state.connecting);
  window.roomVoice?.keepPlayingWhileHidden?.(on);
+ applyLockScreen(on);
+}
+// ----- the lock screen and the headphones' button (#97) -----
+// iOS gives the lock-screen tile — and with it what a headphone click sends — to an ordinary media element,
+// not to the live stream the call plays through (WebKit keeps calls from becoming "Now Playing" on purpose).
+// So the call owns it with an element of its own: a faint looping file, far below the microphone's
+// detector, playing while the microphone is open and paused while it is muted. A click then toggles the
+// microphone. It never touches the call's own output element, which is what echo cancellation listens to.
+let nowPlaying=null;
+function faintLoop(){
+ const rate=8000,seconds=2,count=rate*seconds,bytes=new DataView(new ArrayBuffer(44+count*2));
+ const text=(at,value)=>{for(let i=0;i<value.length;i++)bytes.setUint8(at+i,value.charCodeAt(i))};
+ text(0,'RIFF');bytes.setUint32(4,36+count*2,true);text(8,'WAVE');text(12,'fmt ');bytes.setUint32(16,16,true);
+ bytes.setUint16(20,1,true);bytes.setUint16(22,1,true);bytes.setUint32(24,rate,true);bytes.setUint32(28,rate*2,true);
+ bytes.setUint16(32,2,true);bytes.setUint16(34,16,true);text(36,'data');bytes.setUint32(40,count*2,true);
+ // About -80 dBFS: not digital silence, which iOS does not count as playing.
+ for(let i=0;i<count;i++)bytes.setInt16(44+i*2,Math.round((Math.random()*2-1)*3),true);
+ return new Blob([bytes],{type:'audio/wav'});
+}
+function primeNowPlaying(){
+ // Created and started inside the Join click: iOS lets an element play only from a gesture the first time.
+ if(nowPlaying||typeof Audio==='undefined'||typeof navigator==='undefined'||!navigator.mediaSession)return;
+ try{
+  const element=new Audio();element.loop=true;element.setAttribute('playsinline','');
+  element.src=URL.createObjectURL(faintLoop());nowPlaying=element;
+  element.play().then(()=>window.roomVoice?.note?.('now-playing','primed')).catch(error=>window.roomVoice?.note?.('now-playing-refused',error?.message||'play'));
+ }catch(error){window.roomVoice?.note?.('now-playing-failed',error?.message||'create')}
+}
+function micLive(){return !!(state.stream?.getAudioTracks()[0]?.enabled??state.micEnabled)}
+function syncNowPlaying(){
+ if(!nowPlaying)return;
+ const wanted=lockScreenOn&&micLive();
+ if(wanted&&nowPlaying.paused)nowPlaying.play().catch(error=>window.roomVoice?.note?.('now-playing-refused',error?.message||'play'));
+ if(!wanted&&!nowPlaying.paused)nowPlaying.pause();
+}
+let lockScreenOn=false;
+function applyLockScreen(on){
+ lockScreenOn=on;
+ const session=typeof navigator!=='undefined'?navigator.mediaSession:null;
+ if(session){
+  // A click arrives as play or pause, whichever the platform thinks is next. "Play" always means open the
+  // microphone; "pause" toggles it, because a click may reach us as pause even while muted.
+  const handlers={play:()=>setMic(true),pause:()=>setMic(!micLive())};
+  for(const [action,run] of Object.entries(handlers)){
+   try{session.setActionHandler(action,on?()=>{window.roomVoice?.note?.('media-session',action+' · '+(micLive()?'live':'muted'));run()}:null)}catch{}
+  }
+  try{session.metadata=on?new MediaMetadata({title:'Sidevoice',artist:conversationTitle(targetId())||'Llamada'}):null}catch{}
+ }
+ syncNowPlaying();
 }
 function toggleMic(){holding=false;setMic(!(state.stream?.getAudioTracks()[0]?.enabled??state.micEnabled))}
 function typing(e){return e.target instanceof Element&&!!e.target.closest('input,textarea,select,[contenteditable=true],[role=menu],[role=menuitem],[data-radix-popper-content-wrapper]')}
