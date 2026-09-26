@@ -258,7 +258,11 @@ body,
 }
 
 /* Listen again: a small play mark on the bubble's own line, beside the time (#100). */
-.chat-meta .listen-again { order:-1;margin-right:auto;width:1.6rem;height:1.6rem;padding:0;display:inline-grid;place-items:center;border-radius:50%;color:var(--sv-muted) }
+/* The time and what follows it share one line and one height: ticks on the person's messages, the play
+   mark on the conversation's, both after the time and the same size. */
+.chat-meta time,.chat-meta .receipt { display:inline-flex;align-items:center;height:.9rem }
+.chat-meta .listen-again { width:.9rem;height:.9rem;min-height:0;padding:0;border:0;display:inline-grid;place-items:center;border-radius:50%;background:transparent;color:var(--sv-muted) }
+.chat-meta .listen-again svg { width:.75rem;height:.75rem }
 .chat-meta .listen-again:hover { color:#e8edf1;background:#ffffff14 }
 
 /* On a phone the text box waits behind a keyboard button in the conversation head's right corner. */
@@ -300,3 +304,6 @@ body,
   .compose-toggle:hover,.conversations-toggle:hover,.status-summary-toggle:hover,.listen-again:hover,
   .call-bar .engine-slot:not([data-open]) .engine-toggle:hover { background:transparent;color:#9aa6b3 }
 }
+/* Small to the eye, not to a finger: the play mark's tap area reaches beyond what it draws. */
+.chat-meta .listen-again { position:relative }
+.chat-meta .listen-again::after { content:"";position:absolute;inset:-.6rem }
