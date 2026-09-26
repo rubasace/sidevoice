@@ -76,6 +76,7 @@ class Utterance:
         self.replay_of = None   # the reply this one repeats, when it is a catch-up rather than an answer
         self.parked = False     # published when nobody on its conversation was listening: never rendered, never heard
         self.first_render = False  # a catch-up of a parked reply: its render is a first purchase, not a repeat
+        self.rendered = False   # a paid engine was asked for it: repeating it must never buy it again
         self.clients = {}       # client id -> {'status': ..., 'reason': ...}
         self.published = None   # last (status, reason) written to the journal
 
@@ -441,6 +442,9 @@ class RoomClient:
             except ValueError as error:
                 self.fail_active()
                 raise HTTPException(502, str(error)) from error
+            original = self.room.utterances.get(utterance.replay_of) if utterance.replay_of else utterance
+            if original is not None:
+                original.rendered = True
         self.latency.mark(uid, 'audio_ready')
         # A listener that was handed someone else's render did not wait for the provider;
         # recording that request as its own would be a measurement it never made.
@@ -639,10 +643,16 @@ class Room:
             return []
         mine = {client.id, *(session for session in sessions if isinstance(session, str))}
         floor = time.time() - seconds
+
+        def left(entry):
+            # Cut because this browser moved to another conversation: it was not heard, and the bubble
+            # promises it again on return (#73), even if it had started.
+            return entry is not None and entry['reason'] == 'focus_changed' and entry['status'] != 'playback_finished'
+
         missed = [utterance for utterance in self.utterances.values()
                   if utterance.thread_id == thread and not utterance.replay_of and utterance.at >= floor
-                  and client.id not in utterance.clients
-                  and not any(entry['status'] in HEARD
+                  and (client.id not in utterance.clients or left(utterance.clients[client.id]))
+                  and not any(entry['status'] in HEARD and not left(entry)
                               for session, entry in utterance.clients.items() if session in mine)]
         return missed[-self.MAX_REPLAY:]
 
@@ -662,16 +672,18 @@ class Room:
                 choice = resolve_voice(client.settings or load_settings(), original.language)
             except ValueError:
                 choice = {'provider': 'kokoro'}
-            if choice['provider'] != 'kokoro' and not original.parked and self.stored_audio(original, choice) is None:
-                # The room no longer has that audio and will not invent it or buy it again. A parked reply
-                # was never bought at all: rendering it now is its first time, not a second.
+            bought = original.rendered and not original.parked
+            if choice['provider'] != 'kokoro' and bought and self.stored_audio(original, choice) is None:
+                # The room no longer has that audio and will not invent it or buy it again. A reply that was
+                # never rendered — parked, or queued and left before its turn came — was never bought at all:
+                # rendering it now is its first time, not a second.
                 skipped.append({'history_id': original.row_id, 'reason': 'audio_gone'})
                 continue
             echo = Utterance(original.id + ':replay:' + client.id, original.text,
                              language=original.language, thread_id=original.thread_id,
                              revision=client.revision, row_id=original.row_id, at=original.at)
             echo.replay_of = original.id
-            echo.first_render = original.parked
+            echo.first_render = not bought
             echo.clients[client.id] = {'status': 'queued', 'reason': 'replay'}
             self.utterances[echo.id] = echo
             client.pending.append(echo.id)
@@ -857,7 +869,10 @@ class Room:
             if current.get('thread_id') == thread_id and (not title or current.get('title') == title):
                 return {'status': 'already_active', 'binding': dict(current)}
             new = await self._retarget(client, {'thread_id': thread_id, 'title': title})
-            return {'status': 'activated', 'binding': new}
+        # Coming back to a conversation is a return like any other: what was missed on it plays now (#73).
+        from .language_settings import load_settings
+        await self.replay(client, seconds=(client.settings or load_settings()).replay_on_return_seconds)
+        return {'status': 'activated', 'binding': new}
 
     async def deselect(self, session_id, binding_id):
         client = self.clients.get(session_id)

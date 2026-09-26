@@ -201,7 +201,7 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertEqual(c.utterances['browser-b'].status, 'interrupted')
         self.assertIsNone(c.active)
 
-    async def test_background_reply_survives_focus_switch_without_audio_or_replay(self):
+    async def test_background_reply_is_kept_as_text_and_replayed_on_return_to_its_conversation(self):
         from sidevoice.presentation import Speech
         await self.hub.select(self.c.id, 'a')
         revision = self.c.revision
@@ -213,11 +213,14 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.assertTrue(result['text_saved'])
         self.assertEqual(self.hub.journal.history('a')[0]['text'], 'Respuesta para A')
         self.c.worker.queue_frames.assert_not_awaited()
+        # Back on A, what was said there while this browser was elsewhere plays, once (#73).
         await self.hub.select(self.c.id, 'a')
+        self.c.worker.queue_frames.assert_awaited_once()
+        self.assertEqual(self.c.worker.queue_frames.call_args.args[0][1].text, 'Respuesta para A')
         result = await self.hub.publish(payload)
         self.assertEqual(result['status'], 'text_only')
-        self.assertEqual(len(self.hub.journal.history('a')), 1)
-        self.c.worker.queue_frames.assert_not_awaited()
+        self.assertEqual(len(self.hub.journal.history('a')), 1, 'a replay writes no second row')
+        self.c.worker.queue_frames.assert_awaited_once()
 
     async def test_pending_inputs_keep_their_original_destination_after_disconnect(self):
         import json
@@ -315,7 +318,7 @@ class RoomTests(IsolatedAsyncioTestCase):
         self.c.worker.queue_frames.assert_awaited_once()
         self.assertEqual(self.c.utterances['waiting'].revision, self.c.revision)
 
-    async def test_waiting_reply_does_not_survive_focus_change_or_replay(self):
+    async def test_waiting_reply_cut_by_a_focus_change_is_replayed_on_return(self):
         from sidevoice.presentation import Speech
         await self.hub.select(self.c.id, 'a')
         self.c.user_started()
@@ -324,12 +327,13 @@ class RoomTests(IsolatedAsyncioTestCase):
         await self.hub.publish(payload)
         await self.hub.select(self.c.id, 'b')
         self.assertEqual(self.hub.journal.history('a')[0]['audio_reason'], 'focus_changed')
-        await self.hub.select(self.c.id, 'a')
         self.c.speaking = False
-        await self.c.dispatch()
+        await self.hub.select(self.c.id, 'a')
+        # The original stays cut; what sounds is its replay, because the bubble promised it.
         result = await self.hub.publish(payload)
         self.assertEqual(result['status'], 'interrupted')
-        self.c.worker.queue_frames.assert_not_awaited()
+        self.c.worker.queue_frames.assert_awaited_once()
+        self.assertEqual(self.c.worker.queue_frames.call_args.args[0][1].text, 'Pendiente')
 
     async def test_already_playing_interrupted_reply_is_never_replayed(self):
         from sidevoice.presentation import Speech

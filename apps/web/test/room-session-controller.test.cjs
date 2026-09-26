@@ -1007,6 +1007,39 @@ test('Every room query names the browser asking, so the answer is never another 
  assert.equal(s.run("roomQuery('/api/presentation')"),'/api/presentation');
 });
 
+test('A late or session-less refresh does not cancel the reply the room is replaying on return (#73)',async()=>{
+ const s=setup(),answers=[];
+ s.context.fetch=async path=>new Promise(resolve=>answers.push({path,resolve}));
+ const answer=(i,body)=>answers[i].resolve({ok:true,json:async()=>body});
+ s.run("sessionId=null");
+ const early=s.run('refresh()');                       // asked before the page had joined: about nobody
+ s.run("sessionId='s'");
+ const current=s.run('refresh()');
+ answer(1,{binding:{thread_id:'a',title:'A',binding_id:'b2'},call:{id:'s'}});await current;
+ s.run("activeSpeech={session_id:'s',thread_id:'a',utterance_id:'u:replay:s',revision:1,replay:true}");
+ answer(0,{binding:null});await early;
+ assert.equal(s.run("roomBinding.binding_id"),'b2','the older answer is not applied over the newer one');
+ assert.equal(s.run("activeSpeech&&activeSpeech.utterance_id"),'u:replay:s','and the replay keeps playing');
+ // A new binding on the same conversation is a rejoin: it does not cut what is playing either.
+ const rejoin=s.run('refresh()');
+ answer(2,{binding:{thread_id:'a',title:'A',binding_id:'b3'},call:{id:'s'}});await rejoin;
+ assert.equal(s.run("activeSpeech&&activeSpeech.utterance_id"),'u:replay:s');
+ // Moving to another conversation still does.
+ const moved=s.run('refresh()');
+ answer(3,{binding:{thread_id:'other',title:'O',binding_id:'b4'},call:{id:'s'}});await moved;
+ assert.equal(s.run("activeSpeech"),null);
+});
+
+test('A reply this page already played to the end is not played again when the room offers it after a drop (#59)',async()=>{
+ const s=setup(),posted=[];
+ s.context.fetch=async(path,options)=>{posted.push([path,options?.body&&JSON.parse(options.body)]);return {ok:true,json:async()=>({})}};
+ s.run("sessionId='s';roomBinding={thread_id:'a',binding_id:'b'};playedToEnd.add('s:voice:u1');window.roomVoice={playEncoded:async()=>{throw Error('must not play')}}");
+ await s.run("receiveServerSpeech({session_id:'s',thread_id:'a',utterance_id:'u1:replay:s',history_id:'s:voice:u1',revision:1,replay:true,text:'Hola'})");
+ const receipt=posted.find(([path])=>path.includes('browser-receipt'));
+ assert.equal(receipt[1].status,'playback_finished','the room is told it was heard, instead of it sounding twice');
+ assert.equal(receipt[1].utterance_id,'u1:replay:s');
+});
+
 test('A reply the room addressed to another browser is not played by this one',async()=>{
  const s=setup(),posts=[];
  s.context.fetch=async(path,options)=>{if(options)posts.push(JSON.parse(options.body));return {ok:true,json:async()=>({messages:[]})}};

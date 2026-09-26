@@ -729,16 +729,34 @@ class ReplayOnReturnTests(RoomFixture):
         await self.reply(first, 'kept', text='Con audio')
         await self.reply(first, 'dropped', text='Sin audio')
         first.disconnect()
-        # The first was dispatched and paid for; the second was still queued when the socket went, so
-        # the room never rendered it — the same place a browser lands when the bounded cache drops one.
-        self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Con audio')])
-        self.assertIsNone(self.hub.assets.read(self.hub.assets.key(ELEVEN, 'Sin audio')))
+        # Both were paid for; then the bounded cache drops the second one.
+        await self.hub.assets.obtain(ELEVEN, 'Sin audio')
+        self.hub.utterances['dropped'].rendered = True
+        self.hub.assets.entries.pop(self.hub.assets.key(ELEVEN, 'Sin audio'))
+        self.renders.clear()
         back, summary = await self.returning('back', sessions=['one'])
         self.assertEqual([item['history_id'] for item in summary['replayed']], ['one:voice:kept'])
         self.assertEqual(summary['skipped'], [{'history_id': 'one:voice:dropped', 'reason': 'audio_gone'}])
         self.assertEqual(self.announcement(back)[0]['skipped'], summary['skipped'])
-        self.assertEqual(len(self.renders), 1, 'repeating what someone missed never bills the account again')
+        self.assertEqual(self.renders, [], 'repeating what someone missed never bills the account again')
         self.assertEqual(self.spoken(back)[0]['shared'], True)
+
+    async def test_a_reply_still_queued_when_the_person_left_was_never_bought_and_plays_on_return(self):
+        # Seen on 2026-09-26: a reply published while the person was still in the call, queued behind
+        # another, and never reached before they left, came back as "la sala ya no tiene este audio".
+        self.voice = ELEVEN
+        first = self.browser('one')
+        await self.reply(first, 'kept', text='Con audio')
+        await self.reply(first, 'never', text='Nunca sonó')
+        first.disconnect()
+        self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Con audio')])
+        back, summary = await self.returning('back', sessions=['one'])
+        self.assertEqual([item['history_id'] for item in summary['replayed']], ['one:voice:kept', 'one:voice:never'])
+        self.assertEqual(summary['skipped'], [])
+        await self.heard_to_the_end(back, 'kept:replay:back')
+        await self.heard_to_the_end(back, 'never:replay:back')
+        self.assertEqual(self.renders, [('elevenlabs', 'una-voz', 'Con audio'), ('elevenlabs', 'una-voz', 'Nunca sonó')],
+                         'bought once, now, and the one already bought is not bought again')
 
     async def test_only_the_conversation_this_browser_is_on_is_caught_up(self):
         first = self.browser('one')

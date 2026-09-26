@@ -276,10 +276,17 @@ function releaseHold(){spaceDown=false;state.holding=false;if(holding){holding=f
 document.addEventListener('click',event=>{if(!$('call-controls').contains(event.target))setDevicesOpen(false);for(const menu of document.querySelectorAll('.participant-menu[open],.call-menu[open]'))if(!menu.contains(event.target))menu.open=false});
 document.addEventListener('keydown',event=>{if(event.key==='Escape')setDevicesOpen(false);if(event.key==='Escape')for(const menu of document.querySelectorAll('.participant-menu[open],.call-menu[open]'))menu.open=false});
 async function select(id){if(state.switching||id===targetId()||!state.sessionId)return;state.switching=true;try{await post('/api/presentation/select',{thread_id:id,session_id:state.sessionId});rememberThread(id);await refresh()}catch(e){setRoomError(e.message)}finally{state.switching=false}}
-async function refresh(){try{
+// Answers can arrive out of order, and one asked before this page had a session describes nobody: either
+// would read as the binding changing and cancel a reply just handed to this page (#73).
+let refreshAsked=0,refreshApplied=0;
+async function refresh(){const asked=++refreshAsked,session=state.sessionId;try{
  const d=await api(roomQuery('/api/presentation'));
+ if(asked<refreshApplied||session!==state.sessionId)return;
+ refreshApplied=asked;
  const previousThread=targetId(),changed=state.roomBinding?.binding_id!==d.binding?.binding_id;roomStore.batch(()=>{state.roomBinding=d.binding;if(d.binding?.thread_id)rememberThread(d.binding.thread_id);
- if(changed){state.viewedThread=null;state.turns={};if(previousThread!==targetId())state.harness=Object.fromEntries(Object.entries(state.harness).filter(([id])=>id!==previousThread));cancelBrowserSpeech();pendingBotText=[];state.pendingUserText='';state.userLive=state.botLive=false;markHistorySeen()}
+ if(changed){state.viewedThread=null;state.turns={};if(previousThread!==targetId())state.harness=Object.fromEntries(Object.entries(state.harness).filter(([id])=>id!==previousThread));
+  // A new binding on the same conversation is a rejoin, not a move: what is playing for it goes on.
+  if(state.activeSpeech?.thread_id!==targetId())cancelBrowserSpeech();pendingBotText=[];state.pendingUserText='';state.userLive=state.botLive=false;markHistorySeen()}
  updateComposer();
  const call=d.call?.id===state.sessionId?d.call:null;if(call?.error)setRoomError(call.error);});
 }catch{state.liveNote='Servidor no disponible'}}
@@ -1263,9 +1270,17 @@ function cancelBrowserSpeech(){
  post('/api/presentation/browser-receipt',{session_id:speech.session_id,revision:speech.revision,
   utterance_id:speech.utterance_id,status:speech.started?'cancelled_playing':'cancelled_unplayed'}).catch(()=>{});
 }
+// What this page played to the end, by the reply's row. A socket that dropped before the room heard the
+// receipt makes the room offer it again on the way back; the page knows better, and says so (#59).
+const playedToEnd=new Set();
 async function receiveBrowserSpeech(d,cloud=false){
  const receivedAt=latencyNow();
  if(d.session_id!==state.sessionId)return;
+ if(d.replay&&d.history_id&&playedToEnd.has(d.history_id)){
+  post('/api/presentation/browser-receipt',{session_id:d.session_id,revision:d.revision,utterance_id:d.utterance_id,status:'playback_finished'}).catch(()=>{});
+  if(d.replay)markReplay(d.history_id,'done');
+  return;
+ }
  if(d.thread_id!==targetId())await refresh();
  if(d.session_id!==state.sessionId||d.thread_id!==targetId())return;
  if(d.revision<state.roomRevision){if(!d.replay)state.turns=recordReply(state,d);return}
@@ -1286,6 +1301,7 @@ async function receiveBrowserSpeech(d,cloud=false){
   },range=>{if(speechJob===d)updateKaraoke(d,range)});
   if(speechJob!==d)return
   finish();
+  if(d.history_id)playedToEnd.add(d.history_id);
   if(d.replay)markReplay(d.history_id,'done');
   await receipt('playback_finished');
  }catch(e){
