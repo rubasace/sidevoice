@@ -50,7 +50,7 @@ function AdvancedSettings() {
   return (
     <section id="pane-advanced" aria-labelledby="settings-advanced" hidden>
       <h3>Tiempos de conversación</h3>
-      <label>Pausa antes del audio pendiente (segundos)<input id="audio-grace-seconds" type="number" min="0" max="10" step="0.5" defaultValue="2" /></label><p className="muted">Tras enviar tu intervención, espera este margen. Si vuelves a hablar, la espera se reinicia. Por defecto: 2 segundos.</p>
+      <label>Pausa antes del audio pendiente (segundos)<input id="audio-grace-seconds" type="number" min="0" max="10" step="0.5" defaultValue="1" /></label><p className="muted">Tras enviar tu intervención, espera este margen. Si vuelves a hablar, la espera se reinicia. Por defecto: 1 segundo.</p>
       <h3>Mientras la conversación trabaja</h3>
       <label>Sonido de presencia<NativeSelect id="presence-sound" defaultValue="on"><option value="on">Activado</option><option value="off">Desactivado</option></NativeSelect></label>
       <p className="muted">Un sonido suave y continuo mientras la conversación tiene lo que dijiste y aún no responde: empieza cuando la conversación lo lee y se detiene con la primera respuesta. Sale por el mismo altavoz que la voz, así que la cancelación de eco lo cubre, y su volumen está muy por debajo del umbral del detector para no abrir una intervención. Por defecto: activado al 3,5 % de la escala. Es de este dispositivo; la sala no guarda nada.</p>

@@ -154,7 +154,7 @@ test('A key the provider refuses leaves the previous one in place and says so',a
  const s=setup({strictDOM:true});const calls=[];
  s.context.fetch=async path=>{calls.push(path);return {ok:false,json:async()=>({detail:'OpenAI rejected the key.'})}};
  s.run("voicePreferences={stt_provider:'openai',stt_model:'gpt-4o-transcribe'};sttCatalog={providers:[{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[{id:'gpt-4o-transcribe',label:'GPT-4o'}],models_source:'remote'}]};sttCapabilities={webgpu:false,wasm:true,models:[]};sttCredentials={openai:{configured:true,source:'stored',hint:'…vieja'}};sttRemote.openai.loaded=true;$('stt-provider').value='openai';renderTranscription()");
- s.run("$('stt-key').value='sk-mala'");
+ s.run("$('stt-key').value='sk-mala';$('stt-key').oninput()");
  await s.run("$('stt-key').onblur()");
  assert.equal(calls.length,1,'a refused key is not followed by a request for models');
  assert.equal(s.run("$('stt-key-state').textContent"),'Clave rechazada · OpenAI rejected the key. · La clave anterior sigue en uso');
@@ -167,6 +167,23 @@ test('A key the provider refuses leaves the previous one in place and says so',a
  s.run("$('stt-key').value='';$('stt-key').oninput()");
  assert.equal(s.run("$('stt-key-state').textContent"),'','emptying the field takes the complaint away with it');
  await s.run('saveCredentials()');
+});
+test('A key field the browser filled in on its own never blocks saving (iPhone, 2026-09-26)',async()=>{
+ const s=setup({strictDOM:true});const calls=[];
+ s.context.fetch=async path=>{calls.push(path);return {ok:false,json:async()=>({detail:'OpenAI rejected the key.'})}};
+ s.run("sttCredentials={openai:{configured:true,source:'stored',hint:'…buena'}};forgetCredentialCheck('stt');$('stt-key').value='una-contraseña-guardada'");
+ await s.run('saveCredentials()');
+ assert.equal(calls.length,0,'nobody typed it, so nobody asked for it to be installed');
+});
+test('Reopening Settings asks for the OpenAI models again, because each opening brings a fresh catalogue',async()=>{
+ const s=setup({strictDOM:true});
+ s.run("sttRemote.openai.loaded=true;window.roomTranscription={capabilities:async()=>({webgpu:false,wasm:true,models:[]})};voicePreferences={stt_provider:'openai',stt_model:'gpt-4o-transcribe'}");
+ s.context.fetch=async path=>({ok:true,json:async()=>path.includes('/transcription/models')
+  ?{models:[{id:'gpt-4o-transcribe',label:'GPT-4o'}]}
+  :{catalog:{providers:[{id:'openai',label:'OpenAI',default_model:'gpt-4o-transcribe',models:[],models_source:'remote'}]},credentials:{openai:{configured:true}}}});
+ await s.run('loadTranscription()');
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.deepEqual(s.run("$('stt-model').children.map(option=>option.value)"),['gpt-4o-transcribe']);
 });
 test('A key with nothing stored behind it says that nothing is saved',async()=>{
  const s=setup({strictDOM:true});

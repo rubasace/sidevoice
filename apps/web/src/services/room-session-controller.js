@@ -1397,6 +1397,9 @@ async function loadTranscriptionModels(provider,refresh=false){
 }
 async function loadTranscription(){
  const data=await api('/api/presentation/transcription');sttCatalog=data.catalog;sttCredentials=data.credentials||{};
+ // Each opening brings a fresh catalogue whose OpenAI list is empty: the "already loaded" flag belonged to the
+ // previous copy, and trusting it left the model list empty on every reopening.
+ sttRemote.openai.loaded=false;
  sttCapabilities=await window.roomTranscription.capabilities();
  entriesFor($('stt-provider'),(sttCatalog.providers||[]).filter(provider=>provider.id!=='browser'||sttCapabilities.webgpu||sttCapabilities.wasm).map(provider=>[provider.id,provider.label]),state.voicePreferences?.stt_provider||'browser');
  $('stt-device').disabled=false;renderTranscription();
@@ -1415,8 +1418,8 @@ const keyFields={
  stt:{missing:'Sin clave: OpenAI no podrá transcribir',state:()=>sttCredentials.openai},
  elevenlabs:{missing:'Sin clave: no hay voces de ElevenLabs',state:()=>elevenCredentials},
 };
-for(const check of Object.values(keyFields))Object.assign(check,{sent:null,timer:null,job:null,running:false,failed:false,note:''});
-function forgetCredentialCheck(field){const check=keyFields[field];if(!check)return;clearTimeout(check.timer);Object.assign(check,{sent:null,timer:null,running:false,failed:false,note:''})}
+for(const check of Object.values(keyFields))Object.assign(check,{sent:null,timer:null,job:null,running:false,failed:false,note:'',typed:false});
+function forgetCredentialCheck(field){const check=keyFields[field];if(!check)return;clearTimeout(check.timer);Object.assign(check,{sent:null,timer:null,running:false,failed:false,note:'',typed:false})}
 function scheduleCredentialCheck(field){const check=keyFields[field];clearTimeout(check.timer);check.timer=setTimeout(()=>checkCredential(field),KEY_CHECK_PAUSE)}
 // The news about a key goes in the same line the stored one uses: one place to look, whatever happened.
 function credentialNote(field){
@@ -1467,12 +1470,15 @@ for(const field of ['stt','elevenlabs']){
  const input=$(field+'-key');
  if(!input)continue;
  input.onblur=()=>checkCredential(field);
- input.oninput=()=>{if(String(input.value||'').trim()){scheduleCredentialCheck(field);return}forgetCredentialCheck(field);showCredentialNote(field)};
+ input.oninput=()=>{keyFields[field].typed=true;if(String(input.value||'').trim()){scheduleCredentialCheck(field);return}forgetCredentialCheck(field);showCredentialNote(field)};
 }
 /* Saving carries no key any more — a verified one is already stored — so the form only waits for a check
  * still in flight, and refuses to close over a key the provider rejected while it is still in the field. */
 async function saveCredentials(){
  for(const field of ['stt','elevenlabs']){
+  // A field the person never typed in may still hold text the browser filled in on its own (a saved
+  // password on the iPhone): that is not a key anyone asked to install, and refusing to save over it is not ours.
+  if(!keyFields[field].typed)continue;
   await checkCredential(field);
   const check=keyFields[field];
   if(check.failed&&String($(field+'-key')?.value||'').trim())throw Error(check.note);
@@ -1609,11 +1615,13 @@ async function applyTranscriptionSettings(previous,next){
   return 'local';
  }finally{state.switchingTranscription=false}
 }
-$('language-form').onsubmit=async e=>{e.preventDefault();storeLanguage();try{await saveCredentials()}catch(error){$('settings-error').textContent=error.message;return}const previous=state.voicePreferences,p={...state.voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};// A control the person never saw is not a decision they made: a select with nothing in it (its pane hidden,
+async function saveSettings(){storeLanguage();try{await saveCredentials()}catch(error){$('settings-error').textContent=error.message;return}const previous=state.voicePreferences,p={...state.voicePreferences,tts_execution:'browser',language_overrides:voiceDraft};// A control the person never saw is not a decision they made: a select with nothing in it (its pane hidden,
 // its catalogue still loading) keeps what was saved before instead of writing an empty string — which is
 // how a saved OpenAI transcription silently became the browser's (2026-09-20).
 const field=key=>{const node=$(key.replaceAll('_','-'));const raw=node?node.value:'';return raw===''||raw==null?previous?.[key]:raw};
-for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds','presence_sound','replay_on_return_seconds',...MIC_KEYS]){const value=field(key);p[key]=['tts_speed','audio_grace_seconds','presence_volume','replay_on_return_seconds'].includes(key)?Number(value):value;if((key==='stt_device'||key==='tts_device')&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.[key])?previous[key]:'auto'}p.stt_provider=field('stt_provider')||'browser';p.stt_model=field('stt_model')||previous?.stt_model;let hotSwap=false;try{storePreferences(p);if(state.ws&&state.ws.readyState===WebSocket.OPEN&&state.sessionId)state.ws.send(JSON.stringify({type:'voice-settings',data:{session_id:state.sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);state.voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);state.liveNote=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}};
+for(const key of ['stt_language','stt_device','default_tts_language','tts_speed','ui_language','tts_device','default_model','default_voice','audio_grace_seconds','presence_sound','replay_on_return_seconds',...MIC_KEYS]){const value=field(key);p[key]=['tts_speed','audio_grace_seconds','presence_volume','replay_on_return_seconds'].includes(key)?Number(value):value;if((key==='stt_device'||key==='tts_device')&&!['auto','webgpu','wasm'].includes(p[key]))p[key]=['auto','webgpu','wasm'].includes(previous?.[key])?previous[key]:'auto'}p.stt_provider=field('stt_provider')||'browser';p.stt_model=field('stt_model')||previous?.stt_model;let hotSwap=false;try{storePreferences(p);if(state.ws&&state.ws.readyState===WebSocket.OPEN&&state.sessionId)state.ws.send(JSON.stringify({type:'voice-settings',data:{session_id:state.sessionId,settings:p}}));hotSwap=localModelSwap(previous,p);state.voicePreferences=p;window.roomI18n?.setLanguage(p.ui_language);stopPreview();$('language-settings').close();const applied=await applyTranscriptionSettings(previous,p);state.liveNote=applied==='switched'?'Preferencias guardadas · '+(sttSettingsChanged(previous,p)?'Transcripción cambiada':'Micrófono aplicado')+' sin salir de la llamada':applied?'Preferencias guardadas · Transcripción actualizada':'Preferencias guardadas'}catch(e){if(hotSwap)disconnect();if(hotSwap)setRoomError(e.message);else $("settings-error").textContent=e.message}}
+// Whatever goes wrong while reading the form is said where the person is looking, and nothing is half-saved.
+$('language-form').onsubmit=async e=>{e.preventDefault();try{await saveSettings()}catch(error){$('settings-error').textContent=error?.message||String(error)}};
 window.sidevoiceActions={
  cancelInput:cancelCurrentInput,
  toggleMic,
