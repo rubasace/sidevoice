@@ -67,6 +67,9 @@ export function echoCoverage(f) {
         return { state: 'off', note: 'El micrófono no tiene cancelación de eco: la voz de la sala por el altavoz abrirá intervenciones.' };
     if (f.aec !== true)
         return { state: 'partial', note: 'El navegador no confirma la cancelación de eco del micrófono.' };
+    // Off the iPhone the voice plays straight through the context on purpose (#80), and the browser cancels it.
+    if (f.health && f.health.strategy === 'context' && f.health.output === 'context')
+        return { state: 'on', note: 'Cancelación de eco activa; la voz sale directa por el contexto de audio.' };
     if (f.health && f.health.output !== 'element')
         return { state: 'partial', note: 'La voz no sale por el elemento de audio: en el iPhone no entra en la cancelación de eco.' };
     if (f.health?.element?.paused)

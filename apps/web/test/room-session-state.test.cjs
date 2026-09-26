@@ -81,7 +81,7 @@ test('Join progress, returning subject and failure text are derived from the sam
 });
 test('Echo coverage reports observed AEC and sink facts without inferring detector performance',async()=>{
  const {echoCoverage}=await moduleReady;
- for(const [patch,expected] of [[{connected:false},''],[{track:false},''],[{aec:false},'off'],[{aec:undefined},'partial'],[{health:{output:'context'}},'partial'],[{health:{output:'element',element:{paused:true}}},'partial'],[{},'on']])
+ for(const [patch,expected] of [[{connected:false},''],[{track:false},''],[{aec:false},'off'],[{aec:undefined},'partial'],[{health:{output:'context'}},'partial'],[{health:{output:'context',strategy:'element'}},'partial'],[{health:{output:'context',strategy:'context'}},'on'],[{health:{output:'element',element:{paused:true}}},'partial'],[{},'on']])
   assert.equal(echoCoverage({connected:true,track:true,aec:true,health:{output:'element'},...patch}).state,expected);
 });
 test('The engine badge derives processing, fallback and output health from runtime facts',async()=>{

@@ -107,6 +107,28 @@ test('Speech leaves through a media element when the context can feed one, so ec
  assert.equal(s.voice.supportsOutputSelection,true);await s.voice.setOutputDevice('headset');assert.equal(elementSink,'headset');
  s.voice.cancel();await assert.rejects(p);
 });
+test('Off the iPhone the voice plays straight through the context, never through a media element (#80)',async()=>{
+ const s=setup();let elements=0;
+ s.context.Audio=class{constructor(){elements++}async play(){}pause(){}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>({stream:{}});s.voice.context=context;
+ s.voice.outputStrategy='context';
+ await s.voice.unlock();
+ assert.equal(elements,0,'no element, so no second clock for the browser to keep in step by resampling');
+ assert.equal(s.voice.output,null);
+ assert.equal(s.voice.destination,s.voice.master,'everything leaves through one gain the engine owns');
+ assert.equal(s.voice.master.connectedTo,context.destination);
+ assert.equal(s.voice.health().output,'context');
+ assert.ok(s.sources.length>=1,'the join is still greeted with its two notes');
+ s.voice.setAudible(false);assert.equal(s.voice.master.gain.value,0,'a tab that is not the one sounding is muted at that gain');
+ s.voice.setAudible(true);assert.equal(s.voice.master.gain.value,1);
+ let sink;context.setSinkId=async id=>{sink=id};await s.voice.setOutputDevice('headset');
+ assert.equal(sink,'headset','and choosing an output moves the context itself: one device, one clock');
+});
+test('The iPhone keeps its media-element output, which its echo cancellation needs',async()=>{
+ const s=setup();s.voice.outputStrategy='element';const {context}=mediaOutput(s);await s.voice.unlock();
+ assert.ok(s.voice.output?.element,'the element path is untouched on iOS');
+ assert.equal(s.voice.master,null);
+});
 test('Without media-element output the context destination is used, as before',async()=>{
  const s=setup();await s.voice.unlock();assert.equal(s.voice.output,null);assert.equal(s.voice.destination,s.voice.context.destination);
 });
@@ -316,7 +338,7 @@ test('A clock that advances raises no alarm, and cancelling while the context is
  assert.equal(counters.paused,pausedBefore+1,'a cancel while the context is stopped pauses the element so it cannot loop');
  assert.equal(JSON.stringify(s.voice.health().events.slice(-2).map(e=>e.kind)),JSON.stringify(['cancel','tail']));
  const health=s.voice.health();
- assert.deepEqual(Object.keys(health).sort(),['buffer_rate','clock','context','element','events','output','playing','presence','rate','resuming','stalls']);
+ assert.deepEqual(Object.keys(health).sort(),['buffer_rate','clock','context','element','events','output','playing','presence','rate','resuming','stalls','strategy']);
 });
 
 test('A barge-in fades the voice out through its own gain instead of cutting the sink last input dead',async()=>{
