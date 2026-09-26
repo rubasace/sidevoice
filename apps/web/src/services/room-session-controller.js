@@ -186,6 +186,37 @@ async function replaceMicrophone(id){
  previous.getTracks().forEach(t=>t.stop());
  await window.roomVoice.unlock();updateMic();
 }
+/* Headphones connected mid-call on an iPhone kept the call on the speaker until a reload (2026-09-26). While
+ * the microphone is open, iOS plays our output through the microphone's own echo-cancelling unit, and rebuilds
+ * that unit on a new route only when the microphone it holds goes away. So when the devices change and this
+ * device follows the system's default, the capture is started again — the old one stopped first, which is
+ * what lets iOS rebuild on the new route — and the output handed back. A few hundred milliseconds of
+ * microphone are lost; the call's output keeps its floor flowing, so the element is never handed an empty sink. */
+let routeTimer=null;
+function followDefaultRoute(){
+ clearTimeout(routeTimer);
+ // One change arrives as several events: act once they have settled.
+ routeTimer=setTimeout(()=>void restartCaptureOnRoute(),400);
+}
+async function restartCaptureOnRoute(){
+ if(!state.ws||!captureNode||inputDeviceId!=='default'||!window.roomVoice?.pausesByDefault)return;
+ const epoch=++deviceEpoch,socket=state.ws,callEpoch=connectEpoch;
+ window.roomVoice?.note?.('route-change','restarting capture');
+ const previous=state.stream;
+ try{micSource?.disconnect()}catch{}
+ previous?.getTracks().forEach(t=>t.stop());
+ let next;
+ try{next=await acquireMicrophone('default')}
+ catch(error){window.roomVoice?.note?.('route-change-failed',error?.message||'microphone');state.deviceNote='No se pudo recuperar el micrófono tras cambiar de auriculares: '+(error?.message||'');return}
+ if(epoch!==deviceEpoch||socket!==state.ws||callEpoch!==connectEpoch){next.getTracks().forEach(t=>t.stop());return}
+ const source=audioContext.createMediaStreamSource(next);
+ next.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);
+ source.connect(analyser);source.connect(captureNode);
+ micSource=source;state.stream=next;
+ await window.roomVoice.resumeOutput?.();
+ window.roomVoice?.note?.('route-change','capture restarted');syncNowPlaying();
+ updateMic();
+}
 function updateWave(value){
  waveLevels.shift();waveLevels.push(value);
  const bars=$('mic-control').querySelectorAll?.('.mic-wave i')||[];
@@ -201,7 +232,7 @@ function setupAudioControls(){
  $('call-settings-open').onclick=()=>{$('call-menu').open=false;$('settings-open').click()};
  $('refresh-devices').onclick=refreshAudioDevices;
 
- globalThis.navigator?.mediaDevices?.addEventListener?.('devicechange',refreshAudioDevices);
+ globalThis.navigator?.mediaDevices?.addEventListener?.('devicechange',()=>{refreshAudioDevices();followDefaultRoute()});
 }
 let voiceCatalog=null;let voiceDraft={};let editingLanguage=null;let callExecution='browser';let elevenCredentials={};let sttCredentials={};let pendingBotText=[];
 let textAttempt=null;
