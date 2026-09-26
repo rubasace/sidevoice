@@ -317,3 +317,11 @@ body,
 @media (hover:none) {
   .settings-dialog #settings-close:focus { outline:none;box-shadow:none }
 }
+/* Why taps kept leaving colour behind: every button inherits a grey hover, which beats the transparent rest
+   of the ghost buttons, and a touch screen keeps a tapped button in hover until something else is touched.
+   On touch screens a ghost button's hover is its rest, for every ghost button at once; and the models button
+   does not light up for its open panel either. Buttons with a colour of their own (hang up, save) keep it. */
+@media (hover:none) {
+  .ui-button--ghost:hover { background:transparent }
+  .call-bar .engine-slot .engine-toggle:hover,.call-bar .engine-slot[data-open] .engine-toggle { background:transparent;color:#9aa6b3 }
+}
