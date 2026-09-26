@@ -308,3 +308,12 @@ body,
 /* The check marks are drawn in the lower half of their box (the play mark is centred in its own), so on the
    time's line they read low: they are lifted to the line's optical middle. */
 .chat-meta .receipt svg { transform:translateY(-2px) }
+/* At 16px the settings' fields kept their old padding inside a fixed height, and the text was cut at the
+   bottom ("gpt" read "qpt"): on a phone the padding gives way to the text. The dialog focuses its close
+   button when it opens, and a touch screen drew that as a ring nobody asked for. */
+@media (max-width:750px) {
+  .settings-dialog select,.settings-dialog input { padding-top:0;padding-bottom:0;line-height:1.25 }
+}
+@media (hover:none) {
+  .settings-dialog #settings-close:focus { outline:none;box-shadow:none }
+}
