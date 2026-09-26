@@ -956,19 +956,21 @@ function refusalText(admission,broken){
  return broken?'No se pudo conectar con la sala':'La sala rechazó la conexión';
 }
 // The room speaks first: its call id and the PCM format it expects. Anything else arriving meanwhile is an ordinary room event.
-function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=text=>{clearTimeout(timer);reject(Error(text))};let timer=setTimeout(()=>lateFail(),25000),refusal=null,refused=null,broken=false;const lateFail=()=>roomRefusal().then(admission=>fail(admission&&admission.admitted?'Este dispositivo tardó demasiado en entrar. Vuelve a intentarlo.':refusalText(admission,false)));socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));
+function openSession(socket,hello={}){return new Promise((resolve,reject)=>{const fail=(text,forGood=false)=>{clearTimeout(timer);const error=Error(text);error.refused=forGood;reject(error)};let timer=setTimeout(()=>lateFail(),25000),refusal=null,refused=null,broken=false;const lateFail=()=>roomRefusal().then(admission=>fail(admission&&admission.admitted?'Este dispositivo tardó demasiado en entrar. Vuelve a intentarlo.':refusalText(admission,false),admission?.admitted===false));socket.onopen=()=>socket.send(JSON.stringify({label:'rtvi-ai',type:'client-ready',id:crypto.randomUUID(),data:hello}));
  // An error event is always followed by a close event, and the close is the one that can find out
  // why: failing here would answer «no se pudo conectar» to a room that knows it is full.
  socket.onerror=()=>{broken=true};
  socket.onclose=event=>{clearTimeout(timer);timer=null;
   // However the reason arrived — the close code, the frame's own name for it, the frame's sentence —
   // the person reads one sentence for one reason.
-  if(event?.code===1013||refused==='room_is_full')return fail(ROOM_IS_FULL);
-  if(refusal)return fail(refusal);
+  // A room that answered and said no is not a room that is away: these are the refusals a reconnection
+  // must not insist on. Everything else — no answer at all — is worth another try.
+  if(event?.code===1013||refused==='room_is_full')return fail(ROOM_IS_FULL,true);
+  if(refusal)return fail(refusal,true);
   // The question keeps a short patience of its own: a room that does not answer it cannot say why
   // either, and nobody is left looking at a join line while a request hangs.
   timer=setTimeout(()=>fail('La sala rechazó la conexión'),3000);
-  roomRefusal().then(admission=>fail(refusalText(admission,broken)))};
+  roomRefusal().then(admission=>fail(refusalText(admission,broken),admission?.admitted===false))};
  socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='voice-preparation'){if(m.data?.phase==='loading'){clearTimeout(timer);timer=null}showPreparation(m.data||{});noteJoinPreparation(m.data||{});return}if(m.type!=='voice-session'){if(m.type==='error'){refusal=m.data?.message||m.data?.error||refusal;refused=m.data?.reason||refused}message(e.data,socket);return}state.roomInfo=m.data?.room||state.roomInfo;clearTimeout(timer);showPreparation({phase:'hidden'});resolve(m.data)}})}
 // Capturing at the room's rate lets the browser resample; the worklet covers browsers that refuse the rate.
 function roomAudioContext(rate){try{return new AudioContext({sampleRate:rate})}catch{return new AudioContext()}}
@@ -1034,9 +1036,13 @@ async function toggleCall(){if(state.ws||state.connecting){disconnect();return}p
 // ----- the socket: opened on join, reopened by itself when the room goes away -----
 // A room restart or a network blip must not end the call: the microphone permission, the media stream
 // and the unlocked output all survive it; only the socket needs reopening, with the same hello.
-const RECONNECT_DELAYS_MS=[1000,2000,5000,10000,10000,20000];
+// Quick at first, then every five seconds for as long as it takes: a tunnel, a garage or a lift must not
+// end the call (2026-09-26, driving). Only the person hanging up, or the room refusing this browser, stops it.
+const RECONNECT_DELAYS_MS=[1000,2000,5000];
 
 function shouldReconnect(event){return ![1008,1013].includes(event?.code)}   // refused by policy or full: do not insist
+// A room that answers and refuses this browser is not a room that is away: insisting would never end.
+function refusedForGood(error){return error?.refused===true}
 // The room replays nothing into a new session: the one being replaced is over the moment the new
 // one exists, so this page drops what belonged to it instead of pretending it is still running.
 function dropReplacedSession(socket){
@@ -1095,10 +1101,10 @@ async function lostConnection(event,epoch,context){
  window.roomVoice?.signal?.('lost');
  armGapBuffer(captureRate);
  try{
-  for(let attempt=0;attempt<RECONNECT_DELAYS_MS.length;attempt++){
+  for(let attempt=0;;attempt++){
    joinStatus('reconnect',{detail:attempt?String(attempt+1):''});
    if(attempt)window.roomVoice?.signal?.('retry');
-   await new Promise(resolve=>setTimeout(resolve,RECONNECT_DELAYS_MS[attempt]));
+   await new Promise(resolve=>setTimeout(resolve,RECONNECT_DELAYS_MS[Math.min(attempt,RECONNECT_DELAYS_MS.length-1)]));
    if(epoch!==connectEpoch)return;
    try{
     const session=await joinRoom(epoch,context);
@@ -1109,11 +1115,12 @@ async function lostConnection(event,epoch,context){
     // arrives after any turn already finished here, which is the order the room delivers turns in.
     sendGapAudio(state.ws);
     window.roomVoice?.signal?.('back');
+    // Time spent in a tunnel is not time spent away: the idle clock starts again with the call (#63).
+    personSignal();
     setRoomError('');clearJoinStatus();
     return;
-   }catch(e){if(epoch!==connectEpoch)return;state.ws=null}
+   }catch(e){if(epoch!==connectEpoch)return;state.ws=null;if(refusedForGood(e)){disconnect();failJoin(e.message||'La sala no deja entrar a este navegador.');return}}
   }
-  disconnect();failJoin('La sala no volvió. Entra de nuevo cuando esté disponible.');
  }finally{state.reconnecting=false;disarmGapBuffer()}
 }
 /* ----- what the microphone kept hearing while the socket was down -----

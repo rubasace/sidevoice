@@ -1628,6 +1628,32 @@ test('A socket that is not up again keeps nobody waiting and loses no memory',()
  assert.equal(s.run('sendGapAudio')({readyState:3,send(){assert.fail('a closed socket is not sent to')}}),0);
  assert.equal(s.run('gap.samples'),0);
 });
+test('A room that stays away is tried again for as long as it takes, and only a refusal ends the call',async()=>{
+ const s=setup();const sockets=[];
+ s.context.WebSocket=class{constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this)}send(m){this.sent.push(m)}close(){this.readyState=3}};
+ s.context.WebSocket.OPEN=1;
+ s.context.window.sidevoiceUI=new Proxy({},{get:()=>()=>{}});s.context.crypto={randomUUID:()=>'hello-id'};
+ s.context.fetch=async()=>{throw Error('offline')};
+ s.context.sessionStorage={getItem:()=>'t-1',setItem(){},removeItem(){}};
+ s.run(`RECONNECT_DELAYS_MS.splice(0,RECONNECT_DELAYS_MS.length,1,1);
+  startMeter=()=>{};stopMeter=()=>{};startCapture=async()=>{};keepScreenAwake=()=>{};
+  window.roomVoice={unlock:async()=>{},cancel(){},signal(){},context:{state:'running'}};window.roomTranscription={stop(){},start(){}};
+  voicePreferences={stt_provider:'openai'};stream={getAudioTracks:()=>[{enabled:true}],getTracks:()=>[]};sessionId='old-session';ws={readyState:1}`);
+ const pending=s.run('lostConnection')({code:1006},s.run('connectEpoch'),{browserStt:false,sttRuntime:null});
+ const settle=()=>new Promise(resolve=>setTimeout(resolve,15));
+ // A tunnel: every attempt finds nobody. The old page gave up after six.
+ for(let round=0;round<10;round++){
+  await settle();
+  const socket=sockets.at(-1);if(socket&&!socket.failed){socket.failed=true;socket.onclose?.({code:1006})}
+ }
+ await settle();
+ assert.ok(sockets.length>8,'still trying after '+sockets.length+' attempts');
+ assert.equal(s.run('state.reconnecting'),true);
+ // The room answers and refuses this browser: that one is final.
+ const last=sockets.at(-1);last.failed=true;last.onclose?.({code:1013});
+ await pending;
+ assert.equal(s.run('state.reconnecting'),false);
+});
 test('While the room is away the microphone keeps being captured, and the new session is handed what it said',async()=>{
  const s=setup();const sockets=[];
  s.context.atob=value=>Buffer.from(value,'base64').toString('binary');
