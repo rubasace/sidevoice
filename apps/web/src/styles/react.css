@@ -291,3 +291,11 @@ body,
   .call-bar { grid-template-columns:minmax(0,1fr) }
   .call-bar .controls { grid-column:1;grid-row:1;justify-self:center }
 }
+
+/* A phone zooms into any field whose text is under 16px when it takes focus, and the page stayed zoomed:
+   fields are 16px on a phone, and the viewport does not scale (2026-09-26). The "new messages" pill moves to
+   the middle so the keyboard button at the lower right never sits on it. */
+@media (max-width:750px) {
+  textarea,input,select { font-size:16px }
+  .new-messages { right:auto;left:50%;transform:translateX(-50%) }
+}
