@@ -312,6 +312,16 @@ async function select(id){if(state.switching||id===targetId()||!state.sessionId)
 // Answers can arrive out of order, and one asked before this page had a session describes nobody: either
 // would read as the binding changing and cancel a reply just handed to this page (#73).
 let refreshAsked=0,refreshApplied=0;
+/* A page older than the one the room serves keeps its old behaviour until somebody reloads it, and an iPhone
+ * kept the old one through reloads (2026-09-26). Out of a call it reloads itself — under an address naming
+ * the new build, so no cache can answer with the old one; in a call it says so and waits for the hang-up. */
+function followServedBuild(served){
+ const page=window.sidevoiceBuildId||'dev';
+ if(!served||page==='dev'||served===page)return;
+ if(state.ws||state.connecting){state.liveNote='Hay una versión nueva de la sala: se cargará al colgar.';return}
+ try{if(sessionStorage.getItem('sidevoice.reloadedFor')===served)return;sessionStorage.setItem('sidevoice.reloadedFor',served)}catch{}
+ location.replace(location.pathname+'?v='+encodeURIComponent(served));
+}
 async function refresh(){const asked=++refreshAsked,session=state.sessionId;try{
  const d=await api(roomQuery('/api/presentation'));
  if(asked<refreshApplied||session!==state.sessionId)return;
@@ -322,6 +332,7 @@ async function refresh(){const asked=++refreshAsked,session=state.sessionId;try{
   if(state.activeSpeech?.thread_id!==targetId())cancelBrowserSpeech();pendingBotText=[];state.pendingUserText='';state.userLive=state.botLive=false;markHistorySeen()}
  updateComposer();
  const call=d.call?.id===state.sessionId?d.call:null;if(call?.error)setRoomError(call.error);});
+ followServedBuild(d.room?.web_build);
 }catch{state.liveNote='Servidor no disponible'}}
 async function refreshHistory() { try {
     const data = await api(roomQuery('/api/presentation/history'));

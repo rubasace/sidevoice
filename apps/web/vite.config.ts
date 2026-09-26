@@ -11,6 +11,9 @@ export default defineConfig({
   define: { __BUILD_ID__: JSON.stringify(buildId) },
   plugins: [react(), {
     name: "sidevoice-build-id",
+    // Only a real build writes it: a test run through this same config used to overwrite it with an id no
+    // bundle carries, and every page then read as stale against the room (2026-09-26).
+    apply: "build",
     // The room reads this to tell a page which build it is serving, so a stale tab can say so.
     closeBundle() { mkdirSync("dist", { recursive: true }); writeFileSync("dist/build-id.json", JSON.stringify({ build_id: buildId }) + "\n"); },
   }],
