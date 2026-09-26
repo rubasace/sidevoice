@@ -32,7 +32,7 @@ export function MachineList() {
             onClick={() => toggle(machine.id)}
           >
             <span className="machine-state" data-state={machine.state} title={machine.stateLabel}><span className="dot" /></span>
-            <span className="machine-copy"><span className="machine-name">{machine.host}</span>
+            <span className="machine-copy"><span className="machine-name" title={machine.host}>{machine.host}</span>
               <span className="machine-brief muted">
                 {machine.platform && <span className="machine-tag"><PlatformIcon platform={machine.platform} /> {machine.platform}</span>}
                 {machine.version && <span className="machine-tag" title="Versión del conector"><ConnectorIcon /> {machine.version}</span>}

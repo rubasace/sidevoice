@@ -71,16 +71,18 @@ export function AudioDeviceSelects() {
   const devices = useRoomStore((state) => state.audioDevices);
   const choose = (kind: "input" | "output") => (event: React.ChangeEvent<HTMLSelectElement>) =>
     void window.sidevoiceActions?.selectAudioDevice(kind, event.target.value);
+  // A long device name is cut in the select; its full name is on hover.
+  const named = (list: { id: string; label: string }[], id: string) => list.find((device) => device.id === id)?.label || "Predeterminado del sistema";
   return (
     <>
       <label className="audio-device-choice"><MicrophoneIcon /><span className="sr-only">Micrófono</span>
-        <NativeSelect id="input-device" aria-label="Micrófono" value={devices.inputId} onChange={choose("input")} disabled={!devices.available || devices.busy}>
+        <NativeSelect id="input-device" aria-label="Micrófono" title={named(devices.inputs, devices.inputId)} value={devices.inputId} onChange={choose("input")} disabled={!devices.available || devices.busy}>
           {devices.inputs.length ? devices.inputs.map((device) => <option key={device.id} value={device.id}>{device.label}</option>)
             : <option value="default">Predeterminado del sistema</option>}
         </NativeSelect>
       </label>
       <label className="audio-device-choice"><SpeakerIcon /><span className="sr-only">Altavoces</span>
-        <NativeSelect id="output-device" aria-label="Altavoces" value={devices.outputId} onChange={choose("output")} disabled={!devices.available || !devices.outputAvailable || devices.busy}>
+        <NativeSelect id="output-device" aria-label="Altavoces" title={named(devices.outputs, devices.outputId)} value={devices.outputId} onChange={choose("output")} disabled={!devices.available || !devices.outputAvailable || devices.busy}>
           {devices.outputs.length ? devices.outputs.map((device) => <option key={device.id} value={device.id}>{device.label}</option>)
             : <option value="default">Predeterminado del sistema</option>}
         </NativeSelect>

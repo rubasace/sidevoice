@@ -37,7 +37,7 @@ export function TranscriptPanel() {
   return (
     <section className="transcript">
       <div className="transcript-head">
-        <div className="transcript-heading"><ConversationsToggle /><strong id="transcript-title">{title}</strong></div>
+        <div className="transcript-heading"><ConversationsToggle /><strong id="transcript-title" title={title}>{title}</strong></div>
         <button type="button" className="compose-toggle" hidden={composing} aria-label="Escribir un mensaje" title="Escribir un mensaje"
           onClick={compose}><KeyboardIcon /></button>
       </div>
