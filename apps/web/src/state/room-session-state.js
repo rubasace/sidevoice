@@ -81,8 +81,12 @@ export function echoCoverage(f) {
 export function micView(s) {
     const enabled = s.micEnabled !== false;
     const label = enabled ? 'Silenciar micrófono' : 'Activar micrófono';
-    // Never disabled: the preference is set before joining as often as during a call, and a button that
-    // looks dead right after a reload reads as "the microphone is broken" (2026-09-20).
+    // Not disabled before joining: the preference is set then as often as during a call, and a button that
+    // looks dead right after a reload reads as "the microphone is broken" (2026-09-20). In a call with no
+    // conversation selected there is nobody to speak to, so it is off and says why (2026-09-26).
+    if (s.ws && !selectedThread(s))
+        return { enabled, label: 'Elige una conversación para hablar', pressed: !enabled, disabled: true, holding: false,
+            title: 'Elige una conversación para hablar: sin ninguna seleccionada, el micrófono no envía nada.' };
     return { enabled, label, pressed: !enabled, disabled: false, holding: !!s.holding,
         title: label + ' (⌘D / Ctrl+D). Mantén Espacio para hablar si está silenciado.' };
 }

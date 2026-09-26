@@ -423,9 +423,16 @@ test('A joined empty room selects its only listening conversation automatically'
  const s=setup();s.run("roomBinding=null;ws={};people=[{thread_id:'only',available:true,reach:{state:'listening'}}];closedThreads=[];var chosen=null;select=async id=>{chosen=id}");
  assert.equal(await s.run('selectOnlyListeningConversation()'),true);
  assert.equal(s.run('chosen'),'only');
- s.run("people.push({thread_id:'second',available:true,reach:{state:'listening'}});chosen=null");
+ // With several and none remembered, the first in the list: joining always lands somewhere (2026-09-26).
+ s.run("people.unshift({thread_id:'first',available:true,reach:{state:'listening'}});chosen=null");
+ assert.equal(await s.run('selectOnlyListeningConversation()'),true);
+ assert.equal(s.run('chosen'),'first');
+ // With none, the list opens by itself, once per call.
+ const opened=[];s.context.Event=class{constructor(type){this.type=type}};s.context.window.dispatchEvent=event=>{opened.push(event.type);return true};
+ s.run("people=[];chosen=null;sessionId='call-1'");
  assert.equal(await s.run('selectOnlyListeningConversation()'),false);
- assert.equal(s.run('chosen'),null);
+ await s.run('selectOnlyListeningConversation()');
+ assert.deepEqual(opened,['sidevoice-conversations-open']);
 });
 
 test('A receipt arriving before the final bubble is retained instead of disappearing',()=>{
@@ -1305,11 +1312,11 @@ test('Selecting a conversation is this tab\'s own choice: it names the session, 
  posted.length=0;s.run("roomBinding=null;sessionId='sess-2'");
  assert.equal(await s.run('reselectRemembered')(),true);
  assert.deepEqual(posted.find(([path])=>path.endsWith('/api/presentation/select'))[1],{thread_id:'t-1',session_id:'sess-2'});
- // With two conversations listening and nothing remembered, the tab chooses nothing by itself.
+ // With two conversations listening and nothing remembered, the tab lands on the first (2026-09-26).
  delete store['sidevoice.selected'];posted.length=0;s.run("roomBinding=null");
  assert.equal(await s.run('reselectRemembered')(),false);
- assert.equal(await s.run('selectOnlyListeningConversation')(),false);
- assert.equal(posted.some(([path])=>path.endsWith('/api/presentation/select')),false);
+ assert.equal(await s.run('selectOnlyListeningConversation')(),true);
+ assert.equal(posted.filter(([path])=>path.endsWith('/api/presentation/select')).length,1);
 });
 
 test('The stats say which build the page runs and which the room serves, and flag a stale page',()=>{

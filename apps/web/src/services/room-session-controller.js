@@ -81,7 +81,9 @@ let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoc
 let screenWakeLock=null,wakeRequest=null,wakeEpoch=0,wakeRetries=0;
 const waveLevels=Array(5).fill(0);
 function micTrack(){return state.stream?.getAudioTracks?.()[0]||null}
-function applyMicState(){const track=micTrack();if(track)track.enabled=state.micEnabled}
+// The track carries sound only when the person wants it and there is a conversation to say it to: in a call
+// with none selected nothing is captured or sent (2026-09-26).
+function applyMicState(){const track=micTrack();if(track)track.enabled=state.micEnabled&&!(state.ws&&!targetId())}
 function microphoneConstraints(id=inputDeviceId){
  return {echoCancellation:true,noiseSuppression:true,autoGainControl:true,
   ...(id!=='default'?{deviceId:{exact:id}}:{})};
@@ -332,6 +334,7 @@ async function refresh(){const asked=++refreshAsked,session=state.sessionId;try{
   if(state.activeSpeech?.thread_id!==targetId())cancelBrowserSpeech();pendingBotText=[];state.pendingUserText='';state.userLive=state.botLive=false;markHistorySeen()}
  updateComposer();
  const call=d.call?.id===state.sessionId?d.call:null;if(call?.error)setRoomError(call.error);});
+ applyMicState();
  followServedBuild(d.room?.web_build);
 }catch{state.liveNote='Servidor no disponible'}}
 async function refreshHistory() { try {
@@ -379,10 +382,16 @@ $('pair-refresh').onclick=()=>{void freshPairingCode()};
 let pairCopied=null;
 $('pair-copy').onclick=async()=>{const code=$('pair-code').textContent;if(!code)return;try{await navigator.clipboard.writeText(code)}catch{setRoomError('No se pudo copiar el código');return}const meta=$('pair-expires');clearTimeout(pairCopied);const before=meta.textContent;meta.textContent='Copiado';pairCopied=setTimeout(()=>{if(meta.textContent==='Copiado')meta.textContent=before},1200)};
 $('pair-close').onclick=()=>$('pair-dialog').close();$('pair-dialog').addEventListener('close',()=>{clearInterval(pairTimer);pairTimer=null});
+// Joining a room lands on a conversation: the one this tab remembers, else the first one listening in the
+// list. With none at all, the list opens by itself — empty, which says so — once per call (2026-09-26).
+let emptyListShownFor=null;
 async function selectOnlyListeningConversation(){
  if(targetId()||state.switching||!state.ws)return false;
  const listening=state.people.filter(person=>person.available&&person.reach?.state==='listening');
- if(listening.length!==1)return false;
+ if(!listening.length){
+  if(emptyListShownFor!==state.sessionId){emptyListShownFor=state.sessionId;window.dispatchEvent(new Event('sidevoice-conversations-open'))}
+  return false;
+ }
  await select(listening[0].thread_id);return true;
 }
 async function refreshPeople(){try{const data=await api(roomQuery('/api/presentation/participants'));state.people=data.participants;await reselectRemembered()||await selectOnlyListeningConversation()}catch{}finally{refreshMachines()}}

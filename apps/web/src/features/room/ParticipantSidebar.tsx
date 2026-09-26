@@ -4,6 +4,8 @@ import { ParticipantList } from "./ParticipantList";
 
 /** Asked for from anywhere on the page (the phone's header button): open or close the list. */
 export const TOGGLE_CONVERSATIONS = "sidevoice-conversations";
+/** Asked for by the runtime when a call finds no conversation to land on. */
+export const OPEN_CONVERSATIONS = "sidevoice-conversations-open";
 
 /* What is talking in this room, and nothing else. The machines behind those conversations are a
  * setting — you pair one, and then you forget it — so they live in the settings dialog.
@@ -16,8 +18,10 @@ export function ParticipantSidebar() {
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
     const toggle = () => setOpen((value) => !value);
+    const show = () => setOpen(true);
     window.addEventListener(TOGGLE_CONVERSATIONS, toggle);
-    return () => window.removeEventListener(TOGGLE_CONVERSATIONS, toggle);
+    window.addEventListener(OPEN_CONVERSATIONS, show);
+    return () => { window.removeEventListener(TOGGLE_CONVERSATIONS, toggle); window.removeEventListener(OPEN_CONVERSATIONS, show); };
   }, []);
   useEffect(() => {
     if (!open) return;
