@@ -229,6 +229,35 @@ test('A page that never comes back stops the room waiting for it',async()=>{
  assert.equal(s.voice.job,null,'the engine is free for what comes next');
 });
 
+test('A device that asked to keep the call with the screen locked keeps its output playing on hide (#59)',async()=>{
+ const s=setup();const sink={stream:{}};let paused=0;const listeners={};
+ s.context.Audio=class{async play(){}pause(){paused++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};s.voice.context=context;
+ await s.voice.unlock();
+ assert.equal(s.voice.pauseWhileHidden,true,'this stand-in has no navigator, so it is treated as an iPhone');
+ assert.equal(s.voice.keepPlayingWhileHidden(true),true);
+ s.context.document.hidden=true;listeners.visibilitychange();assert.equal(paused,0,'locking the screen no longer silences the call');
+ context.state='interrupted';listeners.statechange();assert.equal(paused,1,'a real interruption still pauses it: the stuck buzz rule stands');
+ s.voice.keepPlayingWhileHidden(false);assert.equal(s.voice.pauseWhileHidden,true,'off, the platform does what it always did');
+ assert.equal(s.voice.health().events.filter(e=>e.kind==='locked-call').map(e=>e.detail).join(),'on,off');
+});
+test('The locked call keeps a faint floor sounding, never before the output has rendered, and stops it when off (#59)',async()=>{
+ const s=setup();const {context}=mediaOutput(s);await s.voice.unlock();
+ const sourcesBefore=s.sources.length;
+ s.voice.presenceReady=()=>false;
+ s.voice.keepPlayingWhileHidden(true);
+ assert.equal(s.voice.keepAlive,null,'a fresh sink is never opened with it');
+ s.voice.presenceReady=()=>true;
+ assert.equal(s.voice.ensureKeepAlive(),true);
+ const floor=s.voice.keepAlive;
+ assert.equal(floor.loop,true);
+ assert.ok(Math.max(...Array.from(floor.buffer.data).map(Math.abs))<=s.voice.keepAliveLevel,'far below the bed and the detector');
+ assert.ok(s.voice.keepAliveLevel<.001);
+ assert.equal(s.voice.ensureKeepAlive(),true);assert.equal(s.sources.length,sourcesBefore+1,'asking twice does not stack a second one');
+ s.voice.keepPlayingWhileHidden(false);
+ assert.equal(s.voice.keepAlive,null);assert.equal(floor.stopped,true);
+});
 test('A tab that is not the one sounding is muted, never paused, and gets its sound back at once (#96)',async()=>{
  const s=setup();const {context,counters}=mediaOutput(s);
  s.voice.setAudible(false);await s.voice.unlock();

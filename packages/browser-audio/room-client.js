@@ -34,7 +34,7 @@ function pausesWhileHidden(){
 class RoomVoice {
  constructor(){this.worker=null;this.context=null;this.output=null;this.job=null;this.serial=0;this.device=null;this.ready=false;this.outputDeviceId='default';this.resuming=null;
   // What the output did lately, for the stats dialog: a stuck buzz on a phone is otherwise invisible from here.
-  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.awayLimitMs=30000;this.pauseWhileHidden=pausesWhileHidden();this.audible=true;this.tailSeconds=1.5;
+  this.events=[];this.stalls=0;this.stallCheckMs=500;this.stallAfterMs=700;this.stallLimit=3;this.awayLimitMs=30000;this.pausesByDefault=pausesWhileHidden();this.pauseWhileHidden=this.pausesByDefault;this.audible=true;this.keepAlive=null;this.keepAliveWanted=false;this.keepAliveLevel=1e-4;this.tailSeconds=1.5;
   // The ambient bed (#42) is a loop of its own, and never the first thing a fresh output renders.
   this.greetSeconds=1.8;this.greetedAt=0;this.rendered=false;
   this.presence=null;this.presencePulseSeconds=3.6;
@@ -131,6 +131,7 @@ class RoomVoice {
    const hidden=typeof document!=='undefined'&&document.hidden;
    this.note(event?.type||'settle',(hidden?'hidden':'visible')+' · '+this.context.state);
    if((hidden&&this.pauseWhileHidden)||this.context.state!=='running')element.pause();
+   this.ensureKeepAlive();
    if(!hidden)this.resumeOutput();
   };
   if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',settle);
@@ -288,6 +289,38 @@ class RoomVoice {
   return true;
  }
  get supportsOutputSelection(){return typeof this.output?.element?.setSinkId==='function'||typeof (this.context||AudioContext.prototype).setSinkId==='function'}
+ /* Experimental, per device (#59): keep the call going with the screen locked. iOS keeps a page running
+  * while it is audible and freezes it a few seconds after it goes quiet, so pausing our own output on lock
+  * is probably what ends the call. With this on, the element is paused only when the context really stops,
+  * and the clock is watched as on the desktop. Off, each platform does what it always did. */
+ keepPlayingWhileHidden(on){
+  this.pauseWhileHidden=on?false:this.pausesByDefault;
+  this.keepAliveWanted=!!on;
+  this.note('locked-call',on?'on':'off');
+  this.ensureKeepAlive();
+  return !this.pauseWhileHidden;
+ }
+ /* The call with the screen locked, measured on 2026-09-26: iOS kept the page running while a reply
+  * sounded, froze it within seconds of going quiet, and the room dropped the call until it woke. The
+  * known way to stay "audible" is to never be silent: a faint noise floor, far below anything the
+  * microphone's detector opens a turn on (-80 dBFS against a bed at -29), looping for as long as the
+  * device asked for the locked call. Never the first thing into a fresh sink, like the bed. */
+ ensureKeepAlive(){
+  const wanted=!!this.keepAliveWanted&&!!this.context&&this.context.state==='running';
+  if(!wanted){
+   if(this.keepAlive){const source=this.keepAlive;this.keepAlive=null;try{source.stop()}catch{}this.note('keep-alive','stop')}
+   return false;
+  }
+  if(this.keepAlive)return true;
+  if(!this.presenceReady()||typeof this.context.createBufferSource!=='function')return false;
+  try{
+   const rate=this.context.sampleRate||48000,length=rate*2,samples=new Float32Array(length);
+   for(let i=0;i<length;i++)samples[i]=(Math.random()*2-1)*this.keepAliveLevel;
+   const buffer=this.context.createBuffer(1,length,rate);buffer.copyToChannel(samples,0);
+   const source=this.context.createBufferSource();source.buffer=buffer;source.loop=true;source.connect(this.destination);
+   source.start(this.context.currentTime);this.keepAlive=source;this.note('keep-alive','start');return true;
+  }catch(error){this.note('keep-alive-failed',error?.message||'keep-alive');return false}
+ }
  /* Whether this page is the one that sounds, when the same browser has the room open in several tabs (#96).
   * A tab that is not is muted, never paused: its playback, receipts and karaoke go on exactly as before, so
   * taking the sound back is instant and nothing it was playing is lost. */
