@@ -242,6 +242,23 @@ test('A device that asked to keep the call with the screen locked keeps its outp
  s.voice.keepPlayingWhileHidden(false);assert.equal(s.voice.pauseWhileHidden,true,'off, the platform does what it always did');
  assert.equal(s.voice.health().events.filter(e=>e.kind==='locked-call').map(e=>e.detail).join(),'on,off');
 });
+test('A phone call hung up with the screen locked gives the call its sound back without unlocking (#59)',async()=>{
+ const s=setup();const sink={stream:{}};let paused=0,played=0;const listeners={};
+ s.context.Audio=class{async play(){played++}pause(){paused++}};
+ s.context.document={hidden:false,addEventListener(name,fn){listeners[name]=fn}};
+ const context=new s.context.AudioContext();context.createMediaStreamDestination=()=>sink;context.addEventListener=(name,fn)=>{listeners[name]=fn};s.voice.context=context;
+ await s.voice.unlock();s.voice.keepPlayingWhileHidden(true);const before=played;
+ s.context.document.hidden=true;listeners.visibilitychange();
+ context.state='interrupted';listeners.statechange();assert.equal(paused,1,'the interruption still pauses the element');
+ context.state='running';listeners.statechange();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(played>before,'and hanging up hands it back while the phone is still locked');
+ // Without the locked call, a hidden page waits to be shown, as it always did.
+ s.voice.keepPlayingWhileHidden(false);const settled=played;
+ context.state='interrupted';listeners.statechange();context.state='running';listeners.statechange();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(played,settled);
+});
 test('The locked call keeps a faint floor sounding, never before the output has rendered, and stops it when off (#59)',async()=>{
  const s=setup();const {context}=mediaOutput(s);await s.voice.unlock();
  const sourcesBefore=s.sources.length;

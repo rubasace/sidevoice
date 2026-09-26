@@ -132,7 +132,10 @@ class RoomVoice {
    this.note(event?.type||'settle',(hidden?'hidden':'visible')+' · '+this.context.state);
    if((hidden&&this.pauseWhileHidden)||this.context.state!=='running')element.pause();
    this.ensureKeepAlive();
-   if(!hidden)this.resumeOutput();
+   // With the screen locked on purpose (#59), the end of an interruption — a phone call hung up — must put the
+   // output back without waiting for the page to be shown: iOS already restarted the context, and a call
+   // that stays paused until somebody unlocks the phone is a call nobody hears (2026-09-26).
+   if(!hidden||(!this.pauseWhileHidden&&this.context.state==='running'))this.resumeOutput();
   };
   if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',settle);
   if(typeof window!=='undefined'&&window.addEventListener){window.addEventListener('pagehide',settle);window.addEventListener('pageshow',settle)}
