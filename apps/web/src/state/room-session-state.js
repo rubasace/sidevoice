@@ -351,6 +351,8 @@ export function audioNote(r, ahead = 0) {
         return 'Sin audio' + (reason ? ' · ' + reason : ' · Motivo no registrado');
     if (r.audio === 'interrupted' || r.audio === 'disconnected' || r.interrupted)
         return 'Audio interrumpido' + (reason ? ' · ' + reason : '') + ' · El texto puede incluir partes que no sonaron';
+    if (r.audio === 'failed' && r.audio_reason === 'unconfirmed')
+        return 'Audio sin confirmar · El navegador no dijo si llegó a sonar';
     if (r.audio === 'failed')
         return 'Audio no reproducido · Falló la reproducción';
     return '';

@@ -128,6 +128,7 @@ class RoomClient:
         self.active = None
         self.quiet_until = 0
         self.dispatch_timer = None
+        self.playback_watch = None   # the bound on the reply this browser was handed (#60)
         self.audio_grace_seconds = 1.0
         # Which conversation this browser talks to is this browser's own state (issue: the room
         # used to hold one selection for everyone). The room only routes.
@@ -315,6 +316,8 @@ class RoomClient:
         self.active = None
 
     def disconnect(self):
+        if self.playback_watch and not self.playback_watch.done():
+            self.playback_watch.cancel()
         self.telemetry.call_ended('disconnected')
         if self.room:
             self.room.leave(self)
@@ -405,6 +408,32 @@ class RoomClient:
             self.fail_active()
             raise
 
+    # A reply handed to a browser is not waited on for ever (#60): a killed tab, a network gone mid-playback
+    # or a receipt lost in flight left the head of the queue "playing" and every later reply behind it. The
+    # bound is generous and grows with the text — rendering in a slow browser included — and when it passes
+    # without an ending receipt the reply is marked unconfirmed and the queue moves on.
+    PLAYBACK_BASE_SECONDS = 60.0
+    PLAYBACK_CHARS_PER_SECOND = 6.0
+
+    def playback_bound(self, text):
+        return self.PLAYBACK_BASE_SECONDS + len(text or '') / self.PLAYBACK_CHARS_PER_SECOND
+
+    def watch_playback(self, utterance):
+        if self.playback_watch and not self.playback_watch.done():
+            self.playback_watch.cancel()
+        uid, bound = utterance.id, self.playback_bound(utterance.text)
+
+        async def expire():
+            await asyncio.sleep(bound)
+            entry = utterance.clients.get(self.id)
+            if self.active != uid or not entry or entry['status'] in CLIENT_TERMINAL:
+                return
+            self.transition(uid, 'failed', 'unconfirmed')
+            self.active = None
+            await self.dispatch()
+
+        self.playback_watch = asyncio.create_task(expire())
+
     async def play_in_browser(self, utterance, rev):
         """Hand this browser the reply to play. Kokoro it renders; a paid engine the room did."""
         from .language_settings import load_settings, resolve_voice
@@ -423,6 +452,7 @@ class RoomClient:
             self.latency.mark(uid, 'audio_dispatched')
             self.telemetry.synthesis(uid, provider=choice['provider'], model=choice.get('model'))
             self.on_browser_event({'type': 'voice-speech', 'data': {**common, **choice}})
+            self.watch_playback(utterance)
             return
         if utterance.replay_of and not utterance.first_render:
             # A paid engine renders once and the room keeps that render in a bounded cache. Repeating
@@ -455,6 +485,7 @@ class RoomClient:
         self.on_browser_event({'type': 'voice-speech-audio', 'data': {
             **common, **choice, **audio,
             'timings_ms': audio['timings_ms'] if fresh else {}, 'shared': not fresh}})
+        self.watch_playback(utterance)
 
 
 def client_error_report(data, session_id=None):

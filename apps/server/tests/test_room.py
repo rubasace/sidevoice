@@ -130,6 +130,31 @@ class MultiClientRoomTests(RoomFixture):
                          {'status': 'queued', 'reason': 'previous_reply'})
         self.assertEqual(self.row('behind', 'one')['audio_reason'], 'previous_reply')
 
+    async def test_a_reply_whose_ending_never_comes_back_does_not_hold_the_queue_for_ever(self):
+        # Seen live on 2026-09-20: a reply stayed "playing" with no receipt and two more waited behind it (#60).
+        client = self.browser('one')
+        client.audio_grace_seconds = 0
+        # The bound grows with the text: a word expires fast, a long reply is given its time.
+        client.PLAYBACK_BASE_SECONDS, client.PLAYBACK_CHARS_PER_SECOND = 0.05, 100
+        await self.reply(client, 'stuck', text='Nada')
+        await self.reply(client, 'next', text='La siguiente, bastante más larga, ' * 4)
+        self.assertEqual(client.active, 'stuck')
+        client.transition('stuck', 'playing')
+        await asyncio.sleep(0.2)
+        self.assertEqual(self.hub.utterances['stuck'].clients['one'], {'status': 'failed', 'reason': 'unconfirmed'})
+        self.assertEqual(self.row('stuck', 'one')['audio_reason'], 'unconfirmed')
+        self.assertEqual(client.active, 'next', 'the queue moved on')
+
+    async def test_a_reply_that_ends_in_time_is_not_touched_by_its_bound(self):
+        client = self.browser('one')
+        client.audio_grace_seconds = 0
+        client.PLAYBACK_BASE_SECONDS, client.PLAYBACK_CHARS_PER_SECOND = 0.05, 1e9
+        await self.reply(client, 'fine', text='Suena y termina')
+        client.transition('fine', 'playing')
+        await client.playback_finished('fine', client.revision)
+        await asyncio.sleep(0.15)
+        self.assertEqual(self.hub.utterances['fine'].clients['one']['status'], 'playback_finished')
+
     # ----- playback is not -----
 
     async def test_one_browser_stopping_playback_leaves_the_other_playing(self):

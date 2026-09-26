@@ -501,6 +501,7 @@ test('The UI distinguishes audio suppression reasons without inferring unknown o
  assert.equal(s.run("audioNote({audio:'text_only',audio_reason:'focus_changed'})"),'Sin audio · No estabas en esta conversación · Se repite al volver');
  assert.equal(s.run("audioNote({audio:'text_only',audio_reason:'session_changed'})"),'Sin audio · No estabas en la llamada · Se repite al volver','a reply nobody heard says what the room will do, not what a socket did');
  assert.equal(s.run("audioNote({audio:'text_only'})"),'Sin audio · Motivo no registrado');
+ assert.equal(s.run("audioNote({audio:'failed',audio_reason:'unconfirmed'})"),'Audio sin confirmar · El navegador no dijo si llegó a sonar','a reply the room stopped waiting for does not claim it failed to play (#60)');
 });
 
 test('A reply held behind another reply says so, not that the person is talking',()=>{
