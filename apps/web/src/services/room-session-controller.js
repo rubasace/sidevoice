@@ -75,6 +75,8 @@ let connectEpoch=0;
 let openingSocket=null,switchEpoch=0;
 window.sidevoiceSessionId=()=>state.sessionId;
 let audioContext=null,analyser=null,micSource=null,meterFrame=null,holding=false,spaceDown=false;
+// How long a call may go without a sign of a person before it asks, and then leaves (#63).
+var IDLE_MS=15*60*1000,IDLE_WARN_MS=60*1000,lastPersonSignal=Date.now(),idleWarned=false,idleTimer=null;
 let inputDeviceId='default',outputDeviceId='default',captureNode=null,deviceEpoch=0,captureRate=16000;
 let screenWakeLock=null,wakeRequest=null,wakeEpoch=0,wakeRetries=0;
 const waveLevels=Array(5).fill(0);
@@ -298,10 +300,10 @@ async function cancelCurrentInput(){if(!state.userTurn||state.cancelledInput)ret
 function cancelDraft(revision){state.cancelledInput=true;state.history=state.history.filter(r=>r.segment!==state.sessionId+':user-turn:'+revision);save();partial('');markHistorySeen()}
 function partial(text){state.pendingUserText=text||''}
 function updateComposer(){const ready=!!state.ws&&!!state.sessionId&&!!targetId()&&historyThreadId()===targetId()&&!state.switching;$('text-message').disabled=!ready;$('text-send').disabled=!ready||state.textSending;$('text-message').placeholder=ready?'Escribe un mensaje…':'Entra en la sala y selecciona una conversación';}
-$('text-composer').onsubmit=async event=>{event.preventDefault();const input=$('text-message'),text=input.value;if(state.textSending||!text.trim()||!state.sessionId||!targetId())return;const destination=targetId(),key=JSON.stringify([state.sessionId,destination,text]);if(textAttempt?.key!==key)textAttempt={key,id:crypto.randomUUID()};const attempt=textAttempt;state.textSending=true;updateComposer();setRoomError('');try{await post('/api/presentation/text',{text,thread_id:destination,session_id:state.sessionId,binding_id:state.roomBinding.binding_id,message_id:attempt.id});if(input.value===text)input.value='';if(textAttempt===attempt)textAttempt=null;await refreshHistory()}catch(e){setRoomError(e.message||'No se pudo confirmar el envío. El texto se conserva.')}finally{state.textSending=false;updateComposer()}};
+$('text-composer').onsubmit=async event=>{event.preventDefault();personSignal();const input=$('text-message'),text=input.value;if(state.textSending||!text.trim()||!state.sessionId||!targetId())return;const destination=targetId(),key=JSON.stringify([state.sessionId,destination,text]);if(textAttempt?.key!==key)textAttempt={key,id:crypto.randomUUID()};const attempt=textAttempt;state.textSending=true;updateComposer();setRoomError('');try{await post('/api/presentation/text',{text,thread_id:destination,session_id:state.sessionId,binding_id:state.roomBinding.binding_id,message_id:attempt.id});if(input.value===text)input.value='';if(textAttempt===attempt)textAttempt=null;await refreshHistory()}catch(e){setRoomError(e.message||'No se pudo confirmar el envío. El texto se conserva.')}finally{state.textSending=false;updateComposer()}};
 $('text-message').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();$('text-composer').requestSubmit()}});
 function updateMic(){state.micEnabled=micTrack()?.enabled??state.micEnabled;updateComposer()}
-function setMic(enabled){stopPreview();state.micEnabled=enabled;applyMicState();updateMic();syncNowPlaying()}
+function setMic(enabled){personSignal();stopPreview();state.micEnabled=enabled;applyMicState();updateMic();syncNowPlaying()}
 function releaseHold(){spaceDown=false;state.holding=false;if(holding){holding=false;setMic(false)}}
 
 document.addEventListener('click',event=>{if(!$('call-controls').contains(event.target))setDevicesOpen(false);for(const menu of document.querySelectorAll('.participant-menu[open],.call-menu[open]'))if(!menu.contains(event.target))menu.open=false});
@@ -812,6 +814,7 @@ function recordMessage(raw, socket) {
     if (t === 'voice-user-turn') {
         const key = 'user-turn:' + d.revision, receiptId = (d.session_id || state.sessionId) + ':' + key;
         if (d.phase === 'started') {
+            personSignal();
             openSpokenTurn(d.revision);
             state.cancelledInput = false;
             state.userTurn = { key, text: '', thread: d.thread_id };
@@ -988,6 +991,7 @@ function disconnect() {
     latencyActiveTurn = null;
     window.sidevoiceTelemetry?.endCall?.('left');
     forgetSpokenAudio();
+    stopIdleWatch();
     ++connectEpoch;
     state.connecting = false;
     releaseScreenWakeLock();
@@ -1026,7 +1030,7 @@ function disconnect() {
     applyLockedCall();
 }
 // Joining and leaving are the same button, and it belongs to React: this is what it calls (#53).
-async function toggleCall(){if(state.ws||state.connecting){disconnect();return}primeNowPlaying();state.connecting=true;const epoch=++connectEpoch;keepScreenAwake();setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;state.voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(state.voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(state.voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(state.voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:state.voicePreferences.tts_device},text=>{state.liveNote=text})}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}state.stream=acquiredStream;state.stream.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);keepScreenAwake();refreshAudioDevices();roomStore.patch({engineReady:true,enginePreferences:state.voicePreferences,sttRuntime});applyLockedCall();joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;updateMic();showEchoCover();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=state.joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch)state.connecting=false}}
+async function toggleCall(){if(state.ws||state.connecting){disconnect();return}personSignal();primeNowPlaying();state.connecting=true;const epoch=++connectEpoch;keepScreenAwake();setRoomError('');joinStatus('audio');try{await window.roomVoice.unlock();if(epoch!==connectEpoch)return;state.voicePreferences=await loadPreferences();if(epoch!==connectEpoch)return;if(state.voicePreferences.stt_provider!=='openai')joinStatus('whisper');const {browserStt,sttRuntime}=await prepareTranscription(state.voicePreferences);if(epoch!==connectEpoch)return;callExecution='browser';if(callExecution==='browser'&&(state.voicePreferences.default_model||'kokoro')==='kokoro'){joinStatus('voice');await window.roomVoice.prepare({device:state.voicePreferences.tts_device},text=>{state.liveNote=text})}if(epoch!==connectEpoch)return;audioSession(true);joinStatus('microphone');const acquiredStream=await acquireMicrophone();if(epoch!==connectEpoch){acquiredStream.getTracks().forEach(t=>t.stop());return}state.stream=acquiredStream;state.stream.getAudioTracks().forEach(t=>t.enabled=state.micEnabled);keepScreenAwake();refreshAudioDevices();roomStore.patch({engineReady:true,enginePreferences:state.voicePreferences,sttRuntime});applyLockedCall();joinStatus('room');const session=await joinRoom(epoch,{browserStt,sttRuntime});if(epoch!==connectEpoch||!session)return;await window.roomVoice.unlock();if(epoch!==connectEpoch)return;updateMic();showEchoCover();const remembered=rememberedThread();if(remembered)joinStatus('conversation',{subject:conversationTitle(remembered)});await refresh();await refreshPeople();if(epoch===connectEpoch)clearJoinStatus()}catch(e){if(epoch===connectEpoch){const failed=state.joinStep;disconnect();failJoin(joinFailureText(failed,e))}}finally{if(epoch===connectEpoch)state.connecting=false}}
 // ----- the socket: opened on join, reopened by itself when the room goes away -----
 // A room restart or a network blip must not end the call: the microphone permission, the media stream
 // and the unlocked output all survive it; only the socket needs reopening, with the same hello.
@@ -1809,7 +1813,7 @@ function applyLockScreen(on){
 }
 function toggleMic(){holding=false;setMic(!(state.stream?.getAudioTracks()[0]?.enabled??state.micEnabled))}
 function typing(e){return e.target instanceof Element&&!!e.target.closest('input,textarea,select,[contenteditable=true],[role=menu],[role=menuitem],[data-radix-popper-content-wrapper]')}
-window.addEventListener('keydown',e=>{
+window.addEventListener('keydown',e=>{personSignal();
  if(typing(e)||e.altKey)return;
  if(e.code==='KeyD'&&(e.metaKey||e.ctrlKey)&&!e.shiftKey){e.preventDefault();if(!e.repeat)toggleMic();return}
  if(state.stream&&e.code==='Space'&&!e.ctrlKey&&!e.metaKey&&!e.target.closest('summary')){
@@ -1824,6 +1828,40 @@ window.addEventListener('blur',releaseHold);document.addEventListener('visibilit
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.ws)keepScreenAwake()});
 setupAudioControls();
 setupOutputOwner();
+setupIdleWatch();
+
+// ----- a call nobody is using ends itself, for this browser only (#63) -----
+// The room went on hearing a room nobody was talking to, for a long while, and delivering what it heard. A
+// browser that gives no sign of a person — no speech, nothing typed, no touch, no key — for IDLE_MS is asked
+// "¿sigues ahí?" with a sound, and if nothing answers within IDLE_WARN_MS it leaves the call, the way a
+// video call does. The conversations stay in the room; re-entering is one tap. The agent's replies are not
+// a sign of anybody: an agent can talk to an empty car for ever.
+function personSignal(){
+ lastPersonSignal=Date.now();
+ if(idleWarned){idleWarned=false;state.liveNote='';window.roomVoice?.note?.('idle','answered')}
+}
+function checkIdle(){
+ if(!state.ws){idleWarned=false;return}
+ const quiet=Date.now()-lastPersonSignal;
+ if(quiet>=IDLE_MS){
+  window.roomVoice?.note?.('idle','left after '+Math.round(quiet/60000)+' min');
+  idleWarned=false;disconnect();
+  failJoin('Saliste de la llamada: '+Math.round(IDLE_MS/60000)+' minutos sin señales tuyas. Pulsa para volver a entrar.');
+  return;
+ }
+ if(!idleWarned&&quiet>=IDLE_MS-IDLE_WARN_MS){
+  idleWarned=true;
+  window.roomVoice?.signal?.('lost');
+  window.roomVoice?.note?.('idle','asked');
+  state.liveNote='¿Sigues ahí? Sin señales tuyas, saldrás de la llamada en '+Math.round(IDLE_WARN_MS/1000)+' segundos. Habla o toca la pantalla para seguir.';
+ }
+}
+function setupIdleWatch(){
+ // Keys and touches are counted where the page already listens for them (the keyboard shortcuts and the
+ // output owner), so no second listener competes with those.
+ idleTimer=setInterval(checkIdle,5000);
+}
+function stopIdleWatch(){lastPersonSignal=Date.now();idleWarned=false}
 
 // ----- which of this browser's room tabs sounds (#96) -----
 // A tab in the background keeps sounding, like any call; with the room open in two tabs only one may. The
@@ -1843,7 +1881,7 @@ function setupOutputOwner(){
   }
  };
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)claim()});
- window.addEventListener('pointerdown',()=>{if(window.roomVoice?.audible===false)claim()},true);
+ window.addEventListener('pointerdown',()=>{personSignal();if(window.roomVoice?.audible===false)claim()},true);
  window.addEventListener('pagehide',()=>{if(window.roomVoice?.audible!==false)channel.postMessage({type:'release',tab})});
  claim();
 }

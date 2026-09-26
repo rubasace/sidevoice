@@ -1051,6 +1051,18 @@ test('A late or session-less refresh does not cancel the reply the room is repla
  assert.equal(s.run("activeSpeech"),null);
 });
 
+test('A call with no sign of a person asks, then leaves, and only this browser leaves (#63)',()=>{
+ const s=setup();
+ s.run("state.ws={close(){},readyState:1,send(){}};lastPersonSignal=Date.now()-IDLE_MS+30000;checkIdle()");
+ assert.equal(s.run('idleWarned'),true,'a minute before, it asks');
+ assert.match(s.run('state.liveNote'),/¿Sigues ahí\?/);
+ s.run('personSignal()');
+ assert.equal(s.run('idleWarned'),false,'any sign of the person answers it');
+ assert.equal(s.run('state.liveNote'),'');
+ s.run("state.ws={close(){},readyState:1,send(){}};lastPersonSignal=Date.now()-IDLE_MS-1;checkIdle()");
+ assert.equal(s.run('state.ws'),null,'with no answer the browser leaves the call');
+ assert.match(s.run('roomStore.getState().facts?.joinFailure??state.joinFailure'),/Saliste de la llamada/);
+});
 test('What was being said when the room went away is sent again with the gap, and what was confirmed is not (#102)',()=>{
  const s=setup();
  s.run("captureRate=16000;openSpokenTurn(3);holdSpokenAudio(new Int16Array([1200,-1500,900]).buffer)");
